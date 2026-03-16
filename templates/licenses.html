@@ -153,6 +153,8 @@
               <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
                 <div class="text-muted small" id="licenseSelectionInfo">已选择 0 条</div>
                 <div class="d-flex gap-2">
+                  <button class="btn btn-outline-secondary btn-sm" id="batchEnableLicenseBtn" disabled>批量启用</button>
+                  <button class="btn btn-outline-warning btn-sm" id="batchDisableLicenseBtn" disabled>批量停用</button>
                   <button class="btn btn-outline-danger btn-sm" id="batchDeleteLicenseBtn" disabled>批量删除</button>
                   <button class="btn btn-outline-success btn-sm" id="batchRestoreLicenseBtn" disabled>批量恢复</button>
                 </div>
@@ -174,13 +176,13 @@
                   <thead>
                     <tr>
                       <th class="text-center"><input type="checkbox" id="licenseSelectAll" /></th>
-                      <th>激活码</th>
-                      <th>授权对象</th>
-                      <th>版本</th>
-                      <th>设备</th>
-                      <th>到期时间</th>
-                      <th>最近校验</th>
-                      <th>状态</th>
+                      <th data-sort="license_key" class="sortable-col">激活码 <span class="sort-icon">⇅</span></th>
+                      <th data-sort="licensee" class="sortable-col">授权对象 <span class="sort-icon">⇅</span></th>
+                      <th data-sort="edition" class="sortable-col">版本 <span class="sort-icon">⇅</span></th>
+                      <th data-sort="active_activations" class="sortable-col">设备 <span class="sort-icon">⇅</span></th>
+                      <th data-sort="expires_at" class="sortable-col">到期时间 <span class="sort-icon">⇅</span></th>
+                      <th data-sort="last_verified_at" class="sortable-col">最近校验 <span class="sort-icon">⇅</span></th>
+                      <th data-sort="status" class="sortable-col">状态 <span class="sort-icon">⇅</span></th>
                       <th>操作</th>
                     </tr>
                   </thead>

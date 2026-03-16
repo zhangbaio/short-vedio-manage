@@ -47,12 +47,16 @@ DEFAULT_SORT_DIR = "desc"
 LICENSE_STATUS_VALUES = {"active", "disabled", "expired"}
 LICENSE_EDITION_VALUES = {"basic", "pro", "enterprise"}
 LICENSE_LIST_SORTABLE_FIELDS = {
+    "license_key": "license_key",
+    "licensee": "COALESCE(licensee, '')",
+    "edition": "edition",
+    "max_activations": "max_activations",
+    "active_activations": "(SELECT COUNT(*) FROM license_activations la WHERE la.license_id = licenses.id AND (la.revoked_at IS NULL OR la.revoked_at = ''))",
+    "expires_at": "COALESCE(expires_at, '9999-12-31')",
+    "last_verified_at": "(SELECT COALESCE(MAX(la.last_verified_at), '') FROM license_activations la WHERE la.license_id = licenses.id)",
+    "status": "status",
     "created_at": "created_at",
     "updated_at": "updated_at",
-    "expires_at": "expires_at",
-    "licensee": "licensee",
-    "edition": "edition",
-    "status": "status",
 }
 LICENSE_LIST_DEFAULT_SORT_FIELD = "created_at"
 LICENSE_LIST_DEFAULT_SORT_DIR = "desc"
@@ -574,6 +578,25 @@ def restore_license_row(db: sqlite3.Connection, row: sqlite3.Row) -> tuple[bool,
         WHERE id = ?
         """,
         (row["id"],),
+    )
+    return True, ""
+
+
+def update_license_status_row(
+    db: sqlite3.Connection,
+    row: sqlite3.Row,
+    *,
+    status: str,
+) -> tuple[bool, str]:
+    if row["deleted_at"]:
+        return False, f"{row['license_key_masked']} 已删除，不能修改状态"
+    if status not in LICENSE_STATUS_VALUES:
+        return False, "无效的授权码状态"
+    if row["status"] == status:
+        return True, ""
+    db.execute(
+        "UPDATE licenses SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+        (status, row["id"]),
     )
     return True, ""
 
@@ -1630,15 +1653,13 @@ def get_license_secret(license_id: int):
 @admin_required
 def disable_license(license_id: int):
     db = get_db()
-    if not get_license_row(db, license_id):
+    row = get_license_row(db, license_id, include_deleted=True)
+    if not row:
         return jsonify({"error": "未找到该激活码"}), 404
-    result = db.execute(
-        "UPDATE licenses SET status = 'disabled', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-        (license_id,),
-    )
+    ok, message = update_license_status_row(db, row, status="disabled")
+    if not ok:
+        return jsonify({"error": message}), 400
     db.commit()
-    if result.rowcount == 0:
-        return jsonify({"error": "未找到该激活码"}), 404
     return jsonify({"message": "激活码已停用"})
 
 
@@ -1647,16 +1668,66 @@ def disable_license(license_id: int):
 @admin_required
 def enable_license(license_id: int):
     db = get_db()
-    if not get_license_row(db, license_id):
+    row = get_license_row(db, license_id, include_deleted=True)
+    if not row:
         return jsonify({"error": "未找到该激活码"}), 404
-    result = db.execute(
-        "UPDATE licenses SET status = 'active', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-        (license_id,),
-    )
+    ok, message = update_license_status_row(db, row, status="active")
+    if not ok:
+        return jsonify({"error": message}), 400
     db.commit()
-    if result.rowcount == 0:
-        return jsonify({"error": "未找到该激活码"}), 404
     return jsonify({"message": "激活码已启用"})
+
+
+@app.route("/api/licenses/batch-disable", methods=["POST"])
+@login_required
+@admin_required
+def batch_disable_licenses():
+    data = request.get_json(silent=True) or {}
+    license_ids, error = parse_license_ids_from_payload(data)
+    if error:
+        return jsonify({"error": error}), 400
+
+    db = get_db()
+    rows = get_license_rows_by_ids(db, license_ids, include_deleted=True)
+    found_ids = {int(row["id"]) for row in rows}
+    missing_ids = [license_id for license_id in license_ids if license_id not in found_ids]
+    if missing_ids:
+        return jsonify({"error": f"存在未找到的授权码：{', '.join(map(str, missing_ids))}"}), 404
+
+    for row in rows:
+        ok, message = update_license_status_row(db, row, status="disabled")
+        if not ok:
+            db.rollback()
+            return jsonify({"error": message}), 400
+
+    db.commit()
+    return jsonify({"message": f"已停用 {len(rows)} 条授权码"})
+
+
+@app.route("/api/licenses/batch-enable", methods=["POST"])
+@login_required
+@admin_required
+def batch_enable_licenses():
+    data = request.get_json(silent=True) or {}
+    license_ids, error = parse_license_ids_from_payload(data)
+    if error:
+        return jsonify({"error": error}), 400
+
+    db = get_db()
+    rows = get_license_rows_by_ids(db, license_ids, include_deleted=True)
+    found_ids = {int(row["id"]) for row in rows}
+    missing_ids = [license_id for license_id in license_ids if license_id not in found_ids]
+    if missing_ids:
+        return jsonify({"error": f"存在未找到的授权码：{', '.join(map(str, missing_ids))}"}), 404
+
+    for row in rows:
+        ok, message = update_license_status_row(db, row, status="active")
+        if not ok:
+            db.rollback()
+            return jsonify({"error": message}), 400
+
+    db.commit()
+    return jsonify({"message": f"已启用 {len(rows)} 条授权码"})
 
 
 @app.route("/api/licenses/<int:license_id>/unbind", methods=["POST"])

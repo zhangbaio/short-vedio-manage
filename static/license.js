@@ -3,6 +3,8 @@ const licenseState = {
   pageSize: 10,
   total: 0,
   pages: 1,
+  sortBy: "created_at",
+  sortDir: "desc",
   filters: {
     keyword: "",
     status: "",
@@ -23,6 +25,7 @@ document.addEventListener("DOMContentLoaded", initLicensePage);
 function initLicensePage() {
   bindLicenseEvents();
   updateLicenseFiltersFromInputs();
+  updateLicenseSortIcons();
   loadLicenses();
 }
 
@@ -60,8 +63,11 @@ function bindLicenseEvents() {
   document.getElementById("licenseActivationsBody").addEventListener("click", handleLicenseActivationTableClick);
   document.getElementById("copyLicenseSecretBtn").addEventListener("click", copyCurrentLicenseSecret);
   document.getElementById("licenseSelectAll").addEventListener("change", toggleSelectAllLicenses);
+  document.getElementById("batchEnableLicenseBtn").addEventListener("click", batchEnableLicenses);
+  document.getElementById("batchDisableLicenseBtn").addEventListener("click", batchDisableLicenses);
   document.getElementById("batchDeleteLicenseBtn").addEventListener("click", batchDeleteLicenses);
   document.getElementById("batchRestoreLicenseBtn").addEventListener("click", batchRestoreLicenses);
+  document.querySelector("#licenseTableBody")?.closest("table")?.querySelector("thead")?.addEventListener("click", handleLicenseSortClick);
 }
 
 function updateLicenseFiltersFromInputs() {
@@ -187,6 +193,20 @@ function updateLicensePaginationInfo() {
   document.getElementById("licensePageSizeSelect").value = String(licenseState.pageSize);
 }
 
+function updateLicenseSortIcons() {
+  document.querySelectorAll("th[data-sort]").forEach((th) => {
+    const icon = th.querySelector(".sort-icon");
+    if (!icon) return;
+    if (th.dataset.sort === licenseState.sortBy) {
+      icon.textContent = licenseState.sortDir === "asc" ? "↑" : "↓";
+      th.classList.add("sort-active");
+    } else {
+      icon.textContent = "⇅";
+      th.classList.remove("sort-active");
+    }
+  });
+}
+
 function buildLicenseStatusBadge(item) {
   if (item.deleted_at) {
     return '<span class="badge bg-danger-subtle text-danger-emphasis">已删除</span>';
@@ -206,12 +226,30 @@ function buildLicenseParams({ includePage = false } = {}) {
     params.set("page", String(licenseState.page));
     params.set("page_size", String(licenseState.pageSize));
   }
+  params.set("sort_by", licenseState.sortBy);
+  params.set("sort_dir", licenseState.sortDir);
   Object.entries(licenseState.filters).forEach(([key, value]) => {
     if (value) {
       params.set(key, value);
     }
   });
   return params;
+}
+
+function handleLicenseSortClick(event) {
+  const th = event.target.closest("th[data-sort]");
+  if (!th) return;
+  const field = th.dataset.sort;
+  if (!field) return;
+  if (licenseState.sortBy === field) {
+    licenseState.sortDir = licenseState.sortDir === "asc" ? "desc" : "asc";
+  } else {
+    licenseState.sortBy = field;
+    licenseState.sortDir = "asc";
+  }
+  licenseState.page = 1;
+  updateLicenseSortIcons();
+  loadLicenses({ preserveSelection: true });
 }
 
 function exportLicenses() {
@@ -295,10 +333,14 @@ function syncLicenseSelectAllState() {
 
 function updateLicenseBatchButtons() {
   const selectedItems = getSelectedLicenseItems();
+  const enableableCount = selectedItems.filter((item) => canEnableLicense(item)).length;
+  const disableableCount = selectedItems.filter((item) => canDisableLicense(item)).length;
   const deletableCount = selectedItems.filter((item) => canDeleteLicense(item)).length;
   const restorableCount = selectedItems.filter((item) => Boolean(item.deleted_at)).length;
 
   document.getElementById("licenseSelectionInfo").textContent = `已选择 ${selectedItems.length} 条`;
+  document.getElementById("batchEnableLicenseBtn").disabled = enableableCount === 0;
+  document.getElementById("batchDisableLicenseBtn").disabled = disableableCount === 0;
   document.getElementById("batchDeleteLicenseBtn").disabled = deletableCount === 0;
   document.getElementById("batchRestoreLicenseBtn").disabled = restorableCount === 0;
 }
@@ -315,6 +357,60 @@ function resetSelection() {
 
 function canDeleteLicense(item) {
   return !item.deleted_at && item.status !== "active" && Number(item.active_activations || 0) === 0;
+}
+
+function canEnableLicense(item) {
+  return !item.deleted_at && item.status !== "active";
+}
+
+function canDisableLicense(item) {
+  return !item.deleted_at && item.status !== "disabled";
+}
+
+async function batchEnableLicenses() {
+  const ids = getSelectedLicenseItems()
+    .filter((item) => canEnableLicense(item))
+    .map((item) => item.id);
+  if (!ids.length) {
+    showToast("请选择可启用的授权码", "warning");
+    return;
+  }
+  if (!confirm(`确定批量启用 ${ids.length} 条授权码吗？`)) return;
+
+  try {
+    const result = await requestJSON("/api/licenses/batch-enable", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ids }),
+    });
+    showToast(result?.message || "批量启用成功", "success");
+    await loadLicenses({ preserveSelection: true });
+  } catch (error) {
+    showToast(error.message, "danger");
+  }
+}
+
+async function batchDisableLicenses() {
+  const ids = getSelectedLicenseItems()
+    .filter((item) => canDisableLicense(item))
+    .map((item) => item.id);
+  if (!ids.length) {
+    showToast("请选择可停用的授权码", "warning");
+    return;
+  }
+  if (!confirm(`确定批量停用 ${ids.length} 条授权码吗？`)) return;
+
+  try {
+    const result = await requestJSON("/api/licenses/batch-disable", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ids }),
+    });
+    showToast(result?.message || "批量停用成功", "success");
+    await loadLicenses({ preserveSelection: true });
+  } catch (error) {
+    showToast(error.message, "danger");
+  }
 }
 
 async function batchDeleteLicenses() {
