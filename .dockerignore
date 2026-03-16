@@ -1,0 +1,16 @@
+.git
+.env
+.env.local
+.env.production
+.env.staging
+.claude
+__pycache__/
+*.pyc
+.DS_Store
+data/*.db
+data/*.db-shm
+data/*.db-wal
+data/remote_uploads/
+*.docx
+*.xlsx
+table.png
