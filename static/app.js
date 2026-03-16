@@ -1,4 +1,4 @@
-﻿const state = {
+const state = {
   page: 1,
   pageSize: 20,
   total: 0,
@@ -210,10 +210,10 @@ function updateSortIcons() {
     const icon = th.querySelector(".sort-icon");
     if (!icon) return;
     if (th.dataset.sort === state.sortBy) {
-      icon.textContent = state.sortDir === "asc" ? "鈫? : "鈫?;
+      icon.textContent = state.sortDir === "asc" ? "↑" : "↓";
       th.classList.add("sort-active");
     } else {
-      icon.textContent = "鈬?;
+      icon.textContent = "⇅";
       th.classList.remove("sort-active");
     }
   });
@@ -242,7 +242,7 @@ function renderDramas(items) {
       <td>${buildBadge(item.uploaded)}</td>
       <td>${escapeHtml(item.materials || "-")}</td>
       <td>${escapeHtml(item.promo_text || "-")}</td>
-      <td title="${escapeHtml(item.description || "鏆傛棤绠€浠?)}">${escapeHtml(truncateText(item.description))}</td>
+      <td title="${escapeHtml(item.description || "暂无简介")}">${escapeHtml(truncateText(item.description))}</td>
       <td>${escapeHtml(item.company || "-")}</td>
       <td>${escapeHtml(item.uploader || "-")}</td>
       <td title="${escapeHtml(item.remark1 || "")}">${escapeHtml(truncateText(item.remark1))}</td>
@@ -255,20 +255,20 @@ function renderDramas(items) {
 }
 
 function buildBadge(flag) {
-  const isPositive = flag === "鏄?;
+  const isPositive = flag === "是";
   const cls = isPositive ? "bg-success" : "bg-secondary";
-  const text = isPositive ? "鏄? : "鍚?;
+  const text = isPositive ? "是" : "否";
   return `<span class="badge ${cls}">${text}</span>`;
 }
 
 function buildActions(item) {
-  const uploadBtn = `<button class="btn btn-sm btn-outline-success me-1" data-action="toggle-upload" data-id="${item.id}">${item.uploaded === "鏄? ? "鍙栨秷涓婁紶" : "鏍囪涓婁紶"}</button>`;
+  const uploadBtn = `<button class="btn btn-sm btn-outline-success me-1" data-action="toggle-upload" data-id="${item.id}">${item.uploaded === "是" ? "取消上传" : "标记上传"}</button>`;
   if (window.currentUser?.role !== "admin") {
     return uploadBtn;
   }
   return `
-    <button class="btn btn-sm btn-outline-primary me-1" data-action="edit" data-id="${item.id}">缂栬緫</button>
-    <button class="btn btn-sm btn-outline-danger me-1" data-action="delete" data-id="${item.id}" data-name="${escapeHtml(item.new_name || item.original_name || "鐭墽")}">鍒犻櫎</button>
+    <button class="btn btn-sm btn-outline-primary me-1" data-action="edit" data-id="${item.id}">编辑</button>
+    <button class="btn btn-sm btn-outline-danger me-1" data-action="delete" data-id="${item.id}" data-name="${escapeHtml(item.new_name || item.original_name || "短剧")}">删除</button>
     ${uploadBtn}
   `;
 }
@@ -290,7 +290,7 @@ function escapeHtml(value) {
 }
 
 function updatePaginationInfo() {
-  document.getElementById("pageInfo").textContent = `绗?{state.page}椤?鍏?{state.pages}椤碉紝鍏?{state.total}鏉;
+  document.getElementById("pageInfo").textContent = `第${state.page}页/共${state.pages}页，共${state.total}条`;
   document.getElementById("pageSizeSelect").value = state.pageSize;
 }
 
@@ -299,7 +299,7 @@ async function fetchCompanies() {
     const companies = await requestJSON("/api/companies");
     if (!companies) return;
     const select = document.getElementById("companySelect");
-    select.innerHTML = '<option value="">鍏ㄩ儴</option>';
+    select.innerHTML = '<option value="">全部</option>';
     companies.forEach((company) => {
       const option = document.createElement("option");
       option.value = company;
@@ -313,15 +313,15 @@ async function fetchCompanies() {
 
 function openCreateModal() {
   editingId = null;
-  document.getElementById("dramaModalLabel").textContent = "鏂板鐭墽";
+  document.getElementById("dramaModalLabel").textContent = "新增短剧";
   document.getElementById("dramaForm").reset();
   clearFormValidation(document.getElementById("dramaForm"));
   document.getElementById("dramaId").value = "";
-  document.getElementById("reviewInput").value = "鍚?;
+  document.getElementById("reviewInput").value = "否";
   document.getElementById("remark1Input").value = "";
   document.getElementById("remark2Input").value = "";
   document.getElementById("remark3Input").value = "";
-  document.getElementById("uploadedInput").value = "鍚?;
+  document.getElementById("uploadedInput").value = "否";
   dramaModal.show();
 }
 
@@ -345,8 +345,8 @@ function handleTableClick(event) {
     openEditModal(id);
   } else if (action === "delete") {
     deleteTargetId = id;
-    deleteTargetName = target.dataset.name || "璇ョ煭鍓?;
-    document.getElementById("deleteMessage").textContent = `纭畾鍒犻櫎銆?{deleteTargetName}銆嬪悧锛焋;
+    deleteTargetName = target.dataset.name || "该短剧";
+    document.getElementById("deleteMessage").textContent = `确定删除《${deleteTargetName}》吗？`;
     deleteModal.show();
   } else if (action === "toggle-upload") {
     toggleUpload(id);
@@ -358,11 +358,11 @@ async function openEditModal(id) {
     const data = await requestJSON(`/api/dramas?page=1&page_size=1&sort_by=id&sort_dir=asc&id=${id}`);
     const item = data?.items?.find((drama) => drama.id === id);
     if (!item) {
-      showToast("鏈壘鍒拌鐭墽", "warning");
+      showToast("未找到该短剧", "warning");
       return;
     }
     editingId = id;
-    document.getElementById("dramaModalLabel").textContent = "缂栬緫鐭墽";
+    document.getElementById("dramaModalLabel").textContent = "编辑短剧";
     document.getElementById("dramaId").value = id;
     clearFormValidation(document.getElementById("dramaForm"));
     document.getElementById("dateInput").value = item.date || "";
@@ -370,8 +370,8 @@ async function openEditModal(id) {
     document.getElementById("newNameInput").value = item.new_name || "";
     document.getElementById("episodesInput").value = item.episodes ?? "";
     document.getElementById("durationInput").value = item.duration ?? "";
-    document.getElementById("reviewInput").value = item.review_passed || "鍚?;
-    document.getElementById("uploadedInput").value = item.uploaded || "鍚?;
+    document.getElementById("reviewInput").value = item.review_passed || "否";
+    document.getElementById("uploadedInput").value = item.uploaded || "否";
     document.getElementById("materialsInput").value = item.materials || "";
     document.getElementById("promoTextInput").value = item.promo_text || "";
     document.getElementById("descriptionInput").value = item.description || "";
@@ -387,7 +387,7 @@ async function openEditModal(id) {
 
 async function submitDramaForm() {
   if (window.currentUser?.role !== "admin") {
-    showToast("鏉冮檺涓嶈冻", "danger");
+    showToast("权限不足", "danger");
     return;
   }
   const dateInput = document.getElementById("dateInput");
@@ -435,7 +435,7 @@ async function submitDramaForm() {
         const num = Number(values.episodes);
         return Number.isInteger(num) && num >= 1 && num <= 9999;
       },
-      message: "璇疯緭鍏?-9999涔嬮棿鐨勬鏁存暟",
+      message: "请输入1-9999之间的正整数",
     },
     {
       input: durationInput,
@@ -443,7 +443,7 @@ async function submitDramaForm() {
         const num = Number(values.duration);
         return Number.isInteger(num) && num >= 1 && num <= 99999;
       },
-      message: "璇疯緭鍏?-99999涔嬮棿鐨勬鏁存暟",
+      message: "请输入1-99999之间的正整数",
     },
     {
       input: companyInput,
@@ -491,7 +491,7 @@ async function submitDramaForm() {
       body: JSON.stringify(payload),
     });
     dramaModal.hide();
-    showToast(editingId ? "鐭墽鏇存柊鎴愬姛" : "鐭墽鏂板鎴愬姛", "success");
+    showToast(editingId ? "短剧更新成功" : "短剧新增成功", "success");
     loadDramas();
   } catch (error) {
     showToast(error.message, "danger");
@@ -521,7 +521,7 @@ function updateBatchButton() {
 function openDeleteModal(mode) {
   if (mode === "batch") {
     deleteTargetId = null;
-    document.getElementById("deleteMessage").textContent = `纭畾鍒犻櫎閫変腑鐨?{selectedIds.size}鏉＄煭鍓у悧锛焋;
+    document.getElementById("deleteMessage").textContent = `确定删除选中的${selectedIds.size}条短剧吗？`;
     deleteModal.show();
   }
 }
@@ -541,7 +541,7 @@ async function confirmDelete() {
     deleteModal.hide();
     deleteTargetId = null;
     selectedIds.clear();
-    showToast(isBatch ? "鎵归噺鍒犻櫎瀹屾垚" : "鍒犻櫎鎴愬姛", "success");
+    showToast(isBatch ? "批量删除完成" : "删除成功", "success");
     loadDramas();
   } catch (error) {
     showToast(error.message, "danger");
@@ -552,12 +552,12 @@ async function handleImport() {
   const fileInput = document.getElementById("importFile");
   const file = fileInput.files[0];
   if (!file) {
-    showToast("璇峰厛閫夋嫨Excel鏂囦欢", "warning");
+    showToast("请先选择Excel文件", "warning");
     return;
   }
   const fileName = file.name.toLowerCase();
   if (!fileName.endsWith(".xlsx") && !fileName.endsWith(".xls")) {
-    showToast("璇烽€夋嫨 .xlsx 鎴?.xls 鏍煎紡鐨勬枃浠?, "warning");
+    showToast("请选择 .xlsx 或 .xls 格式的文件", "warning");
     return;
   }
   const formData = new FormData();
@@ -587,7 +587,7 @@ async function handleImport() {
     } else {
       document.getElementById("conflictContainer").hidden = true;
     }
-    showToast(`瀵煎叆瀹屾垚锛氭柊澧?${response.new_count} 鏉★紝閲嶅 ${response.duplicate_count} 鏉, "success");
+    showToast(`导入完成：新增 ${response.new_count} 条，重复 ${response.duplicate_count} 条`, "success");
     await loadDramas();
   } catch (error) {
     showToast(error.message, "danger");
@@ -610,7 +610,7 @@ async function toggleUpload(id) {
   try {
     const result = await requestJSON(`/api/dramas/${id}/upload`, { method: "PATCH" });
     if (!result) return;
-    showToast(result.uploaded === "鏄? ? "宸叉爣璁颁负宸蹭笂浼? : "宸插彇娑堜笂浼犳爣璁?, "success");
+    showToast(result.uploaded === "是" ? "已标记为已上传" : "已取消上传标记", "success");
     loadDramas();
   } catch (error) {
     showToast(error.message, "danger");
@@ -627,9 +627,9 @@ async function loadUsers() {
       const tr = document.createElement("tr");
       tr.innerHTML = `
         <td>${escapeHtml(user.username)}</td>
-        <td>${user.role === "admin" ? "绠＄悊鍛? : "鏅€氱敤鎴?}</td>
+        <td>${user.role === "admin" ? "管理员" : "普通用户"}</td>
         <td>
-          <button class="btn btn-sm btn-outline-danger" data-action="delete-user" data-id="${user.id}" data-username="${escapeHtml(user.username)}" ${user.username === window.currentUser.username ? "disabled" : ""}>鍒犻櫎</button>
+          <button class="btn btn-sm btn-outline-danger" data-action="delete-user" data-id="${user.id}" data-username="${escapeHtml(user.username)}" ${user.username === window.currentUser.username ? "disabled" : ""}>删除</button>
         </td>
       `;
       tbody.appendChild(tr);
@@ -641,8 +641,7 @@ async function loadUsers() {
 
 async function loadLicenses() {
   try {
-    const data = await requestJSON("/api/licenses?page=1&page_size=50");
-    const items = Array.isArray(data) ? data : data?.items || [];
+    const items = await requestJSON("/api/licenses");
     if (!items) return;
     const tbody = document.getElementById("licenseTableBody");
     tbody.innerHTML = "";
@@ -655,15 +654,15 @@ async function loadLicenses() {
         <td>${escapeHtml(item.licensee || "-")}</td>
         <td>${escapeHtml(item.edition || "-")}</td>
         <td>${item.active_activations || 0}/${item.max_activations || 0}</td>
-        <td>${escapeHtml(item.expires_at || "姘镐箙")}</td>
+        <td>${escapeHtml(item.expires_at || "永久")}</td>
         <td>${buildLicenseStatusBadge(item.status)}</td>
         <td>
-          <button class="btn btn-sm btn-outline-dark me-1" data-action="view-secret" data-id="${item.id}">瀹屾暣鐮?/button>
-          <button class="btn btn-sm btn-outline-primary me-1" data-action="view-activations" data-id="${item.id}">鏌ョ湅璁惧</button>
+          <button class="btn btn-sm btn-outline-dark me-1" data-action="view-secret" data-id="${item.id}">完整码</button>
+          <button class="btn btn-sm btn-outline-primary me-1" data-action="view-activations" data-id="${item.id}">查看设备</button>
           ${
             item.status === "active"
-              ? `<button class="btn btn-sm btn-outline-warning" data-action="disable-license" data-id="${item.id}">鍋滅敤</button>`
-              : `<button class="btn btn-sm btn-outline-success" data-action="enable-license" data-id="${item.id}">鍚敤</button>`
+              ? `<button class="btn btn-sm btn-outline-warning" data-action="disable-license" data-id="${item.id}">停用</button>`
+              : `<button class="btn btn-sm btn-outline-success" data-action="enable-license" data-id="${item.id}">启用</button>`
           }
         </td>
       `;
@@ -676,9 +675,9 @@ async function loadLicenses() {
 
 function buildLicenseStatusBadge(status) {
   const statusMap = {
-    active: { text: "鍚敤", cls: "bg-success" },
-    disabled: { text: "鍋滅敤", cls: "bg-secondary" },
-    expired: { text: "杩囨湡", cls: "bg-warning text-dark" },
+    active: { text: "启用", cls: "bg-success" },
+    disabled: { text: "停用", cls: "bg-secondary" },
+    expired: { text: "过期", cls: "bg-warning text-dark" },
   };
   const meta = statusMap[status] || { text: status || "-", cls: "bg-secondary" };
   return `<span class="badge ${meta.cls}">${meta.text}</span>`;
@@ -702,7 +701,7 @@ async function createLicense() {
     const createdKey = result?.item?.license_key || "";
     document.getElementById("licenseCreateResult").hidden = !createdKey;
     document.getElementById("licenseCreatedKey").textContent = createdKey;
-    showToast(`婵€娲荤爜鍒涘缓鎴愬姛锛?{result?.item?.license_key_masked || "宸茬敓鎴?}`, "success");
+    showToast(`激活码创建成功：${result?.item?.license_key_masked || "已生成"}`, "success");
     document.getElementById("licenseKeyInput").value = "";
     document.getElementById("licenseeInput").focus();
     await loadLicenses();
@@ -726,15 +725,15 @@ async function handleLicenseTableClick(event) {
       return;
     }
     if (action === "disable-license") {
-      if (!confirm("纭畾鍋滅敤杩欐潯婵€娲荤爜鍚楋紵")) return;
+      if (!confirm("确定停用这条激活码吗？")) return;
       await requestJSON(`/api/licenses/${id}/disable`, { method: "POST" });
-      showToast("婵€娲荤爜宸插仠鐢?, "success");
+      showToast("激活码已停用", "success");
       await loadLicenses();
       return;
     }
     if (action === "enable-license") {
       await requestJSON(`/api/licenses/${id}/enable`, { method: "POST" });
-      showToast("婵€娲荤爜宸插惎鐢?, "success");
+      showToast("激活码已启用", "success");
       await loadLicenses();
     }
   } catch (error) {
@@ -749,7 +748,7 @@ async function viewLicenseSecret(id) {
     currentLicenseSecret = data.license_key || "";
     document.getElementById("licenseSecretValue").value = currentLicenseSecret;
     document.getElementById("licenseSecretMeta").textContent =
-      `鎺堟潈瀵硅薄锛?{data.licensee || "-"} 锝?鐗堟湰锛?{data.edition || "-"} 锝?鐘舵€侊細${data.status || "-"}`;
+      `授权对象：${data.licensee || "-"} ｜ 版本：${data.edition || "-"} ｜ 状态：${data.status || "-"}`;
     licenseSecretModal.show();
   } catch (error) {
     showToast(error.message, "danger");
@@ -758,15 +757,15 @@ async function viewLicenseSecret(id) {
 
 async function copyCurrentLicenseSecret() {
   if (!currentLicenseSecret) {
-    showToast("褰撳墠娌℃湁鍙鍒剁殑瀹屾暣婵€娲荤爜", "warning");
+    showToast("当前没有可复制的完整激活码", "warning");
     return;
   }
   try {
     await navigator.clipboard.writeText(currentLicenseSecret);
-    showToast("瀹屾暣婵€娲荤爜宸插鍒跺埌鍓创鏉?, "success");
+    showToast("完整激活码已复制到剪贴板", "success");
   } catch (error) {
     document.getElementById("licenseSecretValue").select();
-    showToast("澶嶅埗澶辫触锛岃鎵嬪姩澶嶅埗杈撳叆妗嗕腑鐨勬縺娲荤爜", "warning");
+    showToast("复制失败，请手动复制输入框中的激活码", "warning");
   }
 }
 
@@ -776,7 +775,7 @@ async function loadLicenseActivations(licenseId) {
     if (!data) return;
     currentLicenseId = licenseId;
     document.getElementById("licenseActivationsTitle").textContent =
-      `褰撳墠婵€娲荤爜锛?{data.license?.license_key_masked || "-"}`;
+      `当前激活码：${data.license?.license_key_masked || "-"}`;
     const tbody = document.getElementById("licenseActivationsBody");
     tbody.innerHTML = "";
     (data.items || []).forEach((item) => {
@@ -788,11 +787,11 @@ async function loadLicenseActivations(licenseId) {
         <td>${escapeHtml(item.app_version || "-")}</td>
         <td>${escapeHtml(item.activated_at || "-")}</td>
         <td>${escapeHtml(item.last_verified_at || "-")}</td>
-        <td>${active ? '<span class="badge bg-success">宸茬粦瀹?/span>' : '<span class="badge bg-secondary">宸茶В缁?/span>'}</td>
+        <td>${active ? '<span class="badge bg-success">已绑定</span>' : '<span class="badge bg-secondary">已解绑</span>'}</td>
         <td>
           ${
             active
-              ? `<button class="btn btn-sm btn-outline-danger" data-action="unbind-machine" data-machine-id="${escapeHtml(item.machine_id || "")}">瑙ｇ粦</button>`
+              ? `<button class="btn btn-sm btn-outline-danger" data-action="unbind-machine" data-machine-id="${escapeHtml(item.machine_id || "")}">解绑</button>`
               : "-"
           }
         </td>
@@ -809,14 +808,14 @@ async function handleLicenseActivationTableClick(event) {
   const action = target.dataset.action;
   if (!action || action !== "unbind-machine" || !currentLicenseId) return;
   const machineId = target.dataset.machineId;
-  if (!confirm(`纭畾瑙ｇ粦璁惧 ${machineId} 鍚楋紵`)) return;
+  if (!confirm(`确定解绑设备 ${machineId} 吗？`)) return;
   try {
     await requestJSON(`/api/licenses/${currentLicenseId}/unbind`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ machine_id: machineId }),
     });
-    showToast("璁惧瑙ｇ粦鎴愬姛", "success");
+    showToast("设备解绑成功", "success");
     await loadLicenseActivations(currentLicenseId);
     await loadLicenses();
   } catch (error) {
@@ -836,7 +835,7 @@ function resetLicenseForm() {
 }
 
 function clearLicenseActivations() {
-  document.getElementById("licenseActivationsTitle").textContent = "璇烽€夋嫨涓€鏉℃縺娲荤爜鏌ョ湅";
+  document.getElementById("licenseActivationsTitle").textContent = "请选择一条激活码查看";
   document.getElementById("licenseActivationsBody").innerHTML = "";
 }
 
@@ -868,7 +867,7 @@ async function createUser() {
     firstInvalid = firstInvalid || passwordInput;
   }
   if (!role) {
-    showToast("璇烽€夋嫨瑙掕壊", "warning");
+    showToast("请选择角色", "warning");
     isValid = false;
   }
   if (!isValid) {
@@ -881,7 +880,7 @@ async function createUser() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username, password, role }),
     });
-    showToast("鏂板鐢ㄦ埛鎴愬姛", "success");
+    showToast("新增用户成功", "success");
     resetUserForm();
     await loadUsers();
   } catch (error) {
@@ -895,10 +894,10 @@ async function handleUserTableClick(event) {
   const id = Number(target.dataset.id);
   const username = target.dataset.username;
   if (target.dataset.action === "delete-user") {
-    if (!confirm(`纭畾鍒犻櫎鐢ㄦ埛 ${username} 鍚楋紵`)) return;
+    if (!confirm(`确定删除用户 ${username} 吗？`)) return;
     try {
       await requestJSON(`/api/users/${id}`, { method: "DELETE" });
-      showToast("鐢ㄦ埛鍒犻櫎鎴愬姛", "success");
+      showToast("用户删除成功", "success");
       await loadUsers();
     } catch (error) {
       showToast(error.message, "danger");
@@ -920,13 +919,13 @@ async function requestJSON(url, options = {}) {
     return null;
   }
   if (response.status === 403) {
-    showToast("鏉冮檺涓嶈冻", "danger");
+    showToast("权限不足", "danger");
     return null;
   }
   const isJson = (response.headers.get("content-type") || "").includes("application/json");
   if (!response.ok) {
     const errorData = isJson ? await response.json().catch(() => ({})) : {};
-    throw new Error(errorData.error || "璇锋眰澶辫触");
+    throw new Error(errorData.error || "请求失败");
   }
   return isJson ? response.json() : response;
 }
@@ -1086,7 +1085,7 @@ async function submitChangePassword() {
         new_password: nextPassword,
       }),
     });
-    showToast("瀵嗙爜淇敼鎴愬姛", "success");
+    showToast("密码修改成功", "success");
     changePasswordModal.hide();
   } catch (error) {
     showToast(error.message, "danger");
@@ -1168,7 +1167,7 @@ async function refreshRemoteNotifications() {
     remoteQrUnreadCount += newlyDetected.length;
     updateRemoteUnreadBadge();
     newlyDetected.forEach(({ clientName }) => {
-      showToast(`鏀跺埌鏂扮殑鐧诲綍浜岀淮鐮佹埅鍥撅細${clientName}`, "warning");
+      showToast(`收到新的登录二维码截图：${clientName}`, "warning");
     });
   }
 }
@@ -1178,7 +1177,7 @@ function isLoginQrMessage(message) {
     return false;
   }
   const content = String(message.content_text || "").toLowerCase();
-  if (content.includes("鐧诲綍浜岀淮鐮?) || content.includes("login qr") || content.includes("login-qr")) {
+  if (content.includes("登录二维码") || content.includes("login qr") || content.includes("login-qr")) {
     return true;
   }
   if (Array.isArray(message.attachments)) {
@@ -1223,7 +1222,7 @@ async function loadRemoteClients() {
       select.value = items[0].client_id;
       await handleRemoteClientChange();
     } else {
-      document.getElementById("remoteMessagesBox").innerHTML = '<div class="text-muted">鏆傛棤瀹㈡埛绔?/div>';
+      document.getElementById("remoteMessagesBox").innerHTML = '<div class="text-muted">暂无客户端</div>';
     }
   } catch (error) {
     showToast(error.message, "danger");
@@ -1232,7 +1231,7 @@ async function loadRemoteClients() {
 
 async function createRemoteClient() {
   const input = document.getElementById("remoteClientNameInput");
-  const clientName = input.value.trim() || "榛樿璁惧";
+  const clientName = input.value.trim() || "默认设备";
   try {
     const result = await requestJSON("/api/remote/clients", {
       method: "POST",
@@ -1245,7 +1244,7 @@ async function createRemoteClient() {
     document.getElementById("remoteClientTokenValue").textContent = result.client_token;
     input.value = "";
     await loadRemoteClients();
-    showToast("瀹㈡埛绔垱寤烘垚鍔?, "success");
+    showToast("客户端创建成功", "success");
   } catch (error) {
     showToast(error.message, "danger");
   }
@@ -1254,7 +1253,7 @@ async function createRemoteClient() {
 async function handleRemoteClientChange() {
   const clientId = document.getElementById("remoteClientSelect").value;
   if (!clientId) {
-    document.getElementById("remoteMessagesBox").innerHTML = '<div class="text-muted">鏆傛棤浼氳瘽</div>';
+    document.getElementById("remoteMessagesBox").innerHTML = '<div class="text-muted">暂无会话</div>';
     currentRemoteConversationId = null;
     return;
   }
@@ -1265,7 +1264,7 @@ async function handleRemoteClientChange() {
     conversation = await requestJSON("/api/remote/conversations", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ client_id: clientId, title: `${clientId} 浼氳瘽` }),
+      body: JSON.stringify({ client_id: clientId, title: `${clientId} 会话` }),
     });
   }
   currentRemoteConversationId = conversation.id;
@@ -1279,7 +1278,7 @@ async function loadRemoteMessages(conversationId) {
     const box = document.getElementById("remoteMessagesBox");
     box.innerHTML = "";
     if (!items.length) {
-      box.innerHTML = '<div class="text-muted">鏆傛棤娑堟伅</div>';
+      box.innerHTML = '<div class="text-muted">暂无消息</div>';
       return;
     }
     items.forEach((item) => {
@@ -1287,20 +1286,12 @@ async function loadRemoteMessages(conversationId) {
       wrapper.className = "border rounded p-2 mb-2 bg-white";
       const title = document.createElement("div");
       title.className = "small text-muted mb-1";
-      title.textContent = `${item.sender_type} 路 ${item.message_type} 路 ${item.status} 路 ${item.created_at || ""}`;
+      title.textContent = `${item.sender_type} · ${item.message_type} · ${item.status} · ${item.created_at || ""}`;
       wrapper.appendChild(title);
       if (item.content_text) {
         const body = document.createElement("div");
         body.textContent = item.content_text;
         wrapper.appendChild(body);
-      }
-      const commandResult = buildRemoteCommandResultSummary(item);
-      if (commandResult) {
-        const resultBlock = document.createElement("pre");
-        resultBlock.className = "small bg-light border rounded p-2 mt-2 mb-0 text-wrap";
-        resultBlock.style.whiteSpace = "pre-wrap";
-        resultBlock.textContent = commandResult;
-        wrapper.appendChild(resultBlock);
       }
       if (Array.isArray(item.attachments) && item.attachments.length) {
         item.attachments.forEach((attachment) => {
@@ -1320,56 +1311,9 @@ async function loadRemoteMessages(conversationId) {
   }
 }
 
-function buildRemoteCommandResultSummary(item) {
-  if (!item || item.message_type !== "command" || !item.result || typeof item.result !== "object") {
-    return "";
-  }
-  const result = item.result;
-  const lines = [];
-  const successCount = Number(result.success_count || 0);
-  const failedCount = Number(result.failed_count || 0);
-  const workspacePath = String(result.workspace_path || "").trim();
-  const autoRun = Boolean(result.auto_run);
-  const execution = result.execution && typeof result.execution === "object" ? result.execution : null;
-  const failedItems = Array.isArray(result.failed) ? result.failed.filter(Boolean) : [];
-  const errorText = String(result.error || "").trim();
-
-  if (workspacePath) {
-    lines.push(`工作目录：${workspacePath}`);
-  }
-  if ("success_count" in result || "failed_count" in result) {
-    lines.push(`导入结果：成功 ${successCount}，失败 ${failedCount}`);
-  }
-  if (execution) {
-    lines.push(`自动执行：${execution.started ? "已启动" : autoRun ? "未启动" : "未请求"}`);
-    if (Array.isArray(execution.enabled_steps) && execution.enabled_steps.length) {
-      lines.push(`执行步骤：${execution.enabled_steps.join(", ")}`);
-    }
-    if (execution.on_project_error) {
-      lines.push(`失败策略：${execution.on_project_error}`);
-    }
-    if (execution.parallel_projects) {
-      lines.push(`并行项目数：${execution.parallel_projects}`);
-    }
-  } else if (autoRun) {
-    lines.push("自动执行：已请求");
-  }
-  if (errorText) {
-    lines.push(`错误：${errorText}`);
-  }
-  if (failedItems.length) {
-    lines.push("失败明细：");
-    failedItems.slice(0, 10).forEach((entry) => lines.push(`- ${entry}`));
-    if (failedItems.length > 10) {
-      lines.push(`- 其余 ${failedItems.length - 10} 条失败未展开`);
-    }
-  }
-  return lines.join("\n").trim();
-}
-
 async function sendRemoteImportCommand() {
   if (!currentRemoteConversationId) {
-    showToast("璇峰厛閫夋嫨瀹㈡埛绔?, "warning");
+    showToast("请先选择客户端", "warning");
     return;
   }
   const rawTitles = document.getElementById("remoteDramaTitlesInput").value.trim();
@@ -1378,43 +1322,27 @@ async function sendRemoteImportCommand() {
     .map((item) => item.trim())
     .filter((item) => item.length > 0);
   if (!titles.length) {
-    showToast("璇疯嚦灏戣緭鍏ヤ竴涓煭鍓у悕", "warning");
+    showToast("请至少输入一个短剧名", "warning");
     return;
   }
   const syncDownload = document.getElementById("remoteSyncDownloadCheckbox").checked;
-  const autoRun = document.getElementById("remoteAutoRunCheckbox").checked;
-  const workspacePath = document.getElementById("remoteWorkspacePathInput").value.trim();
-  const onProjectError = document.getElementById("remoteOnProjectErrorSelect").value;
-  const parallelProjects = Math.max(1, Math.min(4, Number.parseInt(document.getElementById("remoteParallelProjectsInput").value || "1", 10) || 1));
-  const enabledStepsRaw = document.getElementById("remoteEnabledStepsInput").value.trim();
-  const enabledSteps = enabledStepsRaw
-    ? enabledStepsRaw
-        .split(/[\n,]/)
-        .map((item) => item.trim())
-        .filter((item) => item.length > 0)
-    : [];
   try {
     await requestJSON(`/api/remote/conversations/${currentRemoteConversationId}/messages`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         message_type: "command",
-        content_text: `导入短剧：${titles.join("、")}${autoRun ? "（自动执行）" : ""}`,
+        content_text: `导入短剧：${titles.join("、")}`,
         payload: {
           command: "import_drama_titles",
           titles,
           sync_download: syncDownload,
-          auto_run: autoRun,
-          workspace_path: workspacePath,
-          enabled_steps: enabledSteps,
-          on_project_error: onProjectError,
-          parallel_projects: parallelProjects,
         },
       }),
     });
     document.getElementById("remoteDramaTitlesInput").value = "";
     await loadRemoteMessages(currentRemoteConversationId);
-    showToast("杩滅▼瀵煎叆鍛戒护宸插彂閫?, "success");
+    showToast("远程导入命令已发送", "success");
   } catch (error) {
     showToast(error.message, "danger");
   }
@@ -1462,8 +1390,8 @@ async function handleQuickAdd() {
       dupSection.hidden = true;
     }
     showToast(
-      `蹇€熷綍鍏ュ畬鎴愶細鎴愬姛 ${result.success_count} 鏉?{
-        result.duplicates.length ? "锛岄噸澶嶈烦杩?" + result.duplicates.length + " 鏉? : ""
+      `快速录入完成：成功 ${result.success_count} 条${
+        result.duplicates.length ? "，重复跳过 " + result.duplicates.length + " 条" : ""
       }`,
       "success"
     );
@@ -1473,4 +1401,3 @@ async function handleQuickAdd() {
     showToast(error.message, "danger");
   }
 }
-
