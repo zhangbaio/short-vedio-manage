@@ -1,5 +1,6 @@
 import datetime
 import hashlib
+import json
 import math
 import os
 import secrets
@@ -45,6 +46,16 @@ DEFAULT_SORT_FIELD = "date"
 DEFAULT_SORT_DIR = "desc"
 LICENSE_STATUS_VALUES = {"active", "disabled", "expired"}
 LICENSE_EDITION_VALUES = {"basic", "pro", "enterprise"}
+LICENSE_LIST_SORTABLE_FIELDS = {
+    "created_at": "created_at",
+    "updated_at": "updated_at",
+    "expires_at": "expires_at",
+    "licensee": "licensee",
+    "edition": "edition",
+    "status": "status",
+}
+LICENSE_LIST_DEFAULT_SORT_FIELD = "created_at"
+LICENSE_LIST_DEFAULT_SORT_DIR = "desc"
 LICENSE_TOKEN_SALT = "desktop-license"
 LICENSE_TOKEN_MAX_AGE_SECONDS = 60 * 60 * 24 * 30
 REMOTE_MESSAGE_STATUS_VALUES = {"pending", "sent", "running", "success", "failed", "canceled"}
@@ -83,6 +94,22 @@ EXPORT_HEADERS = [
     "备注一",
     "备注二",
     "备注三",
+]
+LICENSE_EXPORT_HEADERS = [
+    "激活码",
+    "掩码",
+    "授权对象",
+    "版本",
+    "状态",
+    "最大设备数",
+    "当前绑定设备数",
+    "累计绑定记录数",
+    "到期时间",
+    "最近校验",
+    "备注",
+    "创建时间",
+    "更新时间",
+    "删除时间",
 ]
 
 app = Flask(__name__)
@@ -249,6 +276,8 @@ def init_db() -> None:
             "ALTER TABLE dramas ADD COLUMN remark1 TEXT DEFAULT NULL",
             "ALTER TABLE dramas ADD COLUMN remark2 TEXT DEFAULT NULL",
             "ALTER TABLE dramas ADD COLUMN remark3 TEXT DEFAULT NULL",
+            "ALTER TABLE licenses ADD COLUMN deleted_at TEXT DEFAULT NULL",
+            "ALTER TABLE licenses ADD COLUMN deleted_by INTEGER DEFAULT NULL",
         ]:
             try:
                 db.execute(col_def)
@@ -260,6 +289,9 @@ def init_db() -> None:
         )
         db.execute(
             "CREATE INDEX IF NOT EXISTS idx_license_activations_machine_id ON license_activations(machine_id)"
+        )
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_licenses_deleted_at ON licenses(deleted_at)"
         )
         db.execute(
             "CREATE INDEX IF NOT EXISTS idx_remote_clients_owner_user_id ON remote_clients(owner_user_id)"
@@ -397,14 +429,153 @@ def current_active_activation_count(db: sqlite3.Connection, license_id: int) -> 
     return int(row["cnt"] if row else 0)
 
 
+def current_total_activation_count(db: sqlite3.Connection, license_id: int) -> int:
+    row = db.execute(
+        """
+        SELECT COUNT(*) AS cnt
+        FROM license_activations
+        WHERE license_id = ?
+        """,
+        (license_id,),
+    ).fetchone()
+    return int(row["cnt"] if row else 0)
+
+
+def latest_license_verification_at(db: sqlite3.Connection, license_id: int) -> str:
+    row = db.execute(
+        """
+        SELECT MAX(last_verified_at) AS last_verified_at
+        FROM license_activations
+        WHERE license_id = ?
+        """,
+        (license_id,),
+    ).fetchone()
+    if not row:
+        return ""
+    return str(row["last_verified_at"] or "")
+
+
 def serialize_license_row(db: sqlite3.Connection, row: sqlite3.Row) -> dict:
     item = dict(row)
     item["active_activations"] = current_active_activation_count(db, row["id"])
+    item["total_activations"] = current_total_activation_count(db, row["id"])
+    item["last_verified_at"] = latest_license_verification_at(db, row["id"])
+    item["is_deleted"] = bool(item.get("deleted_at"))
     return item
 
 
 def serialize_activation_row(row: sqlite3.Row) -> dict:
     return dict(row)
+
+
+def get_license_row(
+    db: sqlite3.Connection,
+    license_id: int,
+    *,
+    include_deleted: bool = False,
+) -> sqlite3.Row | None:
+    sql = "SELECT * FROM licenses WHERE id = ?"
+    params: list[object] = [license_id]
+    if not include_deleted:
+        sql += " AND deleted_at IS NULL"
+    return db.execute(sql, params).fetchone()
+
+
+def get_license_rows_by_ids(
+    db: sqlite3.Connection,
+    license_ids: list[int],
+    *,
+    include_deleted: bool = False,
+) -> list[sqlite3.Row]:
+    if not license_ids:
+        return []
+    placeholders = ",".join(["?"] * len(license_ids))
+    sql = f"SELECT * FROM licenses WHERE id IN ({placeholders})"
+    params: list[object] = list(license_ids)
+    if not include_deleted:
+        sql += " AND deleted_at IS NULL"
+    sql += " ORDER BY id DESC"
+    return db.execute(sql, params).fetchall()
+
+
+def build_license_filter_clause(args) -> tuple[list[str], list[object]]:
+    clauses: list[str] = []
+    params: list[object] = []
+
+    keyword = str(args.get("keyword") or "").strip()
+    if keyword:
+        like = f"%{keyword}%"
+        clauses.append(
+            "(license_key LIKE ? OR license_key_masked LIKE ? OR COALESCE(licensee, '') LIKE ? OR COALESCE(notes, '') LIKE ?)"
+        )
+        params.extend([like, like, like, like])
+
+    edition = str(args.get("edition") or "").strip().lower()
+    if edition in LICENSE_EDITION_VALUES:
+        clauses.append("edition = ?")
+        params.append(edition)
+
+    status = str(args.get("status") or "").strip().lower()
+    show_deleted = str(args.get("show_deleted") or "").strip() == "1"
+    if status == "deleted":
+        clauses.append("deleted_at IS NOT NULL")
+    else:
+        if not show_deleted:
+            clauses.append("deleted_at IS NULL")
+        if status in LICENSE_STATUS_VALUES:
+            clauses.append("status = ?")
+            params.append(status)
+
+    return clauses, params
+
+
+def parse_license_ids_from_payload(data: dict) -> tuple[list[int], str | None]:
+    raw_ids = data.get("ids") or []
+    if not isinstance(raw_ids, list) or not raw_ids:
+        return [], "请选择至少一条授权码"
+    ids: list[int] = []
+    for item in raw_ids:
+        try:
+            value = int(item)
+        except (TypeError, ValueError):
+            continue
+        if value > 0:
+            ids.append(value)
+    ids = list(dict.fromkeys(ids))
+    if not ids:
+        return [], "请选择至少一条有效的授权码"
+    return ids, None
+
+
+def soft_delete_license_row(db: sqlite3.Connection, row: sqlite3.Row, *, deleted_by: int | None) -> tuple[bool, str]:
+    if row["deleted_at"]:
+        return False, "该激活码已删除"
+    active_activations = current_active_activation_count(db, row["id"])
+    if row["status"] == "active" or active_activations > 0:
+        return False, f"{row['license_key_masked']} 请先停用并解绑所有设备后删除"
+    db.execute(
+        """
+        UPDATE licenses
+        SET status = 'disabled', deleted_at = ?, deleted_by = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+        """,
+        (now_iso(), deleted_by, row["id"]),
+    )
+    return True, ""
+
+
+def restore_license_row(db: sqlite3.Connection, row: sqlite3.Row) -> tuple[bool, str]:
+    if not row["deleted_at"]:
+        return False, "该激活码未删除，无需恢复"
+    db.execute(
+        """
+        UPDATE licenses
+        SET deleted_at = NULL, deleted_by = NULL, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+        """,
+        (row["id"],),
+    )
+    return True, ""
 
 
 def generate_remote_client_id() -> str:
@@ -736,6 +907,13 @@ def index():
     return render_template("index.html")
 
 
+@app.route("/licenses")
+@login_required
+@admin_required
+def license_management():
+    return render_template("licenses.html")
+
+
 @app.route("/api/me", methods=["GET"])
 @login_required
 def api_me():
@@ -759,7 +937,7 @@ def client_activate_license():
 
     db = get_db()
     license_row = db.execute(
-        "SELECT * FROM licenses WHERE license_key = ?",
+        "SELECT * FROM licenses WHERE license_key = ? AND deleted_at IS NULL",
         (payload["license_key"],),
     ).fetchone()
     if not license_row:
@@ -800,7 +978,7 @@ def client_verify_license():
 
     db = get_db()
     license_row = db.execute(
-        "SELECT * FROM licenses WHERE license_key = ?",
+        "SELECT * FROM licenses WHERE license_key = ? AND deleted_at IS NULL",
         (payload["license_key"],),
     ).fetchone()
     if not license_row:
@@ -1253,11 +1431,49 @@ def change_password(user_id: int):
 @login_required
 @admin_required
 def list_licenses():
+    page = max(1, int(request.args.get("page", 1) or 1))
+    page_size = int(request.args.get("page_size", 10) or 10)
+    page_size = min(100, max(1, page_size))
+    sort_by = str(
+        request.args.get("sort_by", LICENSE_LIST_DEFAULT_SORT_FIELD) or LICENSE_LIST_DEFAULT_SORT_FIELD
+    ).strip()
+    sort_dir = str(
+        request.args.get("sort_dir", LICENSE_LIST_DEFAULT_SORT_DIR) or LICENSE_LIST_DEFAULT_SORT_DIR
+    ).strip().lower()
+    if sort_by not in LICENSE_LIST_SORTABLE_FIELDS:
+        sort_by = LICENSE_LIST_DEFAULT_SORT_FIELD
+    if sort_dir not in {"asc", "desc"}:
+        sort_dir = LICENSE_LIST_DEFAULT_SORT_DIR
+
+    clauses, params = build_license_filter_clause(request.args)
+    where_sql = " AND ".join(["1=1"] + clauses)
+
     db = get_db()
+    total = db.execute(
+        f"SELECT COUNT(*) AS cnt FROM licenses WHERE {where_sql}",
+        params,
+    ).fetchone()[0]
+    offset = (page - 1) * page_size
     rows = db.execute(
-        "SELECT * FROM licenses ORDER BY created_at DESC, id DESC"
+        f"""
+        SELECT *
+        FROM licenses
+        WHERE {where_sql}
+        ORDER BY {LICENSE_LIST_SORTABLE_FIELDS[sort_by]} {sort_dir.upper()}, id DESC
+        LIMIT ? OFFSET ?
+        """,
+        params + [page_size, offset],
     ).fetchall()
-    return jsonify([serialize_license_row(db, row) for row in rows])
+    pages = math.ceil(total / page_size) if total else 1
+    return jsonify(
+        {
+            "items": [serialize_license_row(db, row) for row in rows],
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "pages": pages,
+        }
+    )
 
 
 @app.route("/api/licenses", methods=["POST"])
@@ -1296,15 +1512,79 @@ def create_license():
     ), 201
 
 
+@app.route("/api/licenses/export", methods=["GET"])
+@login_required
+@admin_required
+def export_licenses():
+    clauses, params = build_license_filter_clause(request.args)
+    where_sql = " AND ".join(["1=1"] + clauses)
+    db = get_db()
+    rows = db.execute(
+        f"""
+        SELECT *
+        FROM licenses
+        WHERE {where_sql}
+        ORDER BY created_at DESC, id DESC
+        """,
+        params,
+    ).fetchall()
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "授权码"
+    ws.append(LICENSE_EXPORT_HEADERS)
+
+    for row in rows:
+        item = serialize_license_row(db, row)
+        status_text = "已删除" if item.get("deleted_at") else item.get("status") or ""
+        ws.append(
+            [
+                item.get("license_key") or "",
+                item.get("license_key_masked") or "",
+                item.get("licensee") or "",
+                item.get("edition") or "",
+                status_text,
+                item.get("max_activations") or 0,
+                item.get("active_activations") or 0,
+                item.get("total_activations") or 0,
+                item.get("expires_at") or "",
+                item.get("last_verified_at") or "",
+                item.get("notes") or "",
+                item.get("created_at") or "",
+                item.get("updated_at") or "",
+                item.get("deleted_at") or "",
+            ]
+        )
+
+    for column_cells in ws.columns:
+        max_length = 0
+        column = column_cells[0].column_letter
+        for cell in column_cells:
+            try:
+                if cell.value:
+                    max_length = max(max_length, len(str(cell.value)))
+            except ValueError:
+                continue
+        ws.column_dimensions[column].width = min(max_length + 2, 40)
+
+    stream = BytesIO()
+    wb.save(stream)
+    stream.seek(0)
+    filename = f"授权码数据_{datetime.date.today().isoformat()}.xlsx"
+    return send_file(
+        stream,
+        as_attachment=True,
+        download_name=filename,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+
 @app.route("/api/licenses/<int:license_id>/activations", methods=["GET"])
 @login_required
 @admin_required
 def list_license_activations(license_id: int):
     db = get_db()
-    license_row = db.execute(
-        "SELECT * FROM licenses WHERE id = ?",
-        (license_id,),
-    ).fetchone()
+    license_row = get_license_row(db, license_id, include_deleted=True)
     if not license_row:
         return jsonify({"error": "未找到该激活码"}), 404
     rows = db.execute(
@@ -1329,10 +1609,7 @@ def list_license_activations(license_id: int):
 @admin_required
 def get_license_secret(license_id: int):
     db = get_db()
-    row = db.execute(
-        "SELECT id, license_key, license_key_masked, licensee, edition, status FROM licenses WHERE id = ?",
-        (license_id,),
-    ).fetchone()
+    row = get_license_row(db, license_id, include_deleted=True)
     if not row:
         return jsonify({"error": "未找到该激活码"}), 404
     return jsonify(
@@ -1343,6 +1620,7 @@ def get_license_secret(license_id: int):
             "licensee": row["licensee"] or "",
             "edition": row["edition"] or "",
             "status": row["status"] or "",
+            "deleted_at": row["deleted_at"] or "",
         }
     )
 
@@ -1352,6 +1630,8 @@ def get_license_secret(license_id: int):
 @admin_required
 def disable_license(license_id: int):
     db = get_db()
+    if not get_license_row(db, license_id):
+        return jsonify({"error": "未找到该激活码"}), 404
     result = db.execute(
         "UPDATE licenses SET status = 'disabled', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
         (license_id,),
@@ -1367,6 +1647,8 @@ def disable_license(license_id: int):
 @admin_required
 def enable_license(license_id: int):
     db = get_db()
+    if not get_license_row(db, license_id):
+        return jsonify({"error": "未找到该激活码"}), 404
     result = db.execute(
         "UPDATE licenses SET status = 'active', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
         (license_id,),
@@ -1386,6 +1668,8 @@ def unbind_license_machine(license_id: int):
     if not machine_id:
         return jsonify({"error": "machine_id 不能为空"}), 400
     db = get_db()
+    if not get_license_row(db, license_id):
+        return jsonify({"error": "未找到该激活码"}), 404
     result = db.execute(
         """
         UPDATE license_activations
@@ -1402,6 +1686,88 @@ def unbind_license_machine(license_id: int):
     if result.rowcount == 0:
         return jsonify({"error": "未找到可解绑的设备记录"}), 404
     return jsonify({"message": "设备解绑成功"})
+
+
+@app.route("/api/licenses/<int:license_id>", methods=["DELETE"])
+@login_required
+@admin_required
+def delete_license(license_id: int):
+    db = get_db()
+    row = get_license_row(db, license_id, include_deleted=True)
+    if not row:
+        return jsonify({"error": "未找到该激活码"}), 404
+    ok, message = soft_delete_license_row(db, row, deleted_by=session.get("user_id"))
+    if not ok:
+        return jsonify({"error": message}), 400
+    db.commit()
+    return jsonify({"message": "激活码已删除"})
+
+
+@app.route("/api/licenses/batch-delete", methods=["POST"])
+@login_required
+@admin_required
+def batch_delete_licenses():
+    data = request.get_json(silent=True) or {}
+    license_ids, error = parse_license_ids_from_payload(data)
+    if error:
+        return jsonify({"error": error}), 400
+
+    db = get_db()
+    rows = get_license_rows_by_ids(db, license_ids, include_deleted=True)
+    found_ids = {int(row["id"]) for row in rows}
+    missing_ids = [license_id for license_id in license_ids if license_id not in found_ids]
+    if missing_ids:
+        return jsonify({"error": f"存在未找到的授权码：{', '.join(map(str, missing_ids))}"}), 404
+
+    for row in rows:
+        ok, message = soft_delete_license_row(db, row, deleted_by=session.get("user_id"))
+        if not ok:
+            db.rollback()
+            return jsonify({"error": message}), 400
+
+    db.commit()
+    return jsonify({"message": f"已删除 {len(rows)} 条授权码"})
+
+
+@app.route("/api/licenses/<int:license_id>/restore", methods=["POST"])
+@login_required
+@admin_required
+def restore_license(license_id: int):
+    db = get_db()
+    row = get_license_row(db, license_id, include_deleted=True)
+    if not row:
+        return jsonify({"error": "未找到该激活码"}), 404
+    ok, message = restore_license_row(db, row)
+    if not ok:
+        return jsonify({"error": message}), 400
+    db.commit()
+    return jsonify({"message": "激活码已恢复"})
+
+
+@app.route("/api/licenses/batch-restore", methods=["POST"])
+@login_required
+@admin_required
+def batch_restore_licenses():
+    data = request.get_json(silent=True) or {}
+    license_ids, error = parse_license_ids_from_payload(data)
+    if error:
+        return jsonify({"error": error}), 400
+
+    db = get_db()
+    rows = get_license_rows_by_ids(db, license_ids, include_deleted=True)
+    found_ids = {int(row["id"]) for row in rows}
+    missing_ids = [license_id for license_id in license_ids if license_id not in found_ids]
+    if missing_ids:
+        return jsonify({"error": f"存在未找到的授权码：{', '.join(map(str, missing_ids))}"}), 404
+
+    for row in rows:
+        ok, message = restore_license_row(db, row)
+        if not ok:
+            db.rollback()
+            return jsonify({"error": message}), 400
+
+    db.commit()
+    return jsonify({"message": f"已恢复 {len(rows)} 条授权码"})
 
 
 @app.route("/api/remote/clients", methods=["GET"])

@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>授权码管理</title>
+    <link
+      href="https://cdn.bootcdn.net/ajax/libs/bootstrap/5.3.2/css/bootstrap.min.css"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+  </head>
+  <body>
+    <nav class="navbar navbar-dark navbar-expand-lg bg-dark">
+      <div class="container-fluid">
+        <a class="navbar-brand" href="{{ url_for('index') }}">视频号短剧管理系统</a>
+        <div class="d-flex align-items-center gap-2 text-white">
+          <a class="btn btn-outline-light btn-sm" href="{{ url_for('index') }}">返回首页</a>
+          <div class="dropdown">
+            <button class="btn btn-outline-light btn-sm dropdown-toggle" data-bs-toggle="dropdown">
+              {{ session.username }}
+              <span class="badge bg-info text-dark ms-1">{{ session.role }}</span>
+            </button>
+            <ul class="dropdown-menu dropdown-menu-end">
+              <li><a class="dropdown-item" href="{{ url_for('index') }}">短剧管理</a></li>
+            </ul>
+          </div>
+          <a class="btn btn-outline-light btn-sm" href="{{ url_for('logout') }}">退出</a>
+        </div>
+      </div>
+    </nav>
+
+    <div class="container py-4">
+      <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
+        <div>
+          <h1 class="h3 mb-1">授权码管理</h1>
+          <div class="text-muted">支持搜索、分页、设备明细与安全删除</div>
+        </div>
+      </div>
+
+      <div class="row g-4">
+        <div class="col-xl-4">
+          <div class="card license-sidebar">
+            <div class="card-body">
+              <div class="d-flex justify-content-between align-items-center mb-3">
+                <h5 class="card-title mb-0">新建激活码</h5>
+                <button class="btn btn-sm btn-outline-secondary" id="resetLicenseFormBtn">重置</button>
+              </div>
+              <div class="mb-3">
+                <label class="form-label" for="licenseKeyInput">激活码</label>
+                <input type="text" class="form-control" id="licenseKeyInput" placeholder="留空自动生成" />
+              </div>
+              <div class="mb-3">
+                <label class="form-label" for="licenseeInput">授权对象</label>
+                <input type="text" class="form-control" id="licenseeInput" placeholder="例如：张三 / 某公司" />
+              </div>
+              <div class="row g-3">
+                <div class="col-md-6">
+                  <label class="form-label" for="licenseEditionInput">版本</label>
+                  <select class="form-select" id="licenseEditionInput">
+                    <option value="basic">basic</option>
+                    <option value="pro" selected>pro</option>
+                    <option value="enterprise">enterprise</option>
+                  </select>
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label" for="licenseMaxActivationsInput">最大设备数</label>
+                  <input
+                    type="number"
+                    class="form-control"
+                    id="licenseMaxActivationsInput"
+                    min="1"
+                    max="100"
+                    value="1"
+                  />
+                </div>
+              </div>
+              <div class="mt-3 mb-3">
+                <label class="form-label" for="licenseExpiresAtInput">到期时间</label>
+                <input type="date" class="form-control" id="licenseExpiresAtInput" />
+              </div>
+              <div class="mb-3">
+                <label class="form-label" for="licenseNotesInput">备注</label>
+                <textarea class="form-control" id="licenseNotesInput" rows="4" maxlength="500"></textarea>
+              </div>
+              <button class="btn btn-primary w-100" id="createLicenseBtn">创建激活码</button>
+              <div class="alert alert-success mt-3 mb-0" id="licenseCreateResult" hidden>
+                <div class="fw-semibold mb-1">已生成激活码</div>
+                <div class="font-monospace" id="licenseCreatedKey"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="col-xl-8">
+          <div class="card mb-3">
+            <div class="card-body">
+              <div class="row g-3">
+                <div class="col-md-5">
+                  <label class="form-label" for="licenseKeywordInput">搜索</label>
+                  <input
+                    type="text"
+                    class="form-control"
+                    id="licenseKeywordInput"
+                    placeholder="授权对象 / 激活码 / 备注"
+                  />
+                </div>
+                <div class="col-md-2">
+                  <label class="form-label" for="licenseStatusFilter">状态</label>
+                  <select class="form-select" id="licenseStatusFilter">
+                    <option value="">全部</option>
+                    <option value="active">启用</option>
+                    <option value="disabled">停用</option>
+                    <option value="expired">过期</option>
+                    <option value="deleted">已删除</option>
+                  </select>
+                </div>
+                <div class="col-md-2">
+                  <label class="form-label" for="licenseEditionFilter">版本</label>
+                  <select class="form-select" id="licenseEditionFilter">
+                    <option value="">全部</option>
+                    <option value="basic">basic</option>
+                    <option value="pro">pro</option>
+                    <option value="enterprise">enterprise</option>
+                  </select>
+                </div>
+                <div class="col-md-3">
+                  <label class="form-label" for="licensePageSizeSelect">每页</label>
+                  <select class="form-select" id="licensePageSizeSelect">
+                    <option value="10" selected>10 条</option>
+                    <option value="20">20 条</option>
+                    <option value="50">50 条</option>
+                  </select>
+                </div>
+              </div>
+              <div class="mt-3 d-flex flex-wrap justify-content-between align-items-center gap-2">
+                <div class="form-check">
+                  <input class="form-check-input" type="checkbox" id="licenseShowDeletedCheckbox" />
+                  <label class="form-check-label" for="licenseShowDeletedCheckbox">同时显示已删除授权码</label>
+                </div>
+                <div class="d-flex gap-2">
+                  <button class="btn btn-outline-success" id="exportLicenseBtn">导出当前结果</button>
+                  <button class="btn btn-primary" id="licenseQueryBtn">查询</button>
+                  <button class="btn btn-outline-secondary" id="licenseResetBtn">重置</button>
+                  <button class="btn btn-outline-secondary" id="refreshLicenseBtn">刷新</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card mb-3">
+            <div class="card-body">
+              <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+                <div class="text-muted small" id="licenseSelectionInfo">已选择 0 条</div>
+                <div class="d-flex gap-2">
+                  <button class="btn btn-outline-danger btn-sm" id="batchDeleteLicenseBtn" disabled>批量删除</button>
+                  <button class="btn btn-outline-success btn-sm" id="batchRestoreLicenseBtn" disabled>批量恢复</button>
+                </div>
+              </div>
+              <div class="d-flex justify-content-between align-items-center gap-3 mb-3">
+                <div>
+                  <h5 class="card-title mb-1">激活码列表</h5>
+                  <div class="text-muted small" id="licensePageInfo">第 1 页 / 共 1 页，共 0 条</div>
+                </div>
+                <div class="btn-group" role="group">
+                  <button class="btn btn-outline-secondary" id="licenseFirstPageBtn">首页</button>
+                  <button class="btn btn-outline-secondary" id="licensePrevPageBtn">上一页</button>
+                  <button class="btn btn-outline-secondary" id="licenseNextPageBtn">下一页</button>
+                  <button class="btn btn-outline-secondary" id="licenseLastPageBtn">末页</button>
+                </div>
+              </div>
+              <div class="table-responsive">
+                <table class="table table-sm align-middle mb-0">
+                  <thead>
+                    <tr>
+                      <th class="text-center"><input type="checkbox" id="licenseSelectAll" /></th>
+                      <th>激活码</th>
+                      <th>授权对象</th>
+                      <th>版本</th>
+                      <th>设备</th>
+                      <th>到期时间</th>
+                      <th>最近校验</th>
+                      <th>状态</th>
+                      <th>操作</th>
+                    </tr>
+                  </thead>
+                  <tbody id="licenseTableBody"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-body">
+              <div class="d-flex justify-content-between align-items-center gap-3 mb-3">
+                <div>
+                  <h5 class="card-title mb-1">设备绑定明细</h5>
+                  <div class="text-muted small" id="licenseActivationsTitle">请选择一条激活码查看</div>
+                </div>
+              </div>
+              <div class="table-responsive">
+                <table class="table table-sm align-middle mb-0">
+                  <thead>
+                    <tr>
+                      <th>机器码</th>
+                      <th>应用</th>
+                      <th>版本</th>
+                      <th>激活时间</th>
+                      <th>最近校验</th>
+                      <th>状态</th>
+                      <th>操作</th>
+                    </tr>
+                  </thead>
+                  <tbody id="licenseActivationsBody"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal fade" id="licenseSecretModal" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title">完整激活码</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div>
+          <div class="modal-body">
+            <p class="text-muted small mb-2">请妥善保管完整激活码，不要直接发掩码值给客户端。</p>
+            <div class="mb-3">
+              <label class="form-label" for="licenseSecretValue">完整激活码</label>
+              <input type="text" class="form-control font-monospace" id="licenseSecretValue" readonly />
+            </div>
+            <div class="mb-0">
+              <label class="form-label">授权对象</label>
+              <div id="licenseSecretMeta" class="text-muted small"></div>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
+            <button type="button" class="btn btn-primary" id="copyLicenseSecretBtn">复制完整激活码</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="toast-container position-fixed top-0 end-0 p-3" style="z-index: 9999" id="toastContainer"></div>
+
+    <script
+      src="https://cdn.bootcdn.net/ajax/libs/bootstrap/5.3.2/js/bootstrap.bundle.min.js"
+      crossorigin="anonymous"
+    ></script>
+    <script src="{{ url_for('static', filename='license.js') }}"></script>
+  </body>
+</html>

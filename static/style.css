@@ -89,3 +89,24 @@ body {
   opacity: 1;
   color: #1d4ed8;
 }
+
+.license-sidebar {
+  position: sticky;
+  top: 1rem;
+}
+
+.license-row-active {
+  background-color: #eef6ff;
+}
+
+.license-actions-cell {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+@media (max-width: 1199px) {
+  .license-sidebar {
+    position: static;
+  }
+}

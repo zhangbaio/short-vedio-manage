@@ -641,7 +641,8 @@ async function loadUsers() {
 
 async function loadLicenses() {
   try {
-    const items = await requestJSON("/api/licenses");
+    const data = await requestJSON("/api/licenses?page=1&page_size=50");
+    const items = Array.isArray(data) ? data : data?.items || [];
     if (!items) return;
     const tbody = document.getElementById("licenseTableBody");
     tbody.innerHTML = "";
