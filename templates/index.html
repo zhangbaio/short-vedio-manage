@@ -1,9 +1,9 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>视频号短剧管理系统</title>
+    <title>瑙嗛鍙风煭鍓х鐞嗙郴缁?/title>
     <link
       href="https://cdn.bootcdn.net/ajax/libs/bootstrap/5.3.2/css/bootstrap.min.css"
       rel="stylesheet"
@@ -13,7 +13,7 @@
   <body>
     <nav class="navbar navbar-dark navbar-expand-lg bg-dark">
       <div class="container-fluid">
-        <a class="navbar-brand" href="#">视频号短剧管理系统</a>
+        <a class="navbar-brand" href="#">瑙嗛鍙风煭鍓х鐞嗙郴缁?/a>
         <div class="d-flex align-items-center text-white">
           <div class="dropdown me-2">
             <button class="btn btn-outline-light btn-sm dropdown-toggle" data-bs-toggle="dropdown">
@@ -21,10 +21,10 @@
               <span class="badge bg-info text-dark ms-1">{{ session.role }}</span>
             </button>
             <ul class="dropdown-menu dropdown-menu-end">
-              <li><a class="dropdown-item" id="changePasswordBtn" href="javascript:void(0)">修改密码</a></li>
+              <li><a class="dropdown-item" id="changePasswordBtn" href="javascript:void(0)">淇敼瀵嗙爜</a></li>
             </ul>
           </div>
-          <a class="btn btn-outline-light btn-sm" href="{{ url_for('logout') }}">退出</a>
+          <a class="btn btn-outline-light btn-sm" href="{{ url_for('logout') }}">閫€鍑?/a>
         </div>
       </div>
     </nav>
@@ -32,18 +32,18 @@
     <div class="container py-4">
       <div class="mb-3 d-flex gap-2" id="adminActions" hidden>
         <button class="btn btn-success" data-bs-toggle="modal" data-bs-target="#importModal">
-          导入Excel
+          瀵煎叆Excel
         </button>
-        <button class="btn btn-primary" id="addDramaBtn">新增短剧</button>
-        <button class="btn btn-warning" id="quickAddBtn">快速录入爆剧</button>
-        <button class="btn btn-secondary" id="userManageBtn">用户管理</button>
-        <a class="btn btn-dark" href="{{ url_for('license_management') }}">授权码管理</a>
-        <button class="btn btn-danger" id="batchDeleteBtn" disabled>批量删除</button>
+        <button class="btn btn-primary" id="addDramaBtn">鏂板鐭墽</button>
+        <button class="btn btn-warning" id="quickAddBtn">蹇€熷綍鍏ョ垎鍓?/button>
+        <button class="btn btn-secondary" id="userManageBtn">鐢ㄦ埛绠＄悊</button>
+        <a class="btn btn-dark" href="{{ url_for('license_management') }}">鎺堟潈鐮佺鐞?/a>
+        <button class="btn btn-danger" id="batchDeleteBtn" disabled>鎵归噺鍒犻櫎</button>
       </div>
 
       <div class="mb-3 d-flex gap-2">
         <button class="btn btn-outline-dark position-relative" id="remoteManageBtn">
-          远程控制
+          杩滅▼鎺у埗
           <span
             id="remoteUnreadBadge"
             class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger"
@@ -56,50 +56,50 @@
         <div class="card-body">
           <div class="row g-3">
             <div class="col-md-3">
-              <label class="form-label">搜索剧名</label>
-              <input type="text" id="searchInput" class="form-control" placeholder="原剧名/新剧名" />
+              <label class="form-label">鎼滅储鍓у悕</label>
+              <input type="text" id="searchInput" class="form-control" placeholder="鍘熷墽鍚?鏂板墽鍚? />
             </div>
             <div class="col-md-2">
-              <label class="form-label">公司</label>
+              <label class="form-label">鍏徃</label>
               <select id="companySelect" class="form-select">
-                <option value="">全部</option>
+                <option value="">鍏ㄩ儴</option>
               </select>
             </div>
             <div class="col-md-2">
-              <label class="form-label">审核通过</label>
+              <label class="form-label">瀹℃牳閫氳繃</label>
               <select id="reviewSelect" class="form-select">
-                <option value="">全部</option>
-                <option value="是">是</option>
-                <option value="否">否</option>
+                <option value="">鍏ㄩ儴</option>
+                <option value="鏄?>鏄?/option>
+                <option value="鍚?>鍚?/option>
               </select>
             </div>
             <div class="col-md-2">
-              <label class="form-label">是否上传</label>
+              <label class="form-label">鏄惁涓婁紶</label>
               <select id="uploadedSelect" class="form-select">
-                <option value="">全部</option>
-                <option value="是">是</option>
-                <option value="否">否</option>
+                <option value="">鍏ㄩ儴</option>
+                <option value="鏄?>鏄?/option>
+                <option value="鍚?>鍚?/option>
               </select>
             </div>
             <div class="col-md-1">
-              <label class="form-label">开始日期</label>
+              <label class="form-label">寮€濮嬫棩鏈?/label>
               <input type="date" id="dateFrom" class="form-control" />
             </div>
             <div class="col-md-1">
-              <label class="form-label">结束日期</label>
+              <label class="form-label">缁撴潫鏃ユ湡</label>
               <input type="date" id="dateTo" class="form-control" />
             </div>
             <div class="col-md-2 d-flex align-items-end">
               <div class="form-check">
                 <input class="form-check-input" type="checkbox" id="hideQuickAdd" checked />
-                <label class="form-check-label" for="hideQuickAdd">不显示爆剧</label>
+                <label class="form-check-label" for="hideQuickAdd">涓嶆樉绀虹垎鍓?/label>
               </div>
             </div>
           </div>
           <div class="mt-3 d-flex gap-2">
-            <button class="btn btn-primary" id="queryBtn">查询</button>
-            <button class="btn btn-outline-secondary" id="resetBtn">重置</button>
-            <button class="btn btn-outline-success" id="exportBtn">导出Excel</button>
+            <button class="btn btn-primary" id="queryBtn">鏌ヨ</button>
+            <button class="btn btn-outline-secondary" id="resetBtn">閲嶇疆</button>
+            <button class="btn btn-outline-success" id="exportBtn">瀵煎嚭Excel</button>
           </div>
         </div>
       </div>
@@ -110,22 +110,22 @@
             <tr>
               <th scope="col"><input type="checkbox" id="selectAll" /></th>
               <th scope="col">#</th>
-              <th scope="col" data-sort="date" class="sortable-col">日期 <span class="sort-icon">⇅</span></th>
-              <th scope="col" data-sort="original_name" class="sortable-col">原剧名 <span class="sort-icon">⇅</span></th>
-              <th scope="col" data-sort="new_name" class="sortable-col">新剧名 <span class="sort-icon">⇅</span></th>
-              <th scope="col" data-sort="episodes" class="sortable-col">集数 <span class="sort-icon">⇅</span></th>
-              <th scope="col" data-sort="duration" class="sortable-col">时长(分) <span class="sort-icon">⇅</span></th>
-              <th scope="col" data-sort="review_passed" class="sortable-col">审核通过 <span class="sort-icon">⇅</span></th>
-              <th scope="col" data-sort="uploaded" class="sortable-col">是否上传 <span class="sort-icon">⇅</span></th>
-              <th scope="col">素材</th>
-              <th scope="col">推广语</th>
-              <th scope="col">简介</th>
-              <th scope="col" data-sort="company" class="sortable-col">公司 <span class="sort-icon">⇅</span></th>
-              <th scope="col">上传者</th>
-              <th scope="col">备注一</th>
-              <th scope="col">备注二</th>
-              <th scope="col">备注三</th>
-              <th scope="col">操作</th>
+              <th scope="col" data-sort="date" class="sortable-col">鏃ユ湡 <span class="sort-icon">鈬?/span></th>
+              <th scope="col" data-sort="original_name" class="sortable-col">鍘熷墽鍚?<span class="sort-icon">鈬?/span></th>
+              <th scope="col" data-sort="new_name" class="sortable-col">鏂板墽鍚?<span class="sort-icon">鈬?/span></th>
+              <th scope="col" data-sort="episodes" class="sortable-col">闆嗘暟 <span class="sort-icon">鈬?/span></th>
+              <th scope="col" data-sort="duration" class="sortable-col">鏃堕暱(鍒? <span class="sort-icon">鈬?/span></th>
+              <th scope="col" data-sort="review_passed" class="sortable-col">瀹℃牳閫氳繃 <span class="sort-icon">鈬?/span></th>
+              <th scope="col" data-sort="uploaded" class="sortable-col">鏄惁涓婁紶 <span class="sort-icon">鈬?/span></th>
+              <th scope="col">绱犳潗</th>
+              <th scope="col">鎺ㄥ箍璇?/th>
+              <th scope="col">绠€浠?/th>
+              <th scope="col" data-sort="company" class="sortable-col">鍏徃 <span class="sort-icon">鈬?/span></th>
+              <th scope="col">涓婁紶鑰?/th>
+              <th scope="col">澶囨敞涓€</th>
+              <th scope="col">澶囨敞浜?/th>
+              <th scope="col">澶囨敞涓?/th>
+              <th scope="col">鎿嶄綔</th>
             </tr>
           </thead>
           <tbody id="dramaTableBody"></tbody>
@@ -134,20 +134,20 @@
 
       <div class="d-flex flex-wrap align-items-center justify-content-between">
         <div>
-          <span id="pageInfo">第1页/共1页，共0条</span>
+          <span id="pageInfo">绗?椤?鍏?椤碉紝鍏?鏉?/span>
         </div>
         <div class="d-flex align-items-center gap-2">
-          <label class="form-label mb-0" for="pageSizeSelect">每页</label>
+          <label class="form-label mb-0" for="pageSizeSelect">姣忛〉</label>
           <select id="pageSizeSelect" class="form-select" style="width: 100px">
             <option value="10">10</option>
             <option value="20" selected>20</option>
             <option value="50">50</option>
           </select>
           <div class="btn-group" role="group">
-            <button class="btn btn-outline-secondary" id="firstPageBtn">首页</button>
-            <button class="btn btn-outline-secondary" id="prevPageBtn">上一页</button>
-            <button class="btn btn-outline-secondary" id="nextPageBtn">下一页</button>
-            <button class="btn btn-outline-secondary" id="lastPageBtn">末页</button>
+            <button class="btn btn-outline-secondary" id="firstPageBtn">棣栭〉</button>
+            <button class="btn btn-outline-secondary" id="prevPageBtn">涓婁竴椤?/button>
+            <button class="btn btn-outline-secondary" id="nextPageBtn">涓嬩竴椤?/button>
+            <button class="btn btn-outline-secondary" id="lastPageBtn">鏈〉</button>
           </div>
         </div>
       </div>
@@ -158,19 +158,19 @@
       <div class="modal-dialog modal-lg">
         <div class="modal-content">
           <div class="modal-header">
-            <h5 class="modal-title" id="dramaModalLabel">新增短剧</h5>
+            <h5 class="modal-title" id="dramaModalLabel">鏂板鐭墽</h5>
             <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
           </div>
           <div class="modal-body">
             <form id="dramaForm" class="row g-3">
               <input type="hidden" id="dramaId" />
               <div class="col-md-4">
-                <label class="form-label">日期</label>
+                <label class="form-label">鏃ユ湡</label>
                 <input type="date" class="form-control" id="dateInput" required />
-                <div class="invalid-feedback">请选择日期</div>
+                <div class="invalid-feedback">璇烽€夋嫨鏃ユ湡</div>
               </div>
               <div class="col-md-4">
-                <label class="form-label">原剧名</label>
+                <label class="form-label">鍘熷墽鍚?/label>
                 <input
                   type="text"
                   class="form-control"
@@ -178,10 +178,10 @@
                   required
                   maxlength="100"
                 />
-                <div class="invalid-feedback">原剧名不能为空</div>
+                <div class="invalid-feedback">鍘熷墽鍚嶄笉鑳戒负绌?/div>
               </div>
               <div class="col-md-4">
-                <label class="form-label">新剧名</label>
+                <label class="form-label">鏂板墽鍚?/label>
                 <input
                   type="text"
                   class="form-control"
@@ -189,10 +189,10 @@
                   required
                   maxlength="100"
                 />
-                <div class="invalid-feedback">新剧名不能为空</div>
+                <div class="invalid-feedback">鏂板墽鍚嶄笉鑳戒负绌?/div>
               </div>
               <div class="col-md-3">
-                <label class="form-label">集数</label>
+                <label class="form-label">闆嗘暟</label>
                 <input
                   type="number"
                   class="form-control"
@@ -201,10 +201,10 @@
                   max="9999"
                   required
                 />
-                <div class="invalid-feedback">请输入1-9999之间的正整数</div>
+                <div class="invalid-feedback">璇疯緭鍏?-9999涔嬮棿鐨勬鏁存暟</div>
               </div>
               <div class="col-md-3">
-                <label class="form-label">时长(分钟)</label>
+                <label class="form-label">鏃堕暱(鍒嗛挓)</label>
                 <input
                   type="number"
                   class="form-control"
@@ -213,415 +213,67 @@
                   max="99999"
                   required
                 />
-                <div class="invalid-feedback">请输入1-99999之间的正整数</div>
+                <div class="invalid-feedback">璇疯緭鍏?-99999涔嬮棿鐨勬鏁存暟</div>
               </div>
               <div class="col-md-3">
-                <label class="form-label">审核通过</label>
+                <label class="form-label">瀹℃牳閫氳繃</label>
                 <select class="form-select" id="reviewInput">
-                  <option value="否">否</option>
-                  <option value="是">是</option>
+                  <option value="鍚?>鍚?/option>
+                  <option value="鏄?>鏄?/option>
                 </select>
               </div>
               <div class="col-md-3">
-                <label class="form-label">是否上传</label>
+                <label class="form-label">鏄惁涓婁紶</label>
                 <select class="form-select" id="uploadedInput">
-                  <option value="否">否</option>
-                  <option value="是">是</option>
+                  <option value="鍚?>鍚?/option>
+                  <option value="鏄?>鏄?/option>
                 </select>
               </div>
               <div class="col-md-6">
-                <label class="form-label">素材</label>
+                <label class="form-label">绱犳潗</label>
                 <input type="text" class="form-control" id="materialsInput" maxlength="200" />
               </div>
               <div class="col-md-6">
-                <label class="form-label">推广语</label>
+                <label class="form-label">鎺ㄥ箍璇?/label>
                 <input type="text" class="form-control" id="promoTextInput" maxlength="500" />
-              </div>
-              <div class="col-12">
-                <label class="form-label">简介</label>
-                <textarea class="form-control" id="descriptionInput" rows="3" maxlength="2000"></textarea>
-              </div>
-              <div class="col-md-6">
-                <label class="form-label">公司</label>
-                <input type="text" class="form-control" id="companyInput" required maxlength="100" />
-                <div class="invalid-feedback">公司不能为空</div>
-              </div>
-              <div class="col-md-4">
-                <label class="form-label">备注一</label>
-                <input type="text" class="form-control" id="remark1Input" maxlength="200" />
-              </div>
-              <div class="col-md-4">
-                <label class="form-label">备注二</label>
-                <input type="text" class="form-control" id="remark2Input" maxlength="200" />
-              </div>
-              <div class="col-md-4">
-                <label class="form-label">备注三</label>
-                <input type="text" class="form-control" id="remark3Input" maxlength="200" />
-              </div>
-            </form>
-          </div>
-          <div class="modal-footer">
-            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
-            <button type="button" class="btn btn-primary" id="saveDramaBtn">保存</button>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Import Modal -->
-    <div class="modal fade" id="importModal" tabindex="-1" aria-hidden="true">
-      <div class="modal-dialog modal-lg">
-        <div class="modal-content">
-          <div class="modal-header">
-            <h5 class="modal-title">导入Excel</h5>
-            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-          </div>
-          <div class="modal-body">
-            <div class="mb-3">
-              <label class="form-label">选择Excel文件</label>
-              <input type="file" class="form-control" id="importFile" accept=".xlsx,.xls" />
-            </div>
-            <button class="btn btn-primary" id="importBtn">上传导入</button>
-            <div class="mt-3" id="importResult" hidden>
-              <p class="mb-1">新增数量：<span id="newCount">0</span></p>
-              <p class="mb-1">重复数量：<span id="duplicateCount">0</span></p>
-              <div class="table-responsive" id="conflictContainer" hidden>
-                <h6 class="text-danger">存在冲突：</h6>
-                <table class="table table-sm table-bordered">
-                  <thead>
-                    <tr>
-                      <th>原剧名</th>
-                      <th>导入新剧名</th>
-                      <th>已有新剧名</th>
-                    </tr>
-                  </thead>
-                  <tbody id="conflictTableBody"></tbody>
-                </table>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Delete Modal -->
-    <div class="modal fade" id="deleteModal" tabindex="-1" aria-hidden="true">
-      <div class="modal-dialog">
-        <div class="modal-content">
-          <div class="modal-header">
-            <h5 class="modal-title">确认删除</h5>
-            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-          </div>
-          <div class="modal-body">
-            <p id="deleteMessage">确定删除该短剧吗？</p>
-          </div>
-          <div class="modal-footer">
-            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
-            <button type="button" class="btn btn-danger" id="confirmDeleteBtn">删除</button>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- User Modal -->
-    <div class="modal fade" id="userModal" tabindex="-1" aria-hidden="true">
-      <div class="modal-dialog">
-        <div class="modal-content">
-          <div class="modal-header">
-            <h5 class="modal-title">用户管理</h5>
-            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-          </div>
-          <div class="modal-body">
-            <div class="mb-3">
-              <label class="form-label">用户名</label>
-              <input type="text" class="form-control" id="userNameInput" />
-              <div class="invalid-feedback">用户名不能为空，2-30位字母数字下划线</div>
-            </div>
-            <div class="mb-3">
-              <label class="form-label">密码</label>
-              <input type="password" class="form-control" id="userPasswordInput" />
-              <div class="invalid-feedback">密码不能为空，最少6位</div>
-            </div>
-            <div class="mb-3">
-              <label class="form-label">角色</label>
-              <select class="form-select" id="userRoleInput">
-                <option value="user">普通用户</option>
-                <option value="admin">管理员</option>
-              </select>
-            </div>
-            <button class="btn btn-primary w-100" id="createUserBtn">新增用户</button>
-            <hr />
-            <div class="table-responsive">
-              <table class="table table-sm">
-                <thead>
-                  <tr>
-                    <th>用户名</th>
-                    <th>角色</th>
-                    <th>操作</th>
-                  </tr>
-                </thead>
-                <tbody id="userTableBody"></tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- License Modal -->
-    <div class="modal fade" id="licenseModal" tabindex="-1" aria-hidden="true">
-      <div class="modal-dialog modal-xl">
-        <div class="modal-content">
-          <div class="modal-header">
-            <h5 class="modal-title">授权码管理</h5>
-            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-          </div>
-          <div class="modal-body">
-            <div class="row g-4">
-              <div class="col-lg-4">
-                <div class="card h-100">
-                  <div class="card-body">
-                    <h6 class="card-title mb-3">新建激活码</h6>
-                    <div class="mb-3">
-                      <label class="form-label">激活码</label>
-                      <input type="text" class="form-control" id="licenseKeyInput" placeholder="留空自动生成" />
-                    </div>
-                    <div class="mb-3">
-                      <label class="form-label">授权对象</label>
-                      <input type="text" class="form-control" id="licenseeInput" placeholder="例如：张三 / 某公司" />
-                    </div>
-                    <div class="mb-3">
-                      <label class="form-label">版本</label>
-                      <select class="form-select" id="licenseEditionInput">
-                        <option value="basic">basic</option>
-                        <option value="pro" selected>pro</option>
-                        <option value="enterprise">enterprise</option>
-                      </select>
-                    </div>
-                    <div class="mb-3">
-                      <label class="form-label">最大设备数</label>
-                      <input type="number" class="form-control" id="licenseMaxActivationsInput" min="1" max="100" value="1" />
-                    </div>
-                    <div class="mb-3">
-                      <label class="form-label">到期时间</label>
-                      <input type="date" class="form-control" id="licenseExpiresAtInput" />
-                    </div>
-                    <div class="mb-3">
-                      <label class="form-label">备注</label>
-                      <textarea class="form-control" id="licenseNotesInput" rows="3" maxlength="500"></textarea>
-                    </div>
-                    <button class="btn btn-primary w-100" id="createLicenseBtn">创建激活码</button>
-                    <div class="alert alert-success mt-3 mb-0" id="licenseCreateResult" hidden>
-                      <div class="fw-semibold mb-1">已生成激活码</div>
-                      <div class="font-monospace" id="licenseCreatedKey"></div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-              <div class="col-lg-8">
-                <div class="card mb-3">
-                  <div class="card-body">
-                    <div class="d-flex justify-content-between align-items-center mb-3">
-                      <h6 class="card-title mb-0">激活码列表</h6>
-                      <button class="btn btn-outline-secondary btn-sm" id="refreshLicenseBtn">刷新</button>
-                    </div>
-                    <div class="table-responsive">
-                      <table class="table table-sm align-middle">
-                        <thead>
-                          <tr>
-                            <th>激活码</th>
-                            <th>授权对象</th>
-                            <th>版本</th>
-                            <th>设备</th>
-                            <th>到期时间</th>
-                            <th>状态</th>
-                            <th>操作</th>
-                          </tr>
-                        </thead>
-                        <tbody id="licenseTableBody"></tbody>
-                      </table>
-                    </div>
-                  </div>
-                </div>
-                <div class="card">
-                  <div class="card-body">
-                    <div class="d-flex justify-content-between align-items-center mb-3">
-                      <h6 class="card-title mb-0">设备绑定明细</h6>
-                      <span class="text-muted small" id="licenseActivationsTitle">请选择一条激活码查看</span>
-                    </div>
-                    <div class="table-responsive">
-                      <table class="table table-sm align-middle">
-                        <thead>
-                          <tr>
-                            <th>机器码</th>
-                            <th>应用</th>
-                            <th>版本</th>
-                            <th>激活时间</th>
-                            <th>最近校验</th>
-                            <th>状态</th>
-                            <th>操作</th>
-                          </tr>
-                        </thead>
-                        <tbody id="licenseActivationsBody"></tbody>
-                      </table>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- License Secret Modal -->
-    <div class="modal fade" id="licenseSecretModal" tabindex="-1" aria-hidden="true">
-      <div class="modal-dialog">
-        <div class="modal-content">
-          <div class="modal-header">
-            <h5 class="modal-title">完整激活码</h5>
-            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-          </div>
-          <div class="modal-body">
-            <p class="text-muted small mb-2">请妥善保管完整激活码，不要直接发掩码值给客户端。</p>
-            <div class="mb-3">
-              <label class="form-label">完整激活码</label>
-              <input type="text" class="form-control font-monospace" id="licenseSecretValue" readonly />
-            </div>
-            <div class="mb-0">
-              <label class="form-label">授权对象</label>
-              <div id="licenseSecretMeta" class="text-muted small"></div>
-            </div>
-          </div>
-          <div class="modal-footer">
-            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
-            <button type="button" class="btn btn-primary" id="copyLicenseSecretBtn">复制完整激活码</button>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Change Password Modal -->
-    <div class="modal fade" id="changePasswordModal" tabindex="-1" aria-hidden="true">
-      <div class="modal-dialog">
-        <div class="modal-content">
-          <div class="modal-header">
-            <h5 class="modal-title">修改密码</h5>
-            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-          </div>
-          <div class="modal-body">
-            <div class="mb-3">
-              <label class="form-label" for="currentPasswordInput">当前密码</label>
-              <input type="password" class="form-control" id="currentPasswordInput" />
-              <div class="invalid-feedback">当前密码不能为空</div>
-            </div>
-            <div class="mb-3">
-              <label class="form-label" for="newPasswordInput">新密码</label>
-              <input type="password" class="form-control" id="newPasswordInput" placeholder="至少6位" />
-              <div class="invalid-feedback">新密码不能为空，至少6位</div>
-            </div>
-            <div class="mb-3">
-              <label class="form-label" for="confirmPasswordInput">确认新密码</label>
-              <input type="password" class="form-control" id="confirmPasswordInput" />
-              <div class="invalid-feedback">两次密码不一致</div>
-            </div>
-          </div>
-          <div class="modal-footer">
-            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
-            <button type="button" class="btn btn-primary" id="confirmChangePasswordBtn">确认修改</button>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Quick Add Modal -->
-    <div class="modal fade" id="quickAddModal" tabindex="-1" aria-hidden="true">
-      <div class="modal-dialog">
-        <div class="modal-content">
-          <div class="modal-header">
-            <h5 class="modal-title">快速录入爆剧</h5>
-            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-          </div>
-          <div class="modal-body">
-            <p class="text-muted small mb-3">
-              每行输入一个原剧名，新剧名默认与原剧名相同，其他字段使用默认值（集数/时长留空，审核通过=否，是否上传=否）。
-            </p>
-            <div class="mb-3">
-              <label class="form-label">剧名列表 <span class="text-danger">*</span></label>
-              <textarea
-                class="form-control"
-                id="quickAddNames"
-                rows="8"
-                placeholder="每行一个剧名，例如：&#10;都市爱情第一季&#10;仙侠传奇&#10;重生之路"
-              ></textarea>
-              <div class="invalid-feedback">请至少输入一个剧名</div>
-            </div>
-            <div class="mb-3">
-              <label class="form-label">公司（可选，统一应用）</label>
-              <input type="text" class="form-control" id="quickAddCompany" maxlength="100" placeholder="留空则不填写公司" />
-            </div>
-            <div id="quickAddResult" hidden>
-              <hr />
-              <p class="mb-1 text-success">✅ 成功录入：<strong id="quickAddSuccessCount">0</strong> 条</p>
-              <div id="quickAddDuplicatesSection" hidden>
-                <p class="mb-1 text-warning">⚠️ 重复跳过：</p>
-                <ul class="mb-0 ps-3" id="quickAddDuplicatesList"></ul>
-              </div>
-            </div>
-          </div>
-          <div class="modal-footer">
-            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
-            <button type="button" class="btn btn-warning" id="quickAddSubmitBtn">录入</button>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Remote Modal -->
-    <div class="modal fade" id="remoteModal" tabindex="-1" aria-hidden="true">
-      <div class="modal-dialog modal-xl modal-dialog-scrollable">
-        <div class="modal-content">
-          <div class="modal-header">
-            <h5 class="modal-title">远程控制</h5>
-            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-          </div>
-          <div class="modal-body">
-            <div class="row g-3">
-              <div class="col-md-4">
-                <label class="form-label">客户端</label>
-                <div class="d-flex gap-2">
-                  <select id="remoteClientSelect" class="form-select"></select>
-                  <button class="btn btn-outline-secondary" id="refreshRemoteClientsBtn">刷新</button>
-                </div>
-                <div class="mt-2 d-flex gap-2">
-                  <input type="text" class="form-control" id="remoteClientNameInput" placeholder="新客户端名称" />
-                  <button class="btn btn-primary" id="createRemoteClientBtn">创建设备</button>
-                </div>
-                <div class="mt-3 small text-muted" id="remoteClientSecretBox" hidden>
-                  <div>客户端 ID：<code id="remoteClientIdValue"></code></div>
-                  <div class="mt-1">客户端 Token：<code id="remoteClientTokenValue"></code></div>
-                </div>
-              </div>
-              <div class="col-md-8">
-                <label class="form-label">会话消息</label>
-                <div class="border rounded p-3 bg-light" id="remoteMessagesBox" style="min-height: 260px; max-height: 380px; overflow:auto;"></div>
               </div>
               <div class="col-12">
                 <label class="form-label">批量导入短剧名</label>
                 <textarea class="form-control" id="remoteDramaTitlesInput" rows="6" placeholder="一行一个短剧名"></textarea>
               </div>
-              <div class="col-12 d-flex justify-content-between align-items-center">
-                <div class="form-check">
-                  <input class="form-check-input" type="checkbox" id="remoteSyncDownloadCheckbox" checked />
-                  <label class="form-check-label" for="remoteSyncDownloadCheckbox">如果本地启用了“下载剧集”，同步加入下载队列</label>
+              <div class="col-md-6">
+                <label class="form-label">本地工作目录</label>
+                <input type="text" class="form-control" id="remoteWorkspacePathInput" placeholder="例如：D:\workflow（可选）" />
+              </div>
+              <div class="col-md-3">
+                <label class="form-label">失败策略</label>
+                <select class="form-select" id="remoteOnProjectErrorSelect">
+                  <option value="skip" selected>失败后继续</option>
+                  <option value="stop">失败后停止</option>
+                </select>
+              </div>
+              <div class="col-md-3">
+                <label class="form-label">并行项目数</label>
+                <input type="number" class="form-control" id="remoteParallelProjectsInput" min="1" max="4" value="1" />
+              </div>
+              <div class="col-12">
+                <label class="form-label">执行步骤</label>
+                <input type="text" class="form-control" id="remoteEnabledStepsInput" placeholder="download,rewrite_info,generate_poster,generate_materials,material_validate,upload_series,publish_materials" value="download,rewrite_info,generate_poster,generate_materials,material_validate,upload_series,publish_materials" />
+                <div class="form-text">多个步骤用英文逗号分隔，留空则使用客户端当前勾选步骤。</div>
+              </div>
+              <div class="col-12 d-flex justify-content-between align-items-center flex-wrap gap-3">
+                <div class="d-flex flex-wrap gap-3">
+                  <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="remoteSyncDownloadCheckbox" checked />
+                    <label class="form-check-label" for="remoteSyncDownloadCheckbox">同步加入下载队列</label>
+                  </div>
+                  <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="remoteAutoRunCheckbox" checked />
+                    <label class="form-check-label" for="remoteAutoRunCheckbox">导入后自动执行本地项目流程</label>
+                  </div>
                 </div>
                 <button class="btn btn-success" id="sendRemoteImportBtn">发送导入命令</button>
               </div>
-            </div>
-          </div>
-          <div class="modal-footer">
-            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
-          </div>
         </div>
       </div>
     </div>
@@ -640,3 +292,4 @@
     <script src="{{ url_for('static', filename='app.js') }}"></script>
   </body>
 </html>
+
