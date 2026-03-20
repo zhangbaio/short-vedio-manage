@@ -41,7 +41,7 @@
         <button class="btn btn-danger" id="batchDeleteBtn" disabled>批量删除</button>
       </div>
 
-      <div class="mb-3 d-flex gap-2">
+      <div class="mb-3 d-flex gap-2" id="adminRemoteActions" hidden>
         <button class="btn btn-outline-dark position-relative" id="remoteManageBtn">
           远程控制
           <span
@@ -610,10 +610,82 @@
                 <label class="form-label">批量导入短剧名</label>
                 <textarea class="form-control" id="remoteDramaTitlesInput" rows="6" placeholder="一行一个短剧名"></textarea>
               </div>
-              <div class="col-12 d-flex justify-content-between align-items-center">
-                <div class="form-check">
-                  <input class="form-check-input" type="checkbox" id="remoteSyncDownloadCheckbox" checked />
-                  <label class="form-check-label" for="remoteSyncDownloadCheckbox">如果本地启用了“下载剧集”，同步加入下载队列</label>
+              <div class="col-md-6">
+                <label class="form-label">工作目录</label>
+                <input class="form-control" id="remoteWorkspacePathInput" placeholder="可选，例如 D:/drama-workspace" />
+              </div>
+              <div class="col-md-3">
+                <label class="form-label">失败策略</label>
+                <select class="form-select" id="remoteOnProjectErrorSelect">
+                  <option value="skip" selected>失败后继续</option>
+                  <option value="stop">失败后停止</option>
+                </select>
+              </div>
+              <div class="col-md-3">
+                <label class="form-label">并发项目数</label>
+                <select class="form-select" id="remoteParallelProjectsSelect">
+                  <option value="1">1</option>
+                  <option value="2" selected>2</option>
+                  <option value="3">3</option>
+                  <option value="4">4</option>
+                </select>
+              </div>
+              <div class="col-12">
+                <label class="form-label">执行步骤</label>
+                <div class="d-flex flex-wrap gap-3">
+                  <div class="form-check">
+                    <input class="form-check-input remote-step-checkbox" type="checkbox" id="remoteStepDownload" value="download" checked />
+                    <label class="form-check-label" for="remoteStepDownload">下载剧集</label>
+                  </div>
+                  <div class="form-check">
+                    <input class="form-check-input remote-step-checkbox" type="checkbox" id="remoteStepRewriteInfo" value="rewrite_info" />
+                    <label class="form-check-label" for="remoteStepRewriteInfo">改写信息</label>
+                  </div>
+                  <div class="form-check">
+                    <input class="form-check-input remote-step-checkbox" type="checkbox" id="remoteStepTranscode" value="material_transcode" />
+                    <label class="form-check-label" for="remoteStepTranscode">素材转码</label>
+                  </div>
+                  <div class="form-check">
+                    <input class="form-check-input remote-step-checkbox" type="checkbox" id="remoteStepAutoRepair" value="material_auto_repair" />
+                    <label class="form-check-label" for="remoteStepAutoRepair">一键修复</label>
+                  </div>
+                  <div class="form-check">
+                    <input class="form-check-input remote-step-checkbox" type="checkbox" id="remoteStepAutoFillInfo" value="auto_fill_info" />
+                    <label class="form-check-label" for="remoteStepAutoFillInfo">补齐字段</label>
+                  </div>
+                  <div class="form-check">
+                    <input class="form-check-input remote-step-checkbox" type="checkbox" id="remoteStepGeneratePoster" value="generate_poster" />
+                    <label class="form-check-label" for="remoteStepGeneratePoster">生成海报</label>
+                  </div>
+                  <div class="form-check">
+                    <input class="form-check-input remote-step-checkbox" type="checkbox" id="remoteStepGenerateMaterials" value="generate_materials" />
+                    <label class="form-check-label" for="remoteStepGenerateMaterials">生成派生产物</label>
+                  </div>
+                  <div class="form-check">
+                    <input class="form-check-input remote-step-checkbox" type="checkbox" id="remoteStepValidate" value="material_validate" />
+                    <label class="form-check-label" for="remoteStepValidate">素材校验</label>
+                  </div>
+                  <div class="form-check">
+                    <input class="form-check-input remote-step-checkbox" type="checkbox" id="remoteStepUploadSeries" value="upload_series" checked />
+                    <label class="form-check-label" for="remoteStepUploadSeries">上传剧集</label>
+                  </div>
+                  <div class="form-check">
+                    <input class="form-check-input remote-step-checkbox" type="checkbox" id="remoteStepPublishMaterials" value="publish_materials" />
+                    <label class="form-check-label" for="remoteStepPublishMaterials">发表素材</label>
+                  </div>
+                </div>
+                <div class="form-text">只勾选这次需要本地执行的步骤；转码/一键修复可后续再补。</div>
+              </div>
+              <div class="col-12 d-flex justify-content-between align-items-center flex-wrap gap-3">
+                <div class="d-flex flex-wrap gap-3">
+                  <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="remoteSyncDownloadCheckbox" checked />
+                    <label class="form-check-label" for="remoteSyncDownloadCheckbox">如果本地启用了“下载剧集”，同步加入下载队列</label>
+                  </div>
+                  <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="remoteAutoRunCheckbox" checked />
+                    <label class="form-check-label" for="remoteAutoRunCheckbox">导入后立即执行任务队列</label>
+                  </div>
                 </div>
                 <button class="btn btn-success" id="sendRemoteImportBtn">发送导入命令</button>
               </div>

@@ -8,6 +8,7 @@ import sqlite3
 import uuid
 from functools import wraps
 from io import BytesIO
+from typing import Any
 
 from flask import (
     Flask,
@@ -62,9 +63,23 @@ LICENSE_LIST_DEFAULT_SORT_FIELD = "created_at"
 LICENSE_LIST_DEFAULT_SORT_DIR = "desc"
 LICENSE_TOKEN_SALT = "desktop-license"
 LICENSE_TOKEN_MAX_AGE_SECONDS = 60 * 60 * 24 * 30
-REMOTE_MESSAGE_STATUS_VALUES = {"pending", "sent", "running", "success", "failed", "canceled"}
+REMOTE_MESSAGE_STATUS_VALUES = {"pending", "sent", "running", "success", "failed", "canceled", "stopped"}
 REMOTE_MESSAGE_TYPE_VALUES = {"text", "command", "image", "status", "log"}
 REMOTE_SENDER_TYPE_VALUES = {"user", "client", "system"}
+REMOTE_COMMAND_IMPORT_DRAMA_TITLES = "import_drama_titles"
+REMOTE_IMPORT_DRAMA_ALLOWED_STEPS = {
+    "download",
+    "rewrite_info",
+    "material_transcode",
+    "material_auto_repair",
+    "auto_fill_info",
+    "generate_poster",
+    "generate_materials",
+    "material_validate",
+    "upload_series",
+    "publish_materials",
+}
+REMOTE_IMPORT_DRAMA_ALLOWED_ERROR_STRATEGIES = {"skip", "stop"}
 
 HEADER_MAP = {
     "日期": "date",
@@ -710,6 +725,101 @@ def require_remote_client() -> tuple[sqlite3.Connection, sqlite3.Row] | tuple[sq
     client_token = request.headers.get("X-Remote-Client-Token") or data.get("client_token") or request.args.get("client_token") or ""
     row = authenticate_remote_client(db, str(client_id).strip(), str(client_token).strip())
     return db, row
+
+
+def build_remote_command_summary(command: str, payload: dict[str, Any]) -> str:
+    if command != REMOTE_COMMAND_IMPORT_DRAMA_TITLES:
+        return command or "远程命令"
+    titles = payload.get("titles") if isinstance(payload.get("titles"), list) else []
+    normalized_titles = [str(item).strip() for item in titles if str(item).strip()]
+    if not normalized_titles:
+        return "导入短剧"
+    preview = "、".join(normalized_titles[:3])
+    if len(normalized_titles) > 3:
+        preview += f" 等 {len(normalized_titles)} 部"
+    return f"导入短剧：{preview}"
+
+
+def sanitize_remote_command_payload(message_type: str, data: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None, str]:
+    content_text = str(data.get("content_text") or "").strip()
+    payload = data.get("payload")
+    if message_type != "command":
+        if payload is None:
+            return None, None, content_text
+        if not isinstance(payload, dict):
+            return None, "payload 必须是对象", content_text
+        return payload, None, content_text
+
+    if not isinstance(payload, dict):
+        return None, "command 消息缺少 payload 对象", content_text
+
+    command = str(payload.get("command") or "").strip().lower()
+    if command != REMOTE_COMMAND_IMPORT_DRAMA_TITLES:
+        return None, "仅支持 import_drama_titles 命令", content_text
+
+    raw_titles = payload.get("titles")
+    if not isinstance(raw_titles, list):
+        return None, "titles 必须是数组", content_text
+    titles: list[str] = []
+    seen_titles: set[str] = set()
+    for raw_item in raw_titles:
+        title = str(raw_item or "").strip()
+        if not title or title in seen_titles:
+            continue
+        seen_titles.add(title)
+        titles.append(title)
+    if not titles:
+        return None, "titles 不能为空", content_text
+
+    workspace_path = str(payload.get("workspace_path") or "").strip()
+    sync_download = bool(payload.get("sync_download", True))
+    auto_run = bool(payload.get("auto_run", True))
+
+    enabled_steps_value = payload.get("enabled_steps")
+    enabled_steps: list[str] | None = None
+    if enabled_steps_value is not None:
+        if not isinstance(enabled_steps_value, list):
+            return None, "enabled_steps 必须是数组", content_text
+        enabled_steps = []
+        seen_steps: set[str] = set()
+        for raw_step in enabled_steps_value:
+            step_key = str(raw_step or "").strip()
+            if not step_key or step_key in seen_steps:
+                continue
+            if step_key not in REMOTE_IMPORT_DRAMA_ALLOWED_STEPS:
+                return None, f"enabled_steps 包含不支持的步骤: {step_key}", content_text
+            seen_steps.add(step_key)
+            enabled_steps.append(step_key)
+
+    on_project_error = str(payload.get("on_project_error") or "").strip().lower()
+    if on_project_error and on_project_error not in REMOTE_IMPORT_DRAMA_ALLOWED_ERROR_STRATEGIES:
+        return None, "on_project_error 仅支持 skip 或 stop", content_text
+
+    parallel_projects = payload.get("parallel_projects")
+    normalized_parallel_projects: int | None = None
+    if parallel_projects not in (None, ""):
+        try:
+            normalized_parallel_projects = max(1, min(4, int(parallel_projects)))
+        except (TypeError, ValueError):
+            return None, "parallel_projects 必须是 1 到 4 之间的整数", content_text
+
+    normalized_payload = {
+        "command": REMOTE_COMMAND_IMPORT_DRAMA_TITLES,
+        "titles": titles,
+        "workspace_path": workspace_path,
+        "sync_download": sync_download,
+        "auto_run": auto_run,
+    }
+    if enabled_steps is not None:
+        normalized_payload["enabled_steps"] = enabled_steps
+    if on_project_error:
+        normalized_payload["on_project_error"] = on_project_error
+    if normalized_parallel_projects is not None:
+        normalized_payload["parallel_projects"] = normalized_parallel_projects
+
+    if not content_text:
+        content_text = build_remote_command_summary(REMOTE_COMMAND_IMPORT_DRAMA_TITLES, normalized_payload)
+    return normalized_payload, None, content_text
 
 
 def ensure_remote_conversation_access(db: sqlite3.Connection, conversation_id: int, user_id: int, role: str) -> sqlite3.Row | None:
@@ -1998,8 +2108,10 @@ def create_remote_message(conversation_id: int):
     message_type = str(data.get("message_type") or "text").strip().lower()
     if message_type not in REMOTE_MESSAGE_TYPE_VALUES:
         return jsonify({"error": "message_type 不支持"}), 400
-    content_text = str(data.get("content_text") or "").strip()
-    payload_json = json.dumps(data.get("payload") or {}, ensure_ascii=False) if data.get("payload") is not None else None
+    normalized_payload, payload_error, content_text = sanitize_remote_command_payload(message_type, data)
+    if payload_error:
+        return jsonify({"error": payload_error}), 400
+    payload_json = json.dumps(normalized_payload, ensure_ascii=False) if normalized_payload is not None else None
     status = "pending" if message_type == "command" else "success"
     now = now_iso()
     db.execute(

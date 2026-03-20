@@ -66,6 +66,7 @@ function clearStaleModalBackdrop() {
 function applyRoleVisibility() {
   if (window.currentUser?.role === "admin") {
     document.getElementById("adminActions").hidden = false;
+    document.getElementById("adminRemoteActions").hidden = false;
   }
 }
 
@@ -1293,6 +1294,13 @@ async function loadRemoteMessages(conversationId) {
         body.textContent = item.content_text;
         wrapper.appendChild(body);
       }
+      const detailLines = buildRemoteMessageDetailLines(item);
+      if (detailLines.length) {
+        const detail = document.createElement("pre");
+        detail.className = "small mt-2 mb-0 p-2 rounded border bg-light";
+        detail.textContent = detailLines.join("\n");
+        wrapper.appendChild(detail);
+      }
       if (Array.isArray(item.attachments) && item.attachments.length) {
         item.attachments.forEach((attachment) => {
           if (attachment.file_type === "image") {
@@ -1311,6 +1319,57 @@ async function loadRemoteMessages(conversationId) {
   }
 }
 
+function collectRemoteEnabledSteps() {
+  return Array.from(document.querySelectorAll(".remote-step-checkbox:checked"))
+    .map((input) => String(input.value || "").trim())
+    .filter((value) => value.length > 0);
+}
+
+function buildRemoteMessageDetailLines(message) {
+  const lines = [];
+  const payload = message && typeof message.payload === "object" ? message.payload : null;
+  const result = message && typeof message.result === "object" ? message.result : null;
+  if (payload && message.message_type === "command") {
+    if (payload.command) lines.push(`命令: ${payload.command}`);
+    if (Array.isArray(payload.titles) && payload.titles.length) lines.push(`剧名: ${payload.titles.join("、")}`);
+    if (payload.workspace_path) lines.push(`工作目录: ${payload.workspace_path}`);
+    if (Array.isArray(payload.enabled_steps) && payload.enabled_steps.length) {
+      lines.push(`步骤: ${payload.enabled_steps.join(", ")}`);
+    }
+    if (payload.on_project_error) lines.push(`失败策略: ${payload.on_project_error}`);
+    if (payload.parallel_projects) lines.push(`并发项目数: ${payload.parallel_projects}`);
+    if (typeof payload.sync_download === "boolean") lines.push(`同步下载队列: ${payload.sync_download ? "是" : "否"}`);
+    if (typeof payload.auto_run === "boolean") lines.push(`自动执行: ${payload.auto_run ? "是" : "否"}`);
+  }
+  if (result) {
+    if (typeof result.success_count === "number" || typeof result.failed_count === "number") {
+      lines.push(
+        `导入结果: 成功 ${Number(result.success_count || 0)} 个, 失败 ${Number(result.failed_count || 0)} 个, 过滤 ${Number(result.filtered_count || 0)} 个`
+      );
+    }
+    const syncDownload = result.sync_download && typeof result.sync_download === "object" ? result.sync_download : null;
+    if (syncDownload && syncDownload.requested) {
+      lines.push(`下载队列: ${syncDownload.synced ? "已同步" : "未同步"}${syncDownload.item_count ? ` (${syncDownload.item_count} 个)` : ""}`);
+    }
+    const execution = result.execution && typeof result.execution === "object" ? result.execution : null;
+    if (execution) {
+      if (execution.mode) lines.push(`执行模式: ${execution.mode}`);
+      if (execution.parallel_projects) lines.push(`任务并发: ${execution.parallel_projects}`);
+      if (execution.on_project_error) lines.push(`任务失败策略: ${execution.on_project_error}`);
+    }
+    const queueSummary = result.queue_summary && typeof result.queue_summary === "object" ? result.queue_summary : null;
+    if (queueSummary) {
+      if (typeof queueSummary.success_count === "number" || typeof queueSummary.failed_count === "number") {
+        lines.push(`队列结果: 成功 ${Number(queueSummary.success_count || 0)} 个, 失败 ${Number(queueSummary.failed_count || 0)} 个`);
+      } else if (queueSummary.status) {
+        lines.push(`队列状态: ${queueSummary.status}`);
+      }
+    }
+    if (result.error) lines.push(`错误: ${result.error}`);
+  }
+  return lines;
+}
+
 async function sendRemoteImportCommand() {
   if (!currentRemoteConversationId) {
     showToast("请先选择客户端", "warning");
@@ -1325,18 +1384,31 @@ async function sendRemoteImportCommand() {
     showToast("请至少输入一个短剧名", "warning");
     return;
   }
+  const enabledSteps = collectRemoteEnabledSteps();
+  if (!enabledSteps.length) {
+    showToast("请至少勾选一个执行步骤", "warning");
+    return;
+  }
   const syncDownload = document.getElementById("remoteSyncDownloadCheckbox").checked;
+  const autoRun = document.getElementById("remoteAutoRunCheckbox").checked;
+  const workspacePath = document.getElementById("remoteWorkspacePathInput").value.trim();
+  const onProjectError = document.getElementById("remoteOnProjectErrorSelect").value;
+  const parallelProjects = Number(document.getElementById("remoteParallelProjectsSelect").value || 2);
   try {
     await requestJSON(`/api/remote/conversations/${currentRemoteConversationId}/messages`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         message_type: "command",
-        content_text: `导入短剧：${titles.join("、")}`,
         payload: {
           command: "import_drama_titles",
           titles,
+          workspace_path: workspacePath,
           sync_download: syncDownload,
+          auto_run: autoRun,
+          enabled_steps: enabledSteps,
+          on_project_error: onProjectError,
+          parallel_projects: parallelProjects,
         },
       }),
     });
