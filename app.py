@@ -1322,6 +1322,29 @@ def toggle_upload(drama_id: int):
     return jsonify({"id": drama_id, "uploaded": new_value, "uploader": uploader_value})
 
 
+@app.route("/api/dramas/<int:drama_id>/upload-state", methods=["PATCH"])
+@login_required
+def set_upload_state(drama_id: int):
+    data = request.get_json(silent=True) or {}
+    uploaded_value = normalize_flag(data.get("uploaded"))
+    if uploaded_value not in ALLOWED_FLAGS:
+        return jsonify({"error": "uploaded 只能是“是”或“否”"}), 400
+    db = get_db()
+    row = db.execute(
+        "SELECT id FROM dramas WHERE id = ?",
+        (drama_id,),
+    ).fetchone()
+    if not row:
+        return jsonify({"error": "未找到该短剧"}), 404
+    uploader_value = session.get("username") if uploaded_value == "是" else None
+    db.execute(
+        "UPDATE dramas SET uploaded = ?, uploader = ? WHERE id = ?",
+        (uploaded_value, uploader_value, drama_id),
+    )
+    db.commit()
+    return jsonify({"id": drama_id, "uploaded": uploaded_value, "uploader": uploader_value})
+
+
 @app.route("/api/companies", methods=["GET"])
 @login_required
 def list_companies():
