@@ -324,6 +324,15 @@ def init_db() -> None:
         db.execute(
             "CREATE INDEX IF NOT EXISTS idx_remote_messages_status ON remote_messages(status)"
         )
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_dramas_created_at ON dramas(created_at)"
+        )
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_dramas_date ON dramas(date)"
+        )
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_dramas_company ON dramas(company)"
+        )
         seed_default_users(db)
         db.commit()
 
@@ -1040,6 +1049,13 @@ def index():
     return render_template("index.html")
 
 
+@app.route("/monitor")
+@login_required
+@admin_required
+def monitor_dashboard():
+    return render_template("monitor.html")
+
+
 @app.route("/licenses")
 @login_required
 @admin_required
@@ -1196,6 +1212,98 @@ def list_dramas():
             "page": page,
             "page_size": page_size,
             "pages": pages,
+        }
+    )
+
+
+@app.route("/api/monitor/daily", methods=["GET"])
+@login_required
+@admin_required
+def monitor_daily():
+    clauses, params, mode, date_from, date_to = build_monitor_filters(request.args)
+    date_field = "date(created_at, 'localtime')" if mode == "created" else "date"
+    where_sql = " AND ".join(
+        [f"{date_field} IS NOT NULL", f"{date_field} >= ?", f"{date_field} <= ?", *clauses]
+    )
+    query_params = [date_from.isoformat(), date_to.isoformat(), *params]
+
+    db = get_db()
+    rows = db.execute(
+        f"""
+        SELECT
+            {date_field} AS stat_day,
+            COUNT(*) AS new_count,
+            SUM(CASE WHEN review_passed = '是' THEN 1 ELSE 0 END) AS review_passed_count,
+            SUM(CASE WHEN uploaded = '是' THEN 1 ELSE 0 END) AS uploaded_count
+        FROM dramas
+        WHERE {where_sql}
+        GROUP BY stat_day
+        ORDER BY stat_day ASC
+        """,
+        query_params,
+    ).fetchall()
+
+    row_map: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        day = row["stat_day"]
+        new_count = int(row["new_count"] or 0)
+        review_passed_count = int(row["review_passed_count"] or 0)
+        uploaded_count = int(row["uploaded_count"] or 0)
+        row_map[day] = {
+            "day": day,
+            "new_count": new_count,
+            "review_passed_count": review_passed_count,
+            "uploaded_count": uploaded_count,
+            "review_rate": (review_passed_count / new_count) if new_count else 0,
+            "upload_rate": (uploaded_count / new_count) if new_count else 0,
+        }
+
+    items: list[dict[str, Any]] = []
+    cursor = date_from
+    while cursor <= date_to:
+        day = cursor.isoformat()
+        items.append(
+            row_map.get(
+                day,
+                {
+                    "day": day,
+                    "new_count": 0,
+                    "review_passed_count": 0,
+                    "uploaded_count": 0,
+                    "review_rate": 0,
+                    "upload_rate": 0,
+                },
+            )
+        )
+        cursor += datetime.timedelta(days=1)
+
+    today_key = datetime.date.today().isoformat()
+    today_item = row_map.get(
+        today_key,
+        {
+            "new_count": 0,
+            "review_passed_count": 0,
+            "uploaded_count": 0,
+        },
+    )
+    range_new_count = sum(item["new_count"] for item in items)
+    range_review_passed_count = sum(item["review_passed_count"] for item in items)
+    range_uploaded_count = sum(item["uploaded_count"] for item in items)
+
+    return jsonify(
+        {
+            "summary": {
+                "today_new_count": today_item["new_count"],
+                "today_review_passed_count": today_item["review_passed_count"],
+                "today_uploaded_count": today_item["uploaded_count"],
+                "range_new_count": range_new_count,
+                "range_review_passed_count": range_review_passed_count,
+                "range_uploaded_count": range_uploaded_count,
+                "range_review_rate": (range_review_passed_count / range_new_count) if range_new_count else 0,
+                "range_uploaded_rate": (range_uploaded_count / range_new_count) if range_new_count else 0,
+                "label_suffix": "录入日期" if mode == "created" else "上线日期",
+            },
+            "rows": items,
         }
     )
 
@@ -2406,6 +2514,78 @@ def build_filter_clause(args):
     if hide_quick_add == "1":
         clauses.append("(source IS NULL OR source != 'quick_add')")
     return clauses, params
+
+
+def parse_iso_date(value: str | None) -> datetime.date | None:
+    if not value:
+        return None
+    try:
+        return datetime.date.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def build_monitor_filters(args) -> tuple[list[str], list[object], str, datetime.date, datetime.date]:
+    clauses: list[str] = []
+    params: list[object] = []
+
+    company = (args.get("company") or "").strip()
+    if company:
+        clauses.append("company = ?")
+        params.append(company)
+
+    hide_quick_add = (args.get("hide_quick_add") or "").strip()
+    if hide_quick_add == "1":
+        clauses.append("(source IS NULL OR source != 'quick_add')")
+
+    mode = (args.get("mode") or "created").strip().lower()
+    if mode not in {"created", "online"}:
+        mode = "created"
+
+    today = datetime.date.today()
+    default_from = today - datetime.timedelta(days=29)
+    date_from = parse_iso_date((args.get("date_from") or "").strip()) or default_from
+    date_to = parse_iso_date((args.get("date_to") or "").strip()) or today
+    if date_from > date_to:
+        date_from, date_to = date_to, date_from
+
+    return clauses, params, mode, date_from, date_to
+
+
+def parse_iso_date(value: str | None) -> datetime.date | None:
+    if not value:
+        return None
+    try:
+        return datetime.date.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def build_monitor_filters(args) -> tuple[list[str], list[object], str, datetime.date, datetime.date]:
+    clauses: list[str] = []
+    params: list[object] = []
+
+    company = (args.get("company") or "").strip()
+    if company:
+        clauses.append("company = ?")
+        params.append(company)
+
+    hide_quick_add = (args.get("hide_quick_add") or "").strip()
+    if hide_quick_add == "1":
+        clauses.append("(source IS NULL OR source != 'quick_add')")
+
+    mode = (args.get("mode") or "created").strip().lower()
+    if mode not in {"created", "online"}:
+        mode = "created"
+
+    today = datetime.date.today()
+    default_from = today - datetime.timedelta(days=29)
+    date_from = parse_iso_date((args.get("date_from") or "").strip()) or default_from
+    date_to = parse_iso_date((args.get("date_to") or "").strip()) or today
+    if date_from > date_to:
+        date_from, date_to = date_to, date_from
+
+    return clauses, params, mode, date_from, date_to
 
 
 def row_to_dict(row: sqlite3.Row) -> dict:

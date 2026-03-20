@@ -4,6 +4,7 @@ const state = {
   total: 0,
   pages: 0,
   currentItems: [],
+  expandedRowIds: new Set(),
   sortBy: "date",
   sortDir: "desc",
   filters: {
@@ -199,7 +200,8 @@ async function loadDramas() {
     if (!data) return;
     state.total = data.total;
     state.pages = data.pages || 1;
-    renderDramas(data.items || []);
+    state.currentItems = data.items || [];
+    renderDramas(state.currentItems);
     updatePaginationInfo();
   } catch (error) {
     showToast(error.message, "danger");
@@ -220,12 +222,13 @@ function updateSortIcons() {
   });
 }
 
-function renderDramas(items) {
+function renderDramas(items, options = {}) {
+  const { preserveSelection = false } = options;
   const tbody = document.getElementById("dramaTableBody");
   tbody.innerHTML = "";
-  selectedIds.clear();
-  document.getElementById("selectAll").checked = false;
-  updateBatchButton();
+  if (!preserveSelection) {
+    selectedIds.clear();
+  }
 
   items.forEach((item, index) => {
     const rowNumber = (state.page - 1) * state.pageSize + index + 1;
@@ -234,25 +237,47 @@ function renderDramas(items) {
     tr.innerHTML = `
       <td><input type="checkbox" class="row-checkbox" data-id="${item.id}" /></td>
       <th scope="row">${rowNumber}</th>
-      <td>${escapeHtml(item.date || "-")}</td>
-      <td>${escapeHtml(item.original_name || "-")}</td>
-      <td>${escapeHtml(item.new_name || "-")}</td>
-      <td>${item.episodes ?? "-"}</td>
-      <td>${item.duration ?? "-"}</td>
-      <td>${buildBadge(item.review_passed)}</td>
-      <td>${buildBadge(item.uploaded)}</td>
-      <td>${escapeHtml(item.materials || "-")}</td>
-      <td>${escapeHtml(item.promo_text || "-")}</td>
-      <td title="${escapeHtml(item.description || "暂无简介")}">${escapeHtml(truncateText(item.description))}</td>
-      <td>${escapeHtml(item.company || "-")}</td>
-      <td>${escapeHtml(item.uploader || "-")}</td>
-      <td title="${escapeHtml(item.remark1 || "")}">${escapeHtml(truncateText(item.remark1))}</td>
-      <td title="${escapeHtml(item.remark2 || "")}">${escapeHtml(truncateText(item.remark2))}</td>
-      <td title="${escapeHtml(item.remark3 || "")}">${escapeHtml(truncateText(item.remark3))}</td>
-      <td>${buildActions(item)}</td>
+      ${buildTextCell(item.date || "-", "col-date")}
+      ${buildTextCell(item.original_name || "-", "col-name")}
+      ${buildTextCell(item.new_name || "-", "col-name")}
+      <td class="text-center-cell col-number">${item.episodes ?? "-"}</td>
+      <td class="text-center-cell col-number">${item.duration ?? "-"}</td>
+      <td class="text-center-cell col-flag">${buildBadge(item.review_passed)}</td>
+      <td class="text-center-cell col-flag">${buildBadge(item.uploaded)}</td>
+      ${buildTextCell(item.company || "-", "col-company")}
+      ${buildTextCell(item.uploader || "-", "col-uploader")}
+      <td class="actions-cell col-actions">${buildActions(item)}</td>
     `;
+    const checkbox = tr.querySelector(".row-checkbox");
+    if (checkbox && selectedIds.has(item.id)) {
+      checkbox.checked = true;
+    }
     tbody.appendChild(tr);
+
+    if (state.expandedRowIds.has(item.id)) {
+      const detailRow = document.createElement("tr");
+      detailRow.className = "drama-detail-row";
+      detailRow.dataset.detailFor = item.id;
+      detailRow.innerHTML = `
+        <td colspan="12">
+          <div class="drama-detail-grid">
+            ${buildDetailItem("素材", item.materials)}
+            ${buildDetailItem("推广语", item.promo_text)}
+            ${buildDetailItem("简介", item.description, true)}
+            ${buildDetailItem("备注一", item.remark1)}
+            ${buildDetailItem("备注二", item.remark2)}
+            ${buildDetailItem("备注三", item.remark3)}
+          </div>
+        </td>
+      `;
+      tbody.appendChild(detailRow);
+    }
   });
+
+  const visibleIds = items.map((item) => item.id);
+  const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.has(id));
+  document.getElementById("selectAll").checked = allVisibleSelected;
+  updateBatchButton();
 }
 
 function buildBadge(flag) {
@@ -263,21 +288,45 @@ function buildBadge(flag) {
 }
 
 function buildActions(item) {
+  const detailLabel = state.expandedRowIds.has(item.id) ? "收起详情" : "查看详情";
+  const detailBtn = `<button class="btn btn-sm btn-outline-secondary" data-action="toggle-details" data-id="${item.id}">${detailLabel}</button>`;
   const uploadBtn = `<button class="btn btn-sm btn-outline-success me-1" data-action="toggle-upload" data-id="${item.id}">${item.uploaded === "是" ? "取消上传" : "标记上传"}</button>`;
   if (window.currentUser?.role !== "admin") {
-    return uploadBtn;
+    return `<div class="action-buttons">${detailBtn}${uploadBtn}</div>`;
   }
-  return `
-    <button class="btn btn-sm btn-outline-primary me-1" data-action="edit" data-id="${item.id}">编辑</button>
-    <button class="btn btn-sm btn-outline-danger me-1" data-action="delete" data-id="${item.id}" data-name="${escapeHtml(item.new_name || item.original_name || "短剧")}">删除</button>
+  return `<div class="action-buttons">
+    ${detailBtn}
+    <button class="btn btn-sm btn-outline-primary" data-action="edit" data-id="${item.id}">编辑</button>
+    <button class="btn btn-sm btn-outline-danger" data-action="delete" data-id="${item.id}" data-name="${escapeHtml(item.new_name || item.original_name || "短剧")}">删除</button>
     ${uploadBtn}
-  `;
+  </div>`;
 }
 
 function truncateText(text, max = 30) {
   if (!text) return "-";
   const str = String(text);
   return str.length > max ? `${str.slice(0, max)}...` : str;
+}
+
+function buildTextCell(value, className = "") {
+  const raw = value === null || value === undefined ? "" : String(value);
+  const content = raw || "-";
+  const title = raw ? ` title="${escapeHtml(raw)}"` : "";
+  return `<td class="cell-ellipsis ${className}"${title}>${escapeHtml(content)}</td>`;
+}
+
+function buildDetailItem(label, value, fullWidth = false) {
+  const content = value === null || value === undefined || value === "" ? "" : String(value);
+  const classes = ["drama-detail-item"];
+  if (fullWidth) {
+    classes.push("full-width");
+  }
+  return `
+    <div class="${classes.join(" ")}">
+      <div class="drama-detail-label">${label}</div>
+      <div class="drama-detail-value${content ? "" : " drama-detail-empty"}">${escapeHtml(content || "暂无内容")}</div>
+    </div>
+  `;
 }
 
 function escapeHtml(value) {
@@ -349,9 +398,20 @@ function handleTableClick(event) {
     deleteTargetName = target.dataset.name || "该短剧";
     document.getElementById("deleteMessage").textContent = `确定删除《${deleteTargetName}》吗？`;
     deleteModal.show();
+  } else if (action === "toggle-details") {
+    toggleDramaDetails(id);
   } else if (action === "toggle-upload") {
     toggleUpload(id);
   }
+}
+
+function toggleDramaDetails(id) {
+  if (state.expandedRowIds.has(id)) {
+    state.expandedRowIds.delete(id);
+  } else {
+    state.expandedRowIds.add(id);
+  }
+  renderDramas(state.currentItems, { preserveSelection: true });
 }
 
 async function openEditModal(id) {

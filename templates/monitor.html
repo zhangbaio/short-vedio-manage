@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>短剧监控屏</title>
+    <link
+      href="https://cdn.bootcdn.net/ajax/libs/bootstrap/5.3.2/css/bootstrap.min.css"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+  </head>
+  <body>
+    <nav class="navbar navbar-dark navbar-expand-lg bg-dark">
+      <div class="container-fluid">
+        <a class="navbar-brand" href="{{ url_for('index') }}">视频号短剧管理系统</a>
+        <div class="d-flex align-items-center gap-2">
+          <a class="btn btn-outline-light btn-sm" href="{{ url_for('index') }}">返回列表</a>
+          <a class="btn btn-outline-light btn-sm" href="{{ url_for('logout') }}">退出</a>
+        </div>
+      </div>
+    </nav>
+
+    <div class="container py-4 monitor-page">
+      <div class="d-flex flex-wrap align-items-end justify-content-between gap-3 mb-4">
+        <div>
+          <h1 class="monitor-title mb-1">短剧监控屏</h1>
+          <div class="text-secondary">统计每日新增、审核通过、上传通过趋势</div>
+        </div>
+        <div class="monitor-last-updated text-secondary" id="monitorLastUpdated">--</div>
+      </div>
+
+      <div class="card mb-4">
+        <div class="card-body">
+          <div class="row g-3 align-items-end">
+            <div class="col-md-2">
+              <label class="form-label">统计口径</label>
+              <select id="monitorMode" class="form-select">
+                <option value="created">按录入日期</option>
+                <option value="online">按上线日期</option>
+              </select>
+            </div>
+            <div class="col-md-2">
+              <label class="form-label">公司</label>
+              <select id="monitorCompany" class="form-select">
+                <option value="">全部</option>
+              </select>
+            </div>
+            <div class="col-md-2">
+              <label class="form-label">开始日期</label>
+              <input type="date" id="monitorDateFrom" class="form-control" />
+            </div>
+            <div class="col-md-2">
+              <label class="form-label">结束日期</label>
+              <input type="date" id="monitorDateTo" class="form-control" />
+            </div>
+            <div class="col-md-2">
+              <div class="form-check mt-4">
+                <input class="form-check-input" type="checkbox" id="monitorHideQuickAdd" checked />
+                <label class="form-check-label" for="monitorHideQuickAdd">不显示爆剧</label>
+              </div>
+            </div>
+            <div class="col-md-2 d-flex gap-2">
+              <button class="btn btn-primary flex-grow-1" id="monitorQueryBtn">查询</button>
+              <button class="btn btn-outline-secondary" id="monitorResetBtn">重置</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="row g-3 mb-4">
+        <div class="col-md-3">
+          <div class="card monitor-metric-card h-100">
+            <div class="card-body">
+              <div class="monitor-metric-label">今日新增剧集</div>
+              <div class="monitor-metric-value" id="metricTodayNew">0</div>
+              <div class="monitor-metric-sub">今天新增录入/上线的剧集数</div>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-3">
+          <div class="card monitor-metric-card h-100">
+            <div class="card-body">
+              <div class="monitor-metric-label">今日审核通过</div>
+              <div class="monitor-metric-value" id="metricTodayReviewed">0</div>
+              <div class="monitor-metric-sub">今日新增中审核通过的剧集数</div>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-3">
+          <div class="card monitor-metric-card h-100">
+            <div class="card-body">
+              <div class="monitor-metric-label">今日上传通过</div>
+              <div class="monitor-metric-value" id="metricTodayUploaded">0</div>
+              <div class="monitor-metric-sub">今日新增中已标记上传的剧集数</div>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-3">
+          <div class="card monitor-metric-card h-100">
+            <div class="card-body">
+              <div class="monitor-metric-label">范围内新增总数</div>
+              <div class="monitor-metric-value" id="metricRangeNew">0</div>
+              <div class="monitor-metric-sub" id="metricRangeRates">审核率 0% / 上传率 0%</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card mb-4">
+        <div class="card-body">
+          <div class="d-flex align-items-center justify-content-between mb-3 gap-2 flex-wrap">
+            <div>
+              <h2 class="h5 mb-1">每日趋势</h2>
+              <div class="text-secondary small">柱状展示新增，折线展示审核通过与上传通过</div>
+            </div>
+          </div>
+          <div id="monitorChart" class="monitor-chart"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-body">
+          <div class="d-flex align-items-center justify-content-between mb-3 gap-2 flex-wrap">
+            <div>
+              <h2 class="h5 mb-1">每日统计明细</h2>
+              <div class="text-secondary small">按天展示新增、审核通过、上传通过及比例</div>
+            </div>
+          </div>
+          <div class="table-responsive">
+            <table class="table table-hover align-middle monitor-table">
+              <thead class="table-light">
+                <tr>
+                  <th>日期</th>
+                  <th>新增剧集</th>
+                  <th>审核通过</th>
+                  <th>上传通过</th>
+                  <th>审核率</th>
+                  <th>上传率</th>
+                </tr>
+              </thead>
+              <tbody id="monitorTableBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      window.currentUser = {
+        username: {{ session.username|tojson }},
+        role: {{ session.role|tojson }}
+      };
+    </script>
+    <script src="https://cdn.bootcdn.net/ajax/libs/bootstrap/5.3.2/js/bootstrap.bundle.min.js"></script>
+    <script src="{{ url_for('static', filename='monitor.js') }}"></script>
+  </body>
+</html>

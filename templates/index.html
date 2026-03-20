@@ -36,6 +36,7 @@
         </button>
         <button class="btn btn-primary" id="addDramaBtn">新增短剧</button>
         <button class="btn btn-warning" id="quickAddBtn">快速录入爆剧</button>
+        <a class="btn btn-info text-white" href="{{ url_for('monitor_dashboard') }}">监控屏</a>
         <button class="btn btn-secondary" id="userManageBtn">用户管理</button>
         <a class="btn btn-dark" href="{{ url_for('license_management') }}">授权码管理</a>
         <button class="btn btn-danger" id="batchDeleteBtn" disabled>批量删除</button>
@@ -105,27 +106,21 @@
       </div>
 
       <div class="table-responsive mb-3">
-        <table class="table table-hover align-middle">
+        <table class="table table-hover align-middle drama-table">
           <thead class="table-light">
             <tr>
-              <th scope="col"><input type="checkbox" id="selectAll" /></th>
-              <th scope="col">#</th>
-              <th scope="col" data-sort="date" class="sortable-col">日期 <span class="sort-icon">⇅</span></th>
-              <th scope="col" data-sort="original_name" class="sortable-col">原剧名 <span class="sort-icon">⇅</span></th>
-              <th scope="col" data-sort="new_name" class="sortable-col">新剧名 <span class="sort-icon">⇅</span></th>
-              <th scope="col" data-sort="episodes" class="sortable-col">集数 <span class="sort-icon">⇅</span></th>
-              <th scope="col" data-sort="duration" class="sortable-col">时长(分) <span class="sort-icon">⇅</span></th>
-              <th scope="col" data-sort="review_passed" class="sortable-col">审核通过 <span class="sort-icon">⇅</span></th>
-              <th scope="col" data-sort="uploaded" class="sortable-col">是否上传 <span class="sort-icon">⇅</span></th>
-              <th scope="col">素材</th>
-              <th scope="col">推广语</th>
-              <th scope="col">简介</th>
-              <th scope="col" data-sort="company" class="sortable-col">公司 <span class="sort-icon">⇅</span></th>
-              <th scope="col">上传者</th>
-              <th scope="col">备注一</th>
-              <th scope="col">备注二</th>
-              <th scope="col">备注三</th>
-              <th scope="col">操作</th>
+              <th scope="col" class="col-check"><input type="checkbox" id="selectAll" /></th>
+              <th scope="col" class="col-index">#</th>
+              <th scope="col" data-sort="date" class="sortable-col col-date">日期 <span class="sort-icon">⇅</span></th>
+              <th scope="col" data-sort="original_name" class="sortable-col col-name">原剧名 <span class="sort-icon">⇅</span></th>
+              <th scope="col" data-sort="new_name" class="sortable-col col-name">新剧名 <span class="sort-icon">⇅</span></th>
+              <th scope="col" data-sort="episodes" class="sortable-col col-number">集数 <span class="sort-icon">⇅</span></th>
+              <th scope="col" data-sort="duration" class="sortable-col col-number">时长(分) <span class="sort-icon">⇅</span></th>
+              <th scope="col" data-sort="review_passed" class="sortable-col col-flag">审核通过 <span class="sort-icon">⇅</span></th>
+              <th scope="col" data-sort="uploaded" class="sortable-col col-flag">是否上传 <span class="sort-icon">⇅</span></th>
+              <th scope="col" data-sort="company" class="sortable-col col-company">公司 <span class="sort-icon">⇅</span></th>
+              <th scope="col" class="col-uploader">上传者</th>
+              <th scope="col" class="col-actions actions-col">操作</th>
             </tr>
           </thead>
           <tbody id="dramaTableBody"></tbody>
