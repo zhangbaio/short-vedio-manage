@@ -12,6 +12,7 @@ const state = {
     company: "",
     review_passed: "",
     uploaded: "",
+    uploader: "",
     date_from: "",
     date_to: "",
     hide_quick_add: "1",
@@ -163,6 +164,7 @@ function updateFiltersFromInputs() {
   state.filters.company = document.getElementById("companySelect").value;
   state.filters.review_passed = document.getElementById("reviewSelect").value;
   state.filters.uploaded = document.getElementById("uploadedSelect").value;
+  state.filters.uploader = document.getElementById("uploaderSearchInput").value.trim();
   state.filters.date_from = document.getElementById("dateFrom").value;
   state.filters.date_to = document.getElementById("dateTo").value;
   state.filters.hide_quick_add = document.getElementById("hideQuickAdd").checked ? "1" : "";
@@ -173,6 +175,7 @@ function resetFilters() {
   document.getElementById("companySelect").value = "";
   document.getElementById("reviewSelect").value = "";
   document.getElementById("uploadedSelect").value = "";
+  document.getElementById("uploaderSearchInput").value = "";
   document.getElementById("dateFrom").value = "";
   document.getElementById("dateTo").value = "";
   document.getElementById("hideQuickAdd").checked = true;
@@ -371,6 +374,7 @@ function openCreateModal() {
   document.getElementById("remark1Input").value = "";
   document.getElementById("remark2Input").value = "";
   document.getElementById("remark3Input").value = "";
+  document.getElementById("uploaderInput").value = "";
   document.getElementById("uploadedInput").value = "否";
   dramaModal.show();
 }
@@ -437,6 +441,7 @@ async function openEditModal(id) {
     document.getElementById("promoTextInput").value = item.promo_text || "";
     document.getElementById("descriptionInput").value = item.description || "";
     document.getElementById("companyInput").value = item.company || "";
+    document.getElementById("uploaderInput").value = item.uploader || "";
     document.getElementById("remark1Input").value = item.remark1 || "";
     document.getElementById("remark2Input").value = item.remark2 || "";
     document.getElementById("remark3Input").value = item.remark3 || "";
@@ -470,6 +475,7 @@ async function submitDramaForm() {
     promo_text: document.getElementById("promoTextInput").value.trim(),
     description: document.getElementById("descriptionInput").value.trim(),
     company: companyInput.value.trim(),
+    uploader: document.getElementById("uploaderInput").value.trim(),
     remark1: document.getElementById("remark1Input").value.trim(),
     remark2: document.getElementById("remark2Input").value.trim(),
     remark3: document.getElementById("remark3Input").value.trim(),
@@ -539,6 +545,7 @@ async function submitDramaForm() {
     promo_text: values.promo_text || null,
     description: values.description || null,
     company: values.company,
+    uploader: values.uploader || null,
     remark1: values.remark1 || null,
     remark2: values.remark2 || null,
     remark3: values.remark3 || null,

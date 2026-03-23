@@ -40,6 +40,7 @@ SORTABLE_FIELDS = {
     "duration",
     "review_passed",
     "uploaded",
+    "uploader",
     "company",
     "created_at",
 }
@@ -2502,6 +2503,10 @@ def build_filter_clause(args):
     if uploaded in ALLOWED_FLAGS:
         clauses.append("uploaded = ?")
         params.append(uploaded)
+    uploader = (args.get("uploader") or "").strip()
+    if uploader:
+        clauses.append("uploader LIKE ?")
+        params.append(f"%{uploader}%")
     date_from = (args.get("date_from") or "").strip()
     if date_from:
         clauses.append("date >= ?")
@@ -2612,6 +2617,7 @@ def sanitize_drama_payload(data: dict) -> tuple[dict, str | None]:
     payload["duration"] = to_int_or_none(data.get("duration"))
     payload["review_passed"] = normalize_flag(data.get("review_passed"))
     payload["uploaded"] = normalize_flag(data.get("uploaded"))
+    payload["uploader"] = (data.get("uploader") or "").strip() or None
     payload["materials"] = (data.get("materials") or "").strip() or None
     payload["promo_text"] = (data.get("promo_text") or "").strip() or None
     payload["description"] = (data.get("description") or "").strip() or None
@@ -2619,7 +2625,7 @@ def sanitize_drama_payload(data: dict) -> tuple[dict, str | None]:
     payload["remark1"] = (data.get("remark1") or "").strip() or None
     payload["remark2"] = (data.get("remark2") or "").strip() or None
     payload["remark3"] = (data.get("remark3") or "").strip() or None
-    for key in ("remark1", "remark2", "remark3"):
+    for key in ("uploader", "remark1", "remark2", "remark3"):
         if payload[key] and len(payload[key]) > 200:
             payload[key] = payload[key][:200]
     return payload, None
@@ -2640,6 +2646,7 @@ def normalize_row(row_data: dict) -> dict:
     normalized["duration"] = to_int_or_none(row_data.get("duration"))
     normalized["review_passed"] = normalize_flag(row_data.get("review_passed"))
     normalized["uploaded"] = normalize_flag(row_data.get("uploaded"))
+    normalized["uploader"] = normalize_text(row_data.get("uploader"))
     normalized["materials"] = normalize_text(row_data.get("materials"))
     normalized["promo_text"] = normalize_text(row_data.get("promo_text"))
     normalized["description"] = normalize_text(row_data.get("description"))
