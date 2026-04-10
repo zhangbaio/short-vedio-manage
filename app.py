@@ -88,6 +88,7 @@ HEADER_MAP = {
     "新剧名": "new_name",
     "集数": "episodes",
     "时间(分钟)": "duration",
+    "时间（分钟）": "duration",
     "是否审核通过": "review_passed",
     "是否上传": "uploaded",
     "素材": "materials",
@@ -1538,6 +1539,7 @@ def import_excel():
 
     sheet = workbook.active
     header_row = next(sheet.iter_rows(min_row=1, max_row=1, values_only=True), [])
+    header_texts = {(header or "").strip() for header in header_row if header}
     header_map = {}
     for idx, header in enumerate(header_row, start=1):
         header_text = (header or "").strip()
@@ -1545,6 +1547,9 @@ def import_excel():
             header_map[idx] = HEADER_MAP[header_text]
     if "original_name" not in header_map.values() or "new_name" not in header_map.values():
         return jsonify({"error": "Excel缺少必要的原剧名或新剧名列"}), 400
+    has_uploader_column = "uploader" in header_map.values()
+    has_uploaded_column = "uploaded" in header_map.values()
+    is_submission_record_import = {"记录时间", "记录类型", "提交状态"}.issubset(header_texts)
 
     db = get_db()
     existing_rows = db.execute("SELECT original_name, new_name FROM dramas").fetchall()
@@ -1588,14 +1593,23 @@ def import_excel():
                 }
             )
             continue
+        uploaded_value = normalized.get("uploaded") or None
+        if is_submission_record_import and not has_uploaded_column:
+            uploaded_value = "是"
+        elif uploaded_value not in ALLOWED_FLAGS:
+            uploaded_value = "否"
+        uploader_value = normalized.get("uploader")
+        if not has_uploader_column and uploaded_value == "是":
+            uploader_value = session.get("username") or None
         insert_payload = {
             "date": normalized.get("date"),
             "original_name": original_name,
             "new_name": new_name,
             "episodes": normalized.get("episodes"),
             "duration": normalized.get("duration"),
-            "review_passed": normalized.get("review_passed", "否"),
-            "uploaded": normalized.get("uploaded", "否"),
+            "review_passed": normalized.get("review_passed") or "否",
+            "uploaded": uploaded_value,
+            "uploader": uploader_value,
             "materials": normalized.get("materials"),
             "promo_text": normalized.get("promo_text"),
             "description": normalized.get("description"),
