@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import datetime
 import hashlib
 import json
@@ -112,9 +114,6 @@ EXPORT_HEADERS = [
     "简介",
     "公司",
     "上传者",
-    "备注一",
-    "备注二",
-    "备注三",
 ]
 LICENSE_EXPORT_HEADERS = [
     "激活码",
@@ -1380,38 +1379,6 @@ def batch_delete():
     return jsonify({"message": "批量删除完成"})
 
 
-@app.route("/api/dramas/quick-add", methods=["POST"])
-@login_required
-@admin_required
-def quick_add_dramas():
-    data = request.get_json(silent=True) or {}
-    names = data.get("names") or []
-    company = (data.get("company") or "").strip() or None
-    if not isinstance(names, list) or not names:
-        return jsonify({"error": "请输入至少一个剧名"}), 400
-
-    today = datetime.date.today().isoformat()
-    db = get_db()
-    success_count = 0
-    duplicates = []
-
-    for raw_name in names:
-        name = (raw_name or "").strip()
-        if not name:
-            continue
-        try:
-            db.execute(
-                "INSERT INTO dramas (date, original_name, new_name, review_passed, uploaded, company, source) VALUES (?, ?, ?, '否', '否', ?, 'quick_add')",
-                (today, name, name, company),
-            )
-            db.commit()
-            success_count += 1
-        except sqlite3.IntegrityError:
-            duplicates.append(name)
-
-    return jsonify({"success_count": success_count, "duplicates": duplicates})
-
-
 @app.route("/api/dramas/<int:drama_id>/upload", methods=["PATCH"])
 @login_required
 def toggle_upload(drama_id: int):
@@ -1496,9 +1463,6 @@ def export_excel():
                 row["description"],
                 row["company"],
                 row["uploader"],
-                row["remark1"],
-                row["remark2"],
-                row["remark3"],
             ]
         )
 
@@ -2529,9 +2493,6 @@ def build_filter_clause(args):
     if date_to:
         clauses.append("date <= ?")
         params.append(date_to)
-    hide_quick_add = (args.get("hide_quick_add") or "").strip()
-    if hide_quick_add == "1":
-        clauses.append("(source IS NULL OR source != 'quick_add')")
     return clauses, params
 
 
@@ -2552,10 +2513,6 @@ def build_monitor_filters(args) -> tuple[list[str], list[object], str, datetime.
     if company:
         clauses.append("company = ?")
         params.append(company)
-
-    hide_quick_add = (args.get("hide_quick_add") or "").strip()
-    if hide_quick_add == "1":
-        clauses.append("(source IS NULL OR source != 'quick_add')")
 
     mode = (args.get("mode") or "created").strip().lower()
     if mode not in {"created", "online"}:
@@ -2588,10 +2545,6 @@ def build_monitor_filters(args) -> tuple[list[str], list[object], str, datetime.
     if company:
         clauses.append("company = ?")
         params.append(company)
-
-    hide_quick_add = (args.get("hide_quick_add") or "").strip()
-    if hide_quick_add == "1":
-        clauses.append("(source IS NULL OR source != 'quick_add')")
 
     mode = (args.get("mode") or "created").strip().lower()
     if mode not in {"created", "online"}:

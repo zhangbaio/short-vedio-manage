@@ -4,7 +4,6 @@ const monitorState = {
     company: "",
     date_from: "",
     date_to: "",
-    hide_quick_add: "1",
   },
   chart: null,
 };
@@ -43,7 +42,6 @@ function setDefaultMonitorFilters() {
   document.getElementById("monitorCompany").value = "";
   document.getElementById("monitorDateFrom").value = formatDateInput(start);
   document.getElementById("monitorDateTo").value = formatDateInput(today);
-  document.getElementById("monitorHideQuickAdd").checked = true;
   updateMonitorFiltersFromInputs();
 }
 
@@ -52,7 +50,6 @@ function updateMonitorFiltersFromInputs() {
   monitorState.filters.company = document.getElementById("monitorCompany").value;
   monitorState.filters.date_from = document.getElementById("monitorDateFrom").value;
   monitorState.filters.date_to = document.getElementById("monitorDateTo").value;
-  monitorState.filters.hide_quick_add = document.getElementById("monitorHideQuickAdd").checked ? "1" : "";
 }
 
 function formatDateInput(date) {

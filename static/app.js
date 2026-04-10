@@ -15,7 +15,6 @@ const state = {
     uploader: "",
     date_from: "",
     date_to: "",
-    hide_quick_add: "1",
   },
 };
 
@@ -29,7 +28,6 @@ const importModal = new bootstrap.Modal(document.getElementById("importModal"));
 const deleteModal = new bootstrap.Modal(document.getElementById("deleteModal"));
 const userModal = new bootstrap.Modal(document.getElementById("userModal"));
 const changePasswordModal = new bootstrap.Modal(document.getElementById("changePasswordModal"));
-const quickAddModal = new bootstrap.Modal(document.getElementById("quickAddModal"));
 const licenseModal = new bootstrap.Modal(document.getElementById("licenseModal"));
 const licenseSecretModal = new bootstrap.Modal(document.getElementById("licenseSecretModal"));
 const remoteModal = new bootstrap.Modal(document.getElementById("remoteModal"));
@@ -134,9 +132,6 @@ function bindEvents() {
   document.getElementById("copyLicenseSecretBtn")?.addEventListener("click", copyCurrentLicenseSecret);
   document.getElementById("changePasswordBtn")?.addEventListener("click", openChangePasswordModal);
   document.getElementById("confirmChangePasswordBtn")?.addEventListener("click", submitChangePassword);
-  document.getElementById("quickAddBtn")?.addEventListener("click", openQuickAddModal);
-  document.getElementById("quickAddSubmitBtn")?.addEventListener("click", handleQuickAdd);
-  document.getElementById("quickAddModal").addEventListener("hidden.bs.modal", resetQuickAddModal);
   document.getElementById("licenseModal").addEventListener("hidden.bs.modal", resetLicensePanel);
   document.getElementById("remoteManageBtn")?.addEventListener("click", openRemoteModal);
   document.getElementById("refreshRemoteClientsBtn")?.addEventListener("click", loadRemoteClients);
@@ -167,7 +162,6 @@ function updateFiltersFromInputs() {
   state.filters.uploader = document.getElementById("uploaderSearchInput").value.trim();
   state.filters.date_from = document.getElementById("dateFrom").value;
   state.filters.date_to = document.getElementById("dateTo").value;
-  state.filters.hide_quick_add = document.getElementById("hideQuickAdd").checked ? "1" : "";
 }
 
 function resetFilters() {
@@ -178,7 +172,6 @@ function resetFilters() {
   document.getElementById("uploaderSearchInput").value = "";
   document.getElementById("dateFrom").value = "";
   document.getElementById("dateTo").value = "";
-  document.getElementById("hideQuickAdd").checked = true;
   updateFiltersFromInputs();
 }
 
@@ -267,9 +260,6 @@ function renderDramas(items, options = {}) {
             ${buildDetailItem("素材", item.materials)}
             ${buildDetailItem("推广语", item.promo_text)}
             ${buildDetailItem("简介", item.description, true)}
-            ${buildDetailItem("备注一", item.remark1)}
-            ${buildDetailItem("备注二", item.remark2)}
-            ${buildDetailItem("备注三", item.remark3)}
           </div>
         </td>
       `;
@@ -371,9 +361,6 @@ function openCreateModal() {
   clearFormValidation(document.getElementById("dramaForm"));
   document.getElementById("dramaId").value = "";
   document.getElementById("reviewInput").value = "否";
-  document.getElementById("remark1Input").value = "";
-  document.getElementById("remark2Input").value = "";
-  document.getElementById("remark3Input").value = "";
   document.getElementById("uploaderInput").value = "";
   document.getElementById("uploadedInput").value = "否";
   dramaModal.show();
@@ -442,9 +429,6 @@ async function openEditModal(id) {
     document.getElementById("descriptionInput").value = item.description || "";
     document.getElementById("companyInput").value = item.company || "";
     document.getElementById("uploaderInput").value = item.uploader || "";
-    document.getElementById("remark1Input").value = item.remark1 || "";
-    document.getElementById("remark2Input").value = item.remark2 || "";
-    document.getElementById("remark3Input").value = item.remark3 || "";
     dramaModal.show();
   } catch (error) {
     showToast(error.message, "danger");
@@ -476,9 +460,6 @@ async function submitDramaForm() {
     description: document.getElementById("descriptionInput").value.trim(),
     company: companyInput.value.trim(),
     uploader: document.getElementById("uploaderInput").value.trim(),
-    remark1: document.getElementById("remark1Input").value.trim(),
-    remark2: document.getElementById("remark2Input").value.trim(),
-    remark3: document.getElementById("remark3Input").value.trim(),
   };
 
   let isValid = true;
@@ -546,9 +527,6 @@ async function submitDramaForm() {
     description: values.description || null,
     company: values.company,
     uploader: values.uploader || null,
-    remark1: values.remark1 || null,
-    remark2: values.remark2 || null,
-    remark3: values.remark3 || null,
   };
   try {
     const method = editingId ? "PUT" : "POST";
@@ -1160,20 +1138,6 @@ async function submitChangePassword() {
   }
 }
 
-function openQuickAddModal() {
-  resetQuickAddModal();
-  quickAddModal.show();
-}
-
-function resetQuickAddModal() {
-  document.getElementById("quickAddNames").value = "";
-  document.getElementById("quickAddNames").classList.remove("is-invalid");
-  document.getElementById("quickAddCompany").value = "";
-  document.getElementById("quickAddResult").hidden = true;
-  document.getElementById("quickAddDuplicatesSection").hidden = true;
-  document.getElementById("quickAddDuplicatesList").innerHTML = "";
-}
-
 async function openRemoteModal() {
   clearRemoteUnreadNotifications();
   await loadRemoteClients();
@@ -1482,60 +1446,6 @@ async function sendRemoteImportCommand() {
     document.getElementById("remoteDramaTitlesInput").value = "";
     await loadRemoteMessages(currentRemoteConversationId);
     showToast("远程导入命令已发送", "success");
-  } catch (error) {
-    showToast(error.message, "danger");
-  }
-}
-
-async function handleQuickAdd() {
-  const namesTextarea = document.getElementById("quickAddNames");
-  const namesRaw = namesTextarea.value.trim();
-  if (!namesRaw) {
-    namesTextarea.classList.add("is-invalid");
-    namesTextarea.focus();
-    return;
-  }
-  namesTextarea.classList.remove("is-invalid");
-  const names = namesRaw
-    .split("\n")
-    .map((n) => n.trim())
-    .filter((n) => n.length > 0);
-  if (names.length === 0) {
-    namesTextarea.classList.add("is-invalid");
-    namesTextarea.focus();
-    return;
-  }
-  const company = document.getElementById("quickAddCompany").value.trim() || null;
-  try {
-    const result = await requestJSON("/api/dramas/quick-add", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ names, company }),
-    });
-    if (!result) return;
-    document.getElementById("quickAddResult").hidden = false;
-    document.getElementById("quickAddSuccessCount").textContent = result.success_count;
-    const dupSection = document.getElementById("quickAddDuplicatesSection");
-    const dupList = document.getElementById("quickAddDuplicatesList");
-    dupList.innerHTML = "";
-    if (result.duplicates && result.duplicates.length > 0) {
-      dupSection.hidden = false;
-      result.duplicates.forEach((name) => {
-        const li = document.createElement("li");
-        li.textContent = name;
-        dupList.appendChild(li);
-      });
-    } else {
-      dupSection.hidden = true;
-    }
-    showToast(
-      `快速录入完成：成功 ${result.success_count} 条${
-        result.duplicates.length ? "，重复跳过 " + result.duplicates.length + " 条" : ""
-      }`,
-      "success"
-    );
-    await loadDramas();
-    await fetchCompanies();
   } catch (error) {
     showToast(error.message, "danger");
   }

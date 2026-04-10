@@ -35,7 +35,7 @@
           导入Excel
         </button>
         <button class="btn btn-primary" id="addDramaBtn">新增短剧</button>
-        <button class="btn btn-warning" id="quickAddBtn">快速录入爆剧</button>
+        <a class="btn btn-info text-white" href="{{ url_for('monitor_dashboard') }}">监控屏</a>
         <button class="btn btn-secondary" id="userManageBtn">用户管理</button>
         <a class="btn btn-dark" href="{{ url_for('license_management') }}">授权码管理</a>
         <button class="btn btn-danger" id="batchDeleteBtn" disabled>批量删除</button>
@@ -93,12 +93,6 @@
               <label class="form-label">结束日期</label>
               <input type="date" id="dateTo" class="form-control" />
             </div>
-            <div class="col-md-2 d-flex align-items-end">
-              <div class="form-check">
-                <input class="form-check-input" type="checkbox" id="hideQuickAdd" checked />
-                <label class="form-check-label" for="hideQuickAdd">不显示爆剧</label>
-              </div>
-            </div>
           </div>
           <div class="mt-3 d-flex gap-2">
             <button class="btn btn-primary" id="queryBtn">查询</button>
@@ -109,27 +103,21 @@
       </div>
 
       <div class="table-responsive mb-3">
-        <table class="table table-hover align-middle">
+        <table class="table table-hover align-middle drama-table">
           <thead class="table-light">
             <tr>
-              <th scope="col"><input type="checkbox" id="selectAll" /></th>
-              <th scope="col">#</th>
-              <th scope="col" data-sort="date" class="sortable-col">日期 <span class="sort-icon">⇅</span></th>
-              <th scope="col" data-sort="original_name" class="sortable-col">原剧名 <span class="sort-icon">⇅</span></th>
-              <th scope="col" data-sort="new_name" class="sortable-col">新剧名 <span class="sort-icon">⇅</span></th>
-              <th scope="col" data-sort="episodes" class="sortable-col">集数 <span class="sort-icon">⇅</span></th>
-              <th scope="col" data-sort="duration" class="sortable-col">时长(分) <span class="sort-icon">⇅</span></th>
-              <th scope="col" data-sort="review_passed" class="sortable-col">审核通过 <span class="sort-icon">⇅</span></th>
-              <th scope="col" data-sort="uploaded" class="sortable-col">是否上传 <span class="sort-icon">⇅</span></th>
-              <th scope="col">素材</th>
-              <th scope="col">推广语</th>
-              <th scope="col">简介</th>
-              <th scope="col" data-sort="company" class="sortable-col">公司 <span class="sort-icon">⇅</span></th>
-              <th scope="col" data-sort="uploader" class="sortable-col">上传者 <span class="sort-icon">⇅</span></th>
-              <th scope="col">备注一</th>
-              <th scope="col">备注二</th>
-              <th scope="col">备注三</th>
-              <th scope="col">操作</th>
+              <th scope="col" class="col-check"><input type="checkbox" id="selectAll" /></th>
+              <th scope="col" class="col-index">#</th>
+              <th scope="col" data-sort="date" class="sortable-col col-date">日期 <span class="sort-icon">⇅</span></th>
+              <th scope="col" data-sort="original_name" class="sortable-col col-name">原剧名 <span class="sort-icon">⇅</span></th>
+              <th scope="col" data-sort="new_name" class="sortable-col col-name">新剧名 <span class="sort-icon">⇅</span></th>
+              <th scope="col" data-sort="episodes" class="sortable-col col-number">集数 <span class="sort-icon">⇅</span></th>
+              <th scope="col" data-sort="duration" class="sortable-col col-number">时长(分) <span class="sort-icon">⇅</span></th>
+              <th scope="col" data-sort="review_passed" class="sortable-col col-flag">审核通过 <span class="sort-icon">⇅</span></th>
+              <th scope="col" data-sort="uploaded" class="sortable-col col-flag">是否上传 <span class="sort-icon">⇅</span></th>
+              <th scope="col" data-sort="company" class="sortable-col col-company">公司 <span class="sort-icon">⇅</span></th>
+              <th scope="col" class="col-uploader">上传者</th>
+              <th scope="col" class="col-actions actions-col">操作</th>
             </tr>
           </thead>
           <tbody id="dramaTableBody"></tbody>
@@ -253,18 +241,6 @@
               <div class="col-md-6">
                 <label class="form-label">上传者</label>
                 <input type="text" class="form-control" id="uploaderInput" maxlength="200" />
-              </div>
-              <div class="col-md-4">
-                <label class="form-label">备注一</label>
-                <input type="text" class="form-control" id="remark1Input" maxlength="200" />
-              </div>
-              <div class="col-md-4">
-                <label class="form-label">备注二</label>
-                <input type="text" class="form-control" id="remark2Input" maxlength="200" />
-              </div>
-              <div class="col-md-4">
-                <label class="form-label">备注三</label>
-                <input type="text" class="form-control" id="remark3Input" maxlength="200" />
               </div>
             </form>
           </div>
@@ -537,49 +513,6 @@
           <div class="modal-footer">
             <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
             <button type="button" class="btn btn-primary" id="confirmChangePasswordBtn">确认修改</button>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Quick Add Modal -->
-    <div class="modal fade" id="quickAddModal" tabindex="-1" aria-hidden="true">
-      <div class="modal-dialog">
-        <div class="modal-content">
-          <div class="modal-header">
-            <h5 class="modal-title">快速录入爆剧</h5>
-            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-          </div>
-          <div class="modal-body">
-            <p class="text-muted small mb-3">
-              每行输入一个原剧名，新剧名默认与原剧名相同，其他字段使用默认值（集数/时长留空，审核通过=否，是否上传=否）。
-            </p>
-            <div class="mb-3">
-              <label class="form-label">剧名列表 <span class="text-danger">*</span></label>
-              <textarea
-                class="form-control"
-                id="quickAddNames"
-                rows="8"
-                placeholder="每行一个剧名，例如：&#10;都市爱情第一季&#10;仙侠传奇&#10;重生之路"
-              ></textarea>
-              <div class="invalid-feedback">请至少输入一个剧名</div>
-            </div>
-            <div class="mb-3">
-              <label class="form-label">公司（可选，统一应用）</label>
-              <input type="text" class="form-control" id="quickAddCompany" maxlength="100" placeholder="留空则不填写公司" />
-            </div>
-            <div id="quickAddResult" hidden>
-              <hr />
-              <p class="mb-1 text-success">✅ 成功录入：<strong id="quickAddSuccessCount">0</strong> 条</p>
-              <div id="quickAddDuplicatesSection" hidden>
-                <p class="mb-1 text-warning">⚠️ 重复跳过：</p>
-                <ul class="mb-0 ps-3" id="quickAddDuplicatesList"></ul>
-              </div>
-            </div>
-          </div>
-          <div class="modal-footer">
-            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
-            <button type="button" class="btn btn-warning" id="quickAddSubmitBtn">录入</button>
           </div>
         </div>
       </div>
