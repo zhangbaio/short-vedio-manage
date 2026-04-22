@@ -576,12 +576,22 @@ def parse_license_ids_from_payload(data: dict) -> tuple[list[int], str | None]:
     return ids, None
 
 
+def revoke_license_activations(db: sqlite3.Connection, license_id: int) -> int:
+    result = db.execute(
+        """
+        UPDATE license_activations
+        SET revoked_at = ?
+        WHERE license_id = ? AND (revoked_at IS NULL OR revoked_at = '')
+        """,
+        (now_iso(), license_id),
+    )
+    return int(result.rowcount or 0)
+
+
 def soft_delete_license_row(db: sqlite3.Connection, row: sqlite3.Row, *, deleted_by: int | None) -> tuple[bool, str]:
     if row["deleted_at"]:
         return False, "该激活码已删除"
-    active_activations = current_active_activation_count(db, row["id"])
-    if row["status"] == "active" or active_activations > 0:
-        return False, f"{row['license_key_masked']} 请先停用并解绑所有设备后删除"
+    revoke_license_activations(db, row["id"])
     db.execute(
         """
         UPDATE licenses

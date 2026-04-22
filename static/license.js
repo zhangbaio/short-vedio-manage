@@ -158,9 +158,7 @@ function renderLicenseRows(items) {
           : `<button class="btn btn-sm btn-outline-success" data-action="enable-license" data-id="${item.id}">启用</button>`
       );
       actionButtons.push(
-        canDelete
-          ? `<button class="btn btn-sm btn-outline-danger" data-action="delete-license" data-id="${item.id}" data-name="${escapeHtml(item.license_key_masked || "该授权码")}">删除</button>`
-          : `<button class="btn btn-sm btn-outline-danger" disabled title="请先停用并解绑所有设备后删除">删除</button>`
+        `<button class="btn btn-sm btn-outline-danger" data-action="delete-license" data-id="${item.id}" data-name="${escapeHtml(item.license_key_masked || "该授权码")}">删除</button>`
       );
     }
 
@@ -356,7 +354,7 @@ function resetSelection() {
 }
 
 function canDeleteLicense(item) {
-  return !item.deleted_at && item.status !== "active" && Number(item.active_activations || 0) === 0;
+  return !item.deleted_at;
 }
 
 function canEnableLicense(item) {
@@ -421,7 +419,7 @@ async function batchDeleteLicenses() {
     showToast("请选择可删除的授权码", "warning");
     return;
   }
-  if (!confirm(`确定批量删除 ${ids.length} 条授权码吗？`)) return;
+  if (!confirm(`确定批量删除 ${ids.length} 条授权码吗？删除后将同时使这些授权码下的设备绑定失效。`)) return;
 
   try {
     const result = await requestJSON("/api/licenses/batch-delete", {
@@ -493,7 +491,7 @@ async function handleLicenseTableClick(event) {
     }
     if (action === "delete-license") {
       const name = target.dataset.name || "该授权码";
-      if (!confirm(`确定删除 ${name} 吗？删除后默认列表中将不再显示。`)) return;
+      if (!confirm(`确定删除 ${name} 吗？删除后将从默认列表隐藏，并同时使该授权码下的设备绑定失效。`)) return;
       await requestJSON(`/api/licenses/${id}`, { method: "DELETE" });
       showToast("激活码已删除", "success");
       if (currentLicenseId === id) {
