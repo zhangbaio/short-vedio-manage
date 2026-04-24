@@ -1528,13 +1528,9 @@ def import_excel():
     db = get_db()
     existing_rows = db.execute("SELECT original_name, new_name FROM dramas").fetchall()
     existing_pairs = {(row["original_name"], row["new_name"]) for row in existing_rows}
-    existing_new_names: dict[str, set[str]] = {}
-    for row in existing_rows:
-        existing_new_names.setdefault(row["original_name"], set()).add(row["new_name"])
 
     new_count = 0
     duplicate_count = 0
-    conflicts: list[dict[str, str]] = []
 
     for row in sheet.iter_rows(min_row=2, values_only=True):
         row_data = {}
@@ -1554,18 +1550,6 @@ def import_excel():
         pair = (original_name, new_name)
         if pair in existing_pairs:
             duplicate_count += 1
-            continue
-        if (
-            original_name in existing_new_names
-            and new_name not in existing_new_names[original_name]
-        ):
-            conflicts.append(
-                {
-                    "original_name": original_name,
-                    "new_name": new_name,
-                    "existing_new_name": next(iter(existing_new_names[original_name])),
-                }
-            )
             continue
         uploaded_value = normalized.get("uploaded") or None
         if is_submission_record_import and not has_uploaded_column:
@@ -1600,14 +1584,13 @@ def import_excel():
         )
         db.commit()
         existing_pairs.add(pair)
-        existing_new_names.setdefault(original_name, set()).add(new_name)
         new_count += 1
 
     return jsonify(
         {
             "new_count": new_count,
             "duplicate_count": duplicate_count,
-            "conflicts": conflicts,
+            "conflicts": [],
         }
     )
 
