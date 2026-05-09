@@ -47,7 +47,7 @@ body {
 }
 
 .drama-table .col-name {
-  width: 148px;
+  width: 220px;
 }
 
 .drama-table .col-number {
@@ -95,6 +95,17 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.drama-table .title-cell {
+  display: -webkit-box;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  line-height: 1.45;
+  min-height: calc(1.45em * 2);
+  word-break: break-word;
 }
 
 .drama-table .text-center-cell {

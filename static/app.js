@@ -234,8 +234,8 @@ function renderDramas(items, options = {}) {
       <td><input type="checkbox" class="row-checkbox" data-id="${item.id}" /></td>
       <th scope="row">${rowNumber}</th>
       ${buildTextCell(item.date || "-", "col-date")}
-      ${buildTextCell(item.original_name || "-", "col-name")}
-      ${buildTextCell(item.new_name || "-", "col-name")}
+      ${buildTitleCell(item.original_name || "-", "col-name")}
+      ${buildTitleCell(item.new_name || "-", "col-name")}
       <td class="text-center-cell col-number">${item.episodes ?? "-"}</td>
       <td class="text-center-cell col-number">${item.duration ?? "-"}</td>
       <td class="text-center-cell col-flag">${buildBadge(item.review_passed)}</td>
@@ -257,6 +257,8 @@ function renderDramas(items, options = {}) {
       detailRow.innerHTML = `
         <td colspan="12">
           <div class="drama-detail-grid">
+            ${buildDetailItem("原剧名", item.original_name, true)}
+            ${buildDetailItem("新剧名", item.new_name, true)}
             ${buildDetailItem("素材", item.materials)}
             ${buildDetailItem("推广语", item.promo_text)}
             ${buildDetailItem("简介", item.description, true)}
@@ -306,6 +308,13 @@ function buildTextCell(value, className = "") {
   const content = raw || "-";
   const title = raw ? ` title="${escapeHtml(raw)}"` : "";
   return `<td class="cell-ellipsis ${className}"${title}>${escapeHtml(content)}</td>`;
+}
+
+function buildTitleCell(value, className = "") {
+  const raw = value === null || value === undefined ? "" : String(value);
+  const content = raw || "-";
+  const title = raw ? ` title="${escapeHtml(raw)}"` : "";
+  return `<td class="${className}"${title}><div class="title-cell">${escapeHtml(content)}</div></td>`;
 }
 
 function buildDetailItem(label, value, fullWidth = false) {
