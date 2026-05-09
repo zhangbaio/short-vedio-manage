@@ -6,6 +6,8 @@ services:
     environment:
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required}
       LICENSE_SIGNING_KEY: ${LICENSE_SIGNING_KEY:?LICENSE_SIGNING_KEY is required}
+      WX_MINIDRAMA_APPID: ${WX_MINIDRAMA_APPID:-}
+      WX_MINIDRAMA_APPSECRET: ${WX_MINIDRAMA_APPSECRET:-}
     restart: unless-stopped
     ports:
       - "${APP_PORT:-8000}:8000"

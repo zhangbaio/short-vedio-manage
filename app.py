@@ -11,6 +11,8 @@ import uuid
 from functools import wraps
 from io import BytesIO
 from typing import Any
+from urllib import parse as urlparse
+from urllib import request as urlrequest
 
 from flask import (
     Flask,
@@ -83,6 +85,9 @@ REMOTE_IMPORT_DRAMA_ALLOWED_STEPS = {
     "publish_materials",
 }
 REMOTE_IMPORT_DRAMA_ALLOWED_ERROR_STRATEGIES = {"skip", "stop"}
+WEIXIN_API_BASE = "https://api.weixin.qq.com"
+MINIDRAMA_TOKEN_REFRESH_MARGIN_SECONDS = 300
+MINIDRAMA_TOKEN_REFRESH_LOCK_SECONDS = 60
 
 HEADER_MAP = {
     "日期": "date",
@@ -283,6 +288,17 @@ def init_db() -> None:
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (message_id) REFERENCES remote_messages(id) ON DELETE CASCADE
             );
+
+            CREATE TABLE IF NOT EXISTS minidrama_token_cache (
+                app_id TEXT PRIMARY KEY,
+                access_token TEXT,
+                expires_at INTEGER NOT NULL DEFAULT 0,
+                refreshing_by TEXT,
+                refreshing_until INTEGER NOT NULL DEFAULT 0,
+                last_error TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
             """
         )
         # Migrate: add source column if missing
@@ -324,6 +340,9 @@ def init_db() -> None:
         )
         db.execute(
             "CREATE INDEX IF NOT EXISTS idx_remote_messages_status ON remote_messages(status)"
+        )
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_minidrama_token_expires_at ON minidrama_token_cache(expires_at)"
         )
         db.execute(
             "CREATE INDEX IF NOT EXISTS idx_dramas_created_at ON dramas(created_at)"
@@ -650,6 +669,55 @@ def hash_remote_client_token(token: str) -> str:
 
 def now_iso() -> str:
     return datetime.datetime.now().isoformat(timespec="seconds")
+
+
+def now_timestamp() -> int:
+    return int(datetime.datetime.now().timestamp())
+
+
+def resolve_minidrama_server_credentials(requested_app_id: str = "") -> tuple[str, str, str | None]:
+    app_id = (
+        str(os.environ.get("WX_MINIDRAMA_APPID") or "").strip()
+        or str(os.environ.get("MINIDRAMA_APP_ID") or "").strip()
+    )
+    app_secret = (
+        str(os.environ.get("WX_MINIDRAMA_APPSECRET") or "").strip()
+        or str(os.environ.get("MINIDRAMA_APP_SECRET") or "").strip()
+    )
+    requested = str(requested_app_id or "").strip()
+    if requested and app_id and requested != app_id:
+        return "", "", "请求的小程序 AppID 与服务端配置不一致"
+    if requested and not app_id:
+        app_id = requested
+    if not app_id:
+        return "", "", "服务端未配置小程序 AppID"
+    if not app_secret:
+        return "", "", "服务端未配置小程序 AppSecret"
+    return app_id, app_secret, None
+
+
+def fetch_minidrama_access_token_from_weixin(app_id: str, app_secret: str) -> tuple[str, int]:
+    query = urlparse.urlencode(
+        {
+            "grant_type": "client_credential",
+            "appid": str(app_id or "").strip(),
+            "secret": str(app_secret or "").strip(),
+        }
+    )
+    req = urlrequest.Request(f"{WEIXIN_API_BASE}/cgi-bin/token?{query}", method="GET")
+    with urlrequest.urlopen(req, timeout=20) as response:
+        raw = response.read().decode("utf-8", errors="replace")
+    payload = json.loads(raw or "{}")
+    if not isinstance(payload, dict):
+        raise ValueError("微信 token 接口返回格式异常")
+    errcode = payload.get("errcode")
+    if errcode not in (None, 0):
+        raise ValueError(f"微信 token 接口失败：errcode={errcode}, errmsg={payload.get('errmsg') or ''}")
+    access_token = str(payload.get("access_token") or "").strip()
+    expires_in = int(payload.get("expires_in") or 0)
+    if not access_token:
+        raise ValueError("微信 token 接口未返回 access_token")
+    return access_token, expires_in
 
 
 def serialize_remote_client(row: sqlite3.Row) -> dict:
@@ -2272,6 +2340,109 @@ def client_register_remote():
     db.commit()
     refreshed = get_remote_client_by_public_id(db, client_row["client_id"])
     return jsonify({"ok": True, "data": serialize_remote_client(refreshed)})
+
+
+@app.route("/client-api/minidrama/token", methods=["POST"])
+def client_get_minidrama_token():
+    db, client_row = require_remote_client()
+    if client_row is None:
+        return jsonify({"ok": False, "message": "client_id 或 client_token 无效"}), 401
+    data = request.get_json(silent=True) or {}
+    requested_app_id = str(data.get("app_id") or request.args.get("app_id") or "").strip()
+    app_id, app_secret, error_message = resolve_minidrama_server_credentials(requested_app_id)
+    if error_message:
+        return jsonify({"ok": False, "message": error_message}), 400
+
+    now_ts = now_timestamp()
+    now_text = now_iso()
+    row = db.execute("SELECT * FROM minidrama_token_cache WHERE app_id = ?", (app_id,)).fetchone()
+    if row and str(row["access_token"] or "").strip() and int(row["expires_at"] or 0) - now_ts > MINIDRAMA_TOKEN_REFRESH_MARGIN_SECONDS:
+        return jsonify(
+            {
+                "ok": True,
+                "data": {
+                    "app_id": app_id,
+                    "access_token": row["access_token"],
+                    "expires_at": int(row["expires_at"] or 0),
+                    "expires_in": max(0, int(row["expires_at"] or 0) - now_ts),
+                    "cached": True,
+                },
+            }
+        )
+
+    db.execute(
+        """
+        INSERT OR IGNORE INTO minidrama_token_cache (
+            app_id, access_token, expires_at, refreshing_by, refreshing_until, created_at, updated_at
+        ) VALUES (?, NULL, 0, NULL, 0, ?, ?)
+        """,
+        (app_id, now_text, now_text),
+    )
+    db.commit()
+    lock_until = now_ts + MINIDRAMA_TOKEN_REFRESH_LOCK_SECONDS
+    cursor = db.execute(
+        """
+        UPDATE minidrama_token_cache
+        SET refreshing_by = ?, refreshing_until = ?, updated_at = ?
+        WHERE app_id = ? AND (refreshing_until IS NULL OR refreshing_until <= ? OR refreshing_by = ?)
+        """,
+        (client_row["client_id"], lock_until, now_text, app_id, now_ts, client_row["client_id"]),
+    )
+    db.commit()
+    if cursor.rowcount <= 0:
+        row = db.execute("SELECT * FROM minidrama_token_cache WHERE app_id = ?", (app_id,)).fetchone()
+        if row and str(row["access_token"] or "").strip() and int(row["expires_at"] or 0) > now_ts + 60:
+            return jsonify(
+                {
+                    "ok": True,
+                    "data": {
+                        "app_id": app_id,
+                        "access_token": row["access_token"],
+                        "expires_at": int(row["expires_at"] or 0),
+                        "expires_in": max(0, int(row["expires_at"] or 0) - now_ts),
+                        "cached": True,
+                        "refreshing": True,
+                    },
+                }
+            )
+        return jsonify({"ok": False, "message": "小程序 token 正在刷新，请稍后重试"}), 409
+
+    try:
+        access_token, expires_in = fetch_minidrama_access_token_from_weixin(app_id, app_secret)
+    except Exception as exc:
+        db.execute(
+            """
+            UPDATE minidrama_token_cache
+            SET refreshing_by = NULL, refreshing_until = 0, last_error = ?, updated_at = ?
+            WHERE app_id = ?
+            """,
+            (str(exc), now_iso(), app_id),
+        )
+        db.commit()
+        return jsonify({"ok": False, "message": str(exc)}), 502
+
+    expires_at = now_timestamp() + max(0, int(expires_in) - 120)
+    db.execute(
+        """
+        UPDATE minidrama_token_cache
+        SET access_token = ?, expires_at = ?, refreshing_by = NULL, refreshing_until = 0, last_error = NULL, updated_at = ?
+        WHERE app_id = ?
+        """,
+        (access_token, expires_at, now_iso(), app_id),
+    )
+    db.commit()
+    return jsonify(
+        {
+            "ok": True,
+            "data": {
+                "app_id": app_id,
+                "access_token": access_token,
+                "expires_at": expires_at,
+                "expires_in": max(0, expires_at - now_timestamp()),
+                "cached": False,
+            },
+        }
+    )
 
 
 @app.route("/client-api/remote/poll", methods=["GET"])
