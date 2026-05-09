@@ -31,6 +31,7 @@ const changePasswordModal = new bootstrap.Modal(document.getElementById("changeP
 const licenseModal = new bootstrap.Modal(document.getElementById("licenseModal"));
 const licenseSecretModal = new bootstrap.Modal(document.getElementById("licenseSecretModal"));
 const remoteModal = new bootstrap.Modal(document.getElementById("remoteModal"));
+const minidramaSettingsModal = new bootstrap.Modal(document.getElementById("minidramaSettingsModal"));
 let currentLicenseId = null;
 let currentLicenseSecret = "";
 let currentRemoteConversationId = null;
@@ -119,6 +120,9 @@ function bindEvents() {
     await loadUsers();
     userModal.show();
   });
+  document.getElementById("minidramaSettingsBtn")?.addEventListener("click", openMinidramaSettingsModal);
+  document.getElementById("saveMinidramaSettingsBtn")?.addEventListener("click", saveMinidramaSettings);
+  document.getElementById("minidramaSettingsModal")?.addEventListener("hidden.bs.modal", resetMinidramaSettingsForm);
   document.getElementById("licenseManageBtn")?.addEventListener("click", async () => {
     await loadLicenses();
     licenseModal.show();
@@ -173,6 +177,91 @@ function resetFilters() {
   document.getElementById("dateFrom").value = "";
   document.getElementById("dateTo").value = "";
   updateFiltersFromInputs();
+}
+
+function renderMinidramaSettingsMeta(data) {
+  const meta = document.getElementById("minidramaSettingsMeta");
+  if (!meta) return;
+  const sourceLabels = {
+    database: "后台配置",
+    environment: "环境变量",
+    empty: "未配置",
+  };
+  const parts = [
+    `当前来源：${sourceLabels[data.source] || data.source || "未配置"}`,
+    `AppSecret：${data.app_secret_configured ? data.app_secret_masked || "已配置" : "未配置"}`,
+  ];
+  if (data.updated_at) {
+    parts.push(`更新时间：${data.updated_at}`);
+  }
+  meta.textContent = parts.join(" · ");
+}
+
+function resetMinidramaSettingsForm() {
+  const form = document.getElementById("minidramaSettingsForm");
+  document.getElementById("minidramaAppIdInput").value = "";
+  document.getElementById("minidramaAppSecretInput").value = "";
+  document.getElementById("minidramaSettingsMeta").textContent = "";
+  if (form) {
+    form.dataset.appSecretConfigured = "0";
+    clearFormValidation(form);
+  }
+}
+
+async function openMinidramaSettingsModal() {
+  resetMinidramaSettingsForm();
+  try {
+    const data = await requestJSON("/api/settings/minidrama");
+    if (!data) return;
+    document.getElementById("minidramaAppIdInput").value = data.app_id || "";
+    document.getElementById("minidramaSettingsForm").dataset.appSecretConfigured = data.app_secret_configured ? "1" : "0";
+    renderMinidramaSettingsMeta(data);
+    minidramaSettingsModal.show();
+  } catch (error) {
+    showToast(error.message, "danger");
+  }
+}
+
+async function saveMinidramaSettings() {
+  const form = document.getElementById("minidramaSettingsForm");
+  const appIdInput = document.getElementById("minidramaAppIdInput");
+  const appSecretInput = document.getElementById("minidramaAppSecretInput");
+  const appId = appIdInput.value.trim();
+  const appSecret = appSecretInput.value.trim();
+  const hasCurrentSecret = form.dataset.appSecretConfigured === "1";
+  let isValid = true;
+  let firstInvalid = null;
+  if (!validateField(appIdInput, () => appId.length > 0)) {
+    isValid = false;
+    firstInvalid = firstInvalid || appIdInput;
+  }
+  if (!validateField(appSecretInput, () => hasCurrentSecret || appSecret.length > 0)) {
+    isValid = false;
+    firstInvalid = firstInvalid || appSecretInput;
+  }
+  if (!isValid) {
+    firstInvalid?.focus();
+    return;
+  }
+
+  const saveBtn = document.getElementById("saveMinidramaSettingsBtn");
+  saveBtn.disabled = true;
+  try {
+    const data = await requestJSON("/api/settings/minidrama", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ app_id: appId, app_secret: appSecret }),
+    });
+    if (!data) return;
+    form.dataset.appSecretConfigured = data.app_secret_configured ? "1" : "0";
+    appSecretInput.value = "";
+    renderMinidramaSettingsMeta(data);
+    showToast("小程序配置已保存", "success");
+  } catch (error) {
+    showToast(error.message, "danger");
+  } finally {
+    saveBtn.disabled = false;
+  }
 }
 
 function changePage(target) {
@@ -980,7 +1069,7 @@ async function requestJSON(url, options = {}) {
   const isJson = (response.headers.get("content-type") || "").includes("application/json");
   if (!response.ok) {
     const errorData = isJson ? await response.json().catch(() => ({})) : {};
-    throw new Error(errorData.error || "请求失败");
+    throw new Error(errorData.error || errorData.message || "请求失败");
   }
   return isJson ? response.json() : response;
 }
