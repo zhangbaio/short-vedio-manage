@@ -396,10 +396,6 @@ def seed_default_users(db: sqlite3.Connection) -> None:
         "INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)", users
     )
 
-
-init_db()
-
-
 def login_required(view):
     @wraps(view)
     def wrapped(*args, **kwargs):
@@ -773,6 +769,9 @@ def migrate_legacy_minidrama_settings(db: sqlite3.Connection) -> None:
         """,
         (app_id, app_secret, "默认小程序", now, now, updated_by),
     )
+
+
+init_db()
 
 
 def serialize_minidrama_app(row: sqlite3.Row | dict[str, Any], *, include_secret: bool = False) -> dict[str, Any]:
