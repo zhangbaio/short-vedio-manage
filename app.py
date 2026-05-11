@@ -302,6 +302,19 @@ def init_db() -> None:
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
 
+            CREATE TABLE IF NOT EXISTS minidrama_apps (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                app_id TEXT UNIQUE NOT NULL,
+                app_secret TEXT NOT NULL,
+                name TEXT,
+                is_default INTEGER NOT NULL DEFAULT 0,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT,
+                updated_at TEXT,
+                updated_by INTEGER,
+                FOREIGN KEY (updated_by) REFERENCES users(id) ON DELETE SET NULL
+            );
+
             CREATE TABLE IF NOT EXISTS app_settings (
                 setting_key TEXT PRIMARY KEY,
                 setting_value TEXT,
@@ -355,6 +368,9 @@ def init_db() -> None:
             "CREATE INDEX IF NOT EXISTS idx_minidrama_token_expires_at ON minidrama_token_cache(expires_at)"
         )
         db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_minidrama_apps_default ON minidrama_apps(is_default, enabled)"
+        )
+        db.execute(
             "CREATE INDEX IF NOT EXISTS idx_dramas_created_at ON dramas(created_at)"
         )
         db.execute(
@@ -363,6 +379,7 @@ def init_db() -> None:
         db.execute(
             "CREATE INDEX IF NOT EXISTS idx_dramas_company ON dramas(company)"
         )
+        migrate_legacy_minidrama_settings(db)
         seed_default_users(db)
         db.commit()
 
@@ -700,6 +717,15 @@ def get_app_setting_value(setting_key: str) -> str:
     return str(row["setting_value"] or "").strip() if row else ""
 
 
+def mask_secret_value(secret: str) -> str:
+    text = str(secret or "").strip()
+    if len(text) >= 8:
+        return f"{text[:4]}{'*' * 8}{text[-4:]}"
+    if text:
+        return "*" * len(text)
+    return ""
+
+
 def set_app_setting(setting_key: str, setting_value: str, *, is_secret: bool, updated_by: int | None = None) -> None:
     get_db().execute(
         """
@@ -721,7 +747,165 @@ def set_app_setting(setting_key: str, setting_value: str, *, is_secret: bool, up
     )
 
 
-def get_minidrama_server_settings() -> dict[str, Any]:
+def migrate_legacy_minidrama_settings(db: sqlite3.Connection) -> None:
+    existing_count = db.execute("SELECT COUNT(*) FROM minidrama_apps").fetchone()[0]
+    if existing_count:
+        return
+    app_id_row = db.execute(
+        "SELECT * FROM app_settings WHERE setting_key = ?",
+        (MINIDRAMA_APP_ID_SETTING_KEY,),
+    ).fetchone()
+    app_secret_row = db.execute(
+        "SELECT * FROM app_settings WHERE setting_key = ?",
+        (MINIDRAMA_APP_SECRET_SETTING_KEY,),
+    ).fetchone()
+    app_id = str(app_id_row["setting_value"] or "").strip() if app_id_row else ""
+    app_secret = str(app_secret_row["setting_value"] or "").strip() if app_secret_row else ""
+    if not app_id or not app_secret:
+        return
+    now = now_iso()
+    updated_by = app_secret_row["updated_by"] if app_secret_row else app_id_row["updated_by"] if app_id_row else None
+    db.execute(
+        """
+        INSERT OR IGNORE INTO minidrama_apps (
+            app_id, app_secret, name, is_default, enabled, created_at, updated_at, updated_by
+        ) VALUES (?, ?, ?, 1, 1, ?, ?, ?)
+        """,
+        (app_id, app_secret, "默认小程序", now, now, updated_by),
+    )
+
+
+def serialize_minidrama_app(row: sqlite3.Row | dict[str, Any], *, include_secret: bool = False) -> dict[str, Any]:
+    app_secret = str((row["app_secret"] if isinstance(row, sqlite3.Row) else row.get("app_secret")) or "").strip()
+    payload = {
+        "id": int(row["id"] if isinstance(row, sqlite3.Row) else row.get("id") or 0),
+        "app_id": str((row["app_id"] if isinstance(row, sqlite3.Row) else row.get("app_id")) or "").strip(),
+        "name": str((row["name"] if isinstance(row, sqlite3.Row) else row.get("name")) or "").strip(),
+        "enabled": bool((row["enabled"] if isinstance(row, sqlite3.Row) else row.get("enabled", True))),
+        "is_default": bool((row["is_default"] if isinstance(row, sqlite3.Row) else row.get("is_default", False))),
+        "app_secret_configured": bool(app_secret),
+        "app_secret_masked": mask_secret_value(app_secret),
+        "source": "database",
+        "updated_at": str((row["updated_at"] if isinstance(row, sqlite3.Row) else row.get("updated_at")) or ""),
+        "updated_by": row["updated_by"] if isinstance(row, sqlite3.Row) else row.get("updated_by"),
+    }
+    if include_secret:
+        payload["app_secret"] = app_secret
+    return payload
+
+
+def list_minidrama_app_rows(*, include_disabled: bool = True) -> list[sqlite3.Row]:
+    query = "SELECT * FROM minidrama_apps"
+    params: tuple[Any, ...] = ()
+    if not include_disabled:
+        query += " WHERE enabled = 1"
+    query += " ORDER BY is_default DESC, updated_at DESC, id DESC"
+    return list(get_db().execute(query, params).fetchall())
+
+
+def get_minidrama_app_row(app_id: str) -> sqlite3.Row | None:
+    normalized = str(app_id or "").strip()
+    if not normalized:
+        return None
+    return get_db().execute("SELECT * FROM minidrama_apps WHERE app_id = ?", (normalized,)).fetchone()
+
+
+def get_default_minidrama_app_row() -> sqlite3.Row | None:
+    row = get_db().execute(
+        "SELECT * FROM minidrama_apps WHERE enabled = 1 AND is_default = 1 ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    if row:
+        return row
+    return get_db().execute(
+        "SELECT * FROM minidrama_apps WHERE enabled = 1 ORDER BY updated_at DESC, id DESC LIMIT 1"
+    ).fetchone()
+
+
+def save_minidrama_app(
+    *,
+    app_id: str,
+    app_secret: str,
+    name: str = "",
+    enabled: bool = True,
+    is_default: bool = False,
+    updated_by: int | None = None,
+) -> sqlite3.Row:
+    db = get_db()
+    normalized_app_id = str(app_id or "").strip()
+    existing = get_minidrama_app_row(normalized_app_id)
+    now = now_iso()
+    if is_default:
+        db.execute("UPDATE minidrama_apps SET is_default = 0 WHERE app_id <> ?", (normalized_app_id,))
+    if existing:
+        db.execute(
+            """
+            UPDATE minidrama_apps
+            SET app_secret = ?, name = ?, enabled = ?, is_default = ?, updated_at = ?, updated_by = ?
+            WHERE app_id = ?
+            """,
+            (
+                str(app_secret or "").strip(),
+                str(name or "").strip(),
+                1 if enabled else 0,
+                1 if is_default else int(existing["is_default"] or 0),
+                now,
+                updated_by,
+                normalized_app_id,
+            ),
+        )
+    else:
+        if not is_default and not get_default_minidrama_app_row():
+            is_default = True
+        db.execute(
+            """
+            INSERT INTO minidrama_apps (
+                app_id, app_secret, name, enabled, is_default, created_at, updated_at, updated_by
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                normalized_app_id,
+                str(app_secret or "").strip(),
+                str(name or "").strip(),
+                1 if enabled else 0,
+                1 if is_default else 0,
+                now,
+                now,
+                updated_by,
+            ),
+        )
+    db.execute("DELETE FROM minidrama_token_cache WHERE app_id = ?", (normalized_app_id,))
+    if not get_default_minidrama_app_row():
+        db.execute(
+            """
+            UPDATE minidrama_apps
+            SET is_default = 1
+            WHERE id = (
+                SELECT id FROM minidrama_apps WHERE enabled = 1 ORDER BY updated_at DESC, id DESC LIMIT 1
+            )
+            """
+        )
+    return get_minidrama_app_row(normalized_app_id)
+
+
+def get_minidrama_server_settings(requested_app_id: str = "") -> dict[str, Any]:
+    requested = str(requested_app_id or "").strip()
+    if requested:
+        row = get_minidrama_app_row(requested)
+        if row:
+            return serialize_minidrama_app(row, include_secret=True)
+        return {
+            "app_id": requested,
+            "app_secret": "",
+            "app_secret_configured": False,
+            "source": "empty",
+            "updated_at": "",
+            "updated_by": None,
+        }
+    row = get_default_minidrama_app_row()
+    if row:
+        payload = serialize_minidrama_app(row, include_secret=True)
+        payload["apps"] = [serialize_minidrama_app(item) for item in list_minidrama_app_rows()]
+        return payload
     db_app_id = get_app_setting_value(MINIDRAMA_APP_ID_SETTING_KEY)
     db_app_secret = get_app_setting_value(MINIDRAMA_APP_SECRET_SETTING_KEY)
     env_app_id = (
@@ -750,40 +934,39 @@ def get_minidrama_server_settings() -> dict[str, Any]:
         "source": source,
         "updated_at": updated_row["updated_at"] if updated_row else "",
         "updated_by": updated_row["updated_by"] if updated_row else None,
+        "apps": [],
     }
 
 
 def serialize_minidrama_settings(settings: dict[str, Any]) -> dict[str, Any]:
     app_secret = str(settings.get("app_secret") or "").strip()
-    if len(app_secret) >= 8:
-        masked_secret = f"{app_secret[:4]}{'*' * 8}{app_secret[-4:]}"
-    elif app_secret:
-        masked_secret = "*" * len(app_secret)
-    else:
-        masked_secret = ""
     return {
         "app_id": str(settings.get("app_id") or "").strip(),
+        "name": str(settings.get("name") or "").strip(),
+        "enabled": bool(settings.get("enabled", True)),
+        "is_default": bool(settings.get("is_default", False)),
         "app_secret_configured": bool(app_secret),
-        "app_secret_masked": masked_secret,
+        "app_secret_masked": mask_secret_value(app_secret),
         "source": str(settings.get("source") or "empty"),
         "updated_at": str(settings.get("updated_at") or ""),
         "updated_by": settings.get("updated_by"),
+        "apps": settings.get("apps") if isinstance(settings.get("apps"), list) else [],
     }
 
 
 def resolve_minidrama_server_credentials(requested_app_id: str = "") -> tuple[str, str, str | None]:
-    settings = get_minidrama_server_settings()
+    settings = get_minidrama_server_settings(requested_app_id)
     app_id = str(settings.get("app_id") or "").strip()
     app_secret = str(settings.get("app_secret") or "").strip()
     requested = str(requested_app_id or "").strip()
     if requested and app_id and requested != app_id:
         return "", "", "请求的小程序 AppID 与服务端配置不一致"
-    if requested and not app_id:
-        app_id = requested
     if not app_id:
         return "", "", "服务端未配置小程序 AppID"
     if not app_secret:
-        return "", "", "服务端未配置小程序 AppSecret"
+        return "", "", f"服务端未配置小程序 AppSecret：{app_id}"
+    if settings.get("enabled") is False:
+        return "", "", f"服务端小程序配置已停用：{app_id}"
     return app_id, app_secret, None
 
 
@@ -1259,6 +1442,9 @@ def update_minidrama_settings_api():
     data = request.get_json(silent=True) or {}
     app_id = str(data.get("app_id") or "").strip()
     app_secret_input = str(data.get("app_secret") or "").strip()
+    name = str(data.get("name") or "").strip()
+    enabled = bool(data.get("enabled", True))
+    is_default = bool(data.get("is_default"))
     clear_app_secret = bool(data.get("clear_app_secret"))
 
     if not app_id:
@@ -1266,7 +1452,7 @@ def update_minidrama_settings_api():
     if len(app_id) > 64:
         return jsonify({"error": "小程序 AppID 过长"}), 400
 
-    existing_settings = get_minidrama_server_settings()
+    existing_settings = get_minidrama_server_settings(app_id)
     existing_secret = str(existing_settings.get("app_secret") or "").strip()
     app_secret = "" if clear_app_secret else (app_secret_input or existing_secret)
     if not app_secret:
@@ -1276,11 +1462,43 @@ def update_minidrama_settings_api():
 
     db = get_db()
     user_id = session.get("user_id")
-    set_app_setting(MINIDRAMA_APP_ID_SETTING_KEY, app_id, is_secret=False, updated_by=user_id)
-    set_app_setting(MINIDRAMA_APP_SECRET_SETTING_KEY, app_secret, is_secret=True, updated_by=user_id)
-    db.execute("DELETE FROM minidrama_token_cache")
+    saved_row = save_minidrama_app(
+        app_id=app_id,
+        app_secret=app_secret,
+        name=name,
+        enabled=enabled,
+        is_default=is_default,
+        updated_by=user_id,
+    )
     db.commit()
 
+    payload = serialize_minidrama_settings(get_minidrama_server_settings())
+    payload["saved"] = serialize_minidrama_app(saved_row)
+    return jsonify(payload)
+
+
+@app.route("/api/settings/minidrama/<path:app_id>", methods=["DELETE"])
+@login_required
+@admin_required
+def delete_minidrama_settings_api(app_id: str):
+    normalized = str(app_id or "").strip()
+    row = get_minidrama_app_row(normalized)
+    if not row:
+        return jsonify({"error": "小程序配置不存在"}), 404
+    db = get_db()
+    db.execute("DELETE FROM minidrama_apps WHERE app_id = ?", (normalized,))
+    db.execute("DELETE FROM minidrama_token_cache WHERE app_id = ?", (normalized,))
+    if not get_default_minidrama_app_row():
+        db.execute(
+            """
+            UPDATE minidrama_apps
+            SET is_default = 1
+            WHERE id = (
+                SELECT id FROM minidrama_apps WHERE enabled = 1 ORDER BY updated_at DESC, id DESC LIMIT 1
+            )
+            """
+        )
+    db.commit()
     return jsonify(serialize_minidrama_settings(get_minidrama_server_settings()))
 
 
@@ -2470,6 +2688,71 @@ def client_register_remote():
     db.commit()
     refreshed = get_remote_client_by_public_id(db, client_row["client_id"])
     return jsonify({"ok": True, "data": serialize_remote_client(refreshed)})
+
+
+@app.route("/client-api/minidrama/settings/status", methods=["GET"])
+def client_get_minidrama_settings_status():
+    db, client_row = require_remote_client()
+    if client_row is None:
+        return jsonify({"ok": False, "message": "client_id 或 client_token 无效"}), 401
+    requested_app_id = str(request.args.get("app_id") or "").strip()
+    return jsonify({"ok": True, "data": serialize_minidrama_settings(get_minidrama_server_settings(requested_app_id))})
+
+
+@app.route("/client-api/minidrama/settings/ensure", methods=["PUT", "POST"])
+def client_ensure_minidrama_settings():
+    db, client_row = require_remote_client()
+    if client_row is None:
+        return jsonify({"ok": False, "message": "client_id 或 client_token 无效"}), 401
+
+    data = request.get_json(silent=True) or {}
+    app_id = str(data.get("app_id") or "").strip()
+    app_secret = str(data.get("app_secret") or "").strip()
+    if not app_id:
+        return jsonify({"ok": False, "message": "小程序 AppID 不能为空"}), 400
+    if len(app_id) > 64:
+        return jsonify({"ok": False, "message": "小程序 AppID 过长"}), 400
+    if not app_secret:
+        return jsonify({"ok": False, "message": "小程序 AppSecret 不能为空"}), 400
+    if len(app_secret) > 256:
+        return jsonify({"ok": False, "message": "小程序 AppSecret 过长"}), 400
+
+    existing_settings = get_minidrama_server_settings(app_id)
+    existing_app_id = str(existing_settings.get("app_id") or "").strip()
+    existing_app_secret = str(existing_settings.get("app_secret") or "").strip()
+    if existing_app_id and existing_app_secret:
+        return jsonify(
+            {
+                "ok": True,
+                "data": {
+                    **serialize_minidrama_settings(existing_settings),
+                    "action": "unchanged",
+                    "updated": False,
+                },
+            }
+        )
+
+    owner_user_id = int(client_row["owner_user_id"] or 0) or None
+    saved_row = save_minidrama_app(
+        app_id=app_id,
+        app_secret=app_secret,
+        name=str(data.get("name") or "").strip(),
+        enabled=True,
+        is_default=not bool(get_default_minidrama_app_row()),
+        updated_by=owner_user_id,
+    )
+    db.commit()
+
+    return jsonify(
+        {
+            "ok": True,
+            "data": {
+                **serialize_minidrama_app(saved_row),
+                "action": "updated",
+                "updated": True,
+            },
+        }
+    )
 
 
 @app.route("/client-api/minidrama/token", methods=["POST"])

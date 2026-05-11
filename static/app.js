@@ -35,6 +35,7 @@ const minidramaSettingsModal = new bootstrap.Modal(document.getElementById("mini
 let currentLicenseId = null;
 let currentLicenseSecret = "";
 let currentRemoteConversationId = null;
+let minidramaSettingsState = { apps: [], editingAppId: "" };
 let remoteQrUnreadCount = 0;
 let remoteNotificationsInitialized = false;
 const seenRemoteMessageIds = new Set();
@@ -122,6 +123,8 @@ function bindEvents() {
   });
   document.getElementById("minidramaSettingsBtn")?.addEventListener("click", openMinidramaSettingsModal);
   document.getElementById("saveMinidramaSettingsBtn")?.addEventListener("click", saveMinidramaSettings);
+  document.getElementById("newMinidramaSettingsBtn")?.addEventListener("click", () => fillMinidramaSettingsForm(null));
+  document.getElementById("minidramaSettingsTableBody")?.addEventListener("click", handleMinidramaSettingsTableClick);
   document.getElementById("minidramaSettingsModal")?.addEventListener("hidden.bs.modal", resetMinidramaSettingsForm);
   document.getElementById("licenseManageBtn")?.addEventListener("click", async () => {
     await loadLicenses();
@@ -182,12 +185,18 @@ function resetFilters() {
 function renderMinidramaSettingsMeta(data) {
   const meta = document.getElementById("minidramaSettingsMeta");
   if (!meta) return;
+  if (!data || !data.app_id) {
+    meta.textContent = "请选择或新增一个小程序配置";
+    return;
+  }
   const sourceLabels = {
     database: "后台配置",
     environment: "环境变量",
     empty: "未配置",
   };
   const parts = [
+    `AppID：${data.app_id || "-"}`,
+    `名称：${data.name || "未命名"}`,
     `当前来源：${sourceLabels[data.source] || data.source || "未配置"}`,
     `AppSecret：${data.app_secret_configured ? data.app_secret_masked || "已配置" : "未配置"}`,
   ];
@@ -197,11 +206,58 @@ function renderMinidramaSettingsMeta(data) {
   meta.textContent = parts.join(" · ");
 }
 
+function renderMinidramaSettingsTable(apps) {
+  const tbody = document.getElementById("minidramaSettingsTableBody");
+  if (!tbody) return;
+  const items = Array.isArray(apps) ? apps : [];
+  if (!items.length) {
+    tbody.innerHTML = `<tr><td colspan="6" class="text-muted small">暂无小程序配置</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = items
+    .map((item) => {
+      const appId = item.app_id || "";
+      return `
+        <tr>
+          <td>${escapeHtml(item.name || "未命名")}</td>
+          <td class="font-monospace">${escapeHtml(appId)}</td>
+          <td>${item.app_secret_configured ? escapeHtml(item.app_secret_masked || "已配置") : '<span class="text-danger">未配置</span>'}</td>
+          <td>${item.is_default ? '<span class="badge text-bg-primary">默认</span>' : ""}</td>
+          <td class="small text-muted">${escapeHtml(item.updated_at || "-")}</td>
+          <td class="text-end">
+            <button type="button" class="btn btn-sm btn-outline-primary" data-action="edit-minidrama" data-app-id="${escapeHtml(appId)}">编辑</button>
+            <button type="button" class="btn btn-sm btn-outline-danger" data-action="delete-minidrama" data-app-id="${escapeHtml(appId)}">删除</button>
+          </td>
+        </tr>
+      `;
+    })
+    .join("");
+}
+
+function fillMinidramaSettingsForm(item) {
+  const form = document.getElementById("minidramaSettingsForm");
+  const app = item || {};
+  minidramaSettingsState.editingAppId = app.app_id || "";
+  document.getElementById("minidramaNameInput").value = app.name || "";
+  document.getElementById("minidramaAppIdInput").value = app.app_id || "";
+  document.getElementById("minidramaAppSecretInput").value = "";
+  document.getElementById("minidramaDefaultInput").checked = Boolean(app.is_default);
+  if (form) {
+    form.dataset.appSecretConfigured = app.app_secret_configured ? "1" : "0";
+    clearFormValidation(form);
+  }
+  renderMinidramaSettingsMeta(app);
+}
+
 function resetMinidramaSettingsForm() {
   const form = document.getElementById("minidramaSettingsForm");
+  document.getElementById("minidramaNameInput").value = "";
   document.getElementById("minidramaAppIdInput").value = "";
   document.getElementById("minidramaAppSecretInput").value = "";
+  document.getElementById("minidramaDefaultInput").checked = false;
   document.getElementById("minidramaSettingsMeta").textContent = "";
+  renderMinidramaSettingsTable([]);
+  minidramaSettingsState = { apps: [], editingAppId: "" };
   if (form) {
     form.dataset.appSecretConfigured = "0";
     clearFormValidation(form);
@@ -213,10 +269,40 @@ async function openMinidramaSettingsModal() {
   try {
     const data = await requestJSON("/api/settings/minidrama");
     if (!data) return;
-    document.getElementById("minidramaAppIdInput").value = data.app_id || "";
-    document.getElementById("minidramaSettingsForm").dataset.appSecretConfigured = data.app_secret_configured ? "1" : "0";
-    renderMinidramaSettingsMeta(data);
+    const apps = Array.isArray(data.apps) ? data.apps : [];
+    minidramaSettingsState.apps = apps;
+    renderMinidramaSettingsTable(apps);
+    fillMinidramaSettingsForm(apps.find((item) => item.is_default) || apps[0] || data);
     minidramaSettingsModal.show();
+  } catch (error) {
+    showToast(error.message, "danger");
+  }
+}
+
+function handleMinidramaSettingsTableClick(event) {
+  const button = event.target.closest("button[data-action]");
+  if (!button) return;
+  const appId = button.dataset.appId || "";
+  const item = minidramaSettingsState.apps.find((entry) => entry.app_id === appId);
+  if (button.dataset.action === "edit-minidrama") {
+    fillMinidramaSettingsForm(item || null);
+    return;
+  }
+  if (button.dataset.action === "delete-minidrama") {
+    deleteMinidramaSettings(appId);
+  }
+}
+
+async function deleteMinidramaSettings(appId) {
+  if (!appId) return;
+  if (!window.confirm(`确认删除小程序配置 ${appId}？`)) return;
+  try {
+    const data = await requestJSON(`/api/settings/minidrama/${encodeURIComponent(appId)}`, { method: "DELETE" });
+    const apps = Array.isArray(data.apps) ? data.apps : [];
+    minidramaSettingsState.apps = apps;
+    renderMinidramaSettingsTable(apps);
+    fillMinidramaSettingsForm(apps.find((item) => item.is_default) || apps[0] || null);
+    showToast("小程序配置已删除", "success");
   } catch (error) {
     showToast(error.message, "danger");
   }
@@ -224,8 +310,11 @@ async function openMinidramaSettingsModal() {
 
 async function saveMinidramaSettings() {
   const form = document.getElementById("minidramaSettingsForm");
+  const nameInput = document.getElementById("minidramaNameInput");
   const appIdInput = document.getElementById("minidramaAppIdInput");
   const appSecretInput = document.getElementById("minidramaAppSecretInput");
+  const defaultInput = document.getElementById("minidramaDefaultInput");
+  const name = nameInput.value.trim();
   const appId = appIdInput.value.trim();
   const appSecret = appSecretInput.value.trim();
   const hasCurrentSecret = form.dataset.appSecretConfigured === "1";
@@ -250,12 +339,19 @@ async function saveMinidramaSettings() {
     const data = await requestJSON("/api/settings/minidrama", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ app_id: appId, app_secret: appSecret }),
+      body: JSON.stringify({
+        name,
+        app_id: appId,
+        app_secret: appSecret,
+        is_default: defaultInput.checked,
+        enabled: true,
+      }),
     });
     if (!data) return;
-    form.dataset.appSecretConfigured = data.app_secret_configured ? "1" : "0";
-    appSecretInput.value = "";
-    renderMinidramaSettingsMeta(data);
+    const apps = Array.isArray(data.apps) ? data.apps : [];
+    minidramaSettingsState.apps = apps;
+    renderMinidramaSettingsTable(apps);
+    fillMinidramaSettingsForm(data.saved || apps.find((item) => item.app_id === appId) || null);
     showToast("小程序配置已保存", "success");
   } catch (error) {
     showToast(error.message, "danger");
