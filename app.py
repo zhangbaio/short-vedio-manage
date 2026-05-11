@@ -51,6 +51,15 @@ SORTABLE_FIELDS = {
 }
 DEFAULT_SORT_FIELD = "date"
 DEFAULT_SORT_DIR = "desc"
+
+
+def _int_env(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name, "") or default)
+    except (TypeError, ValueError):
+        return default
+
+
 LICENSE_STATUS_VALUES = {"active", "disabled", "expired"}
 LICENSE_EDITION_VALUES = {"basic", "pro", "enterprise"}
 LICENSE_LIST_SORTABLE_FIELDS = {
@@ -70,8 +79,9 @@ LICENSE_LIST_DEFAULT_SORT_DIR = "desc"
 LICENSE_TOKEN_SALT = "desktop-license"
 LICENSE_TOKEN_MAX_AGE_SECONDS = 60 * 60 * 24 * 30
 ACCOUNT_TOKEN_SALT = "desktop-account"
-ACCOUNT_TOKEN_MAX_AGE_SECONDS = 60 * 60 * 24 * 30
-ACCOUNT_DEFAULT_MAX_DEVICES = 3
+ACCOUNT_TOKEN_MAX_AGE_SECONDS = _int_env("ACCOUNT_TOKEN_MAX_AGE_SECONDS", 60 * 60 * 24)
+ACCOUNT_OFFLINE_GRACE_HOURS = _int_env("ACCOUNT_OFFLINE_GRACE_HOURS", 72)
+ACCOUNT_DEFAULT_MAX_DEVICES = _int_env("ACCOUNT_DEFAULT_MAX_DEVICES", 3)
 USERNAME_RE = re.compile(r"^[A-Za-z0-9_]{2,30}$")
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 REMOTE_MESSAGE_STATUS_VALUES = {"pending", "sent", "running", "success", "failed", "canceled", "stopped"}
@@ -1388,6 +1398,9 @@ def build_account_auth_response(
     last_verified_at: str | None = None,
 ) -> dict:
     now_iso = datetime.datetime.now().isoformat(timespec="seconds")
+    offline_grace_until = (
+        datetime.datetime.now() + datetime.timedelta(hours=ACCOUNT_OFFLINE_GRACE_HOURS)
+    ).isoformat(timespec="seconds")
     username = str(user_row["username"] or "")
     return {
         "username": username,
@@ -1398,6 +1411,7 @@ def build_account_auth_response(
         "token": token,
         "activated_at": logged_in_at or last_verified_at or now_iso,
         "last_verified_at": last_verified_at or now_iso,
+        "offline_grace_until": offline_grace_until,
         "expires_at": user_row["expires_at"] or "",
         "edition": user_row["edition"],
         "licensee": username,
