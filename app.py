@@ -5,6 +5,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import secrets
 import sqlite3
 import uuid
@@ -68,6 +69,11 @@ LICENSE_LIST_DEFAULT_SORT_FIELD = "created_at"
 LICENSE_LIST_DEFAULT_SORT_DIR = "desc"
 LICENSE_TOKEN_SALT = "desktop-license"
 LICENSE_TOKEN_MAX_AGE_SECONDS = 60 * 60 * 24 * 30
+ACCOUNT_TOKEN_SALT = "desktop-account"
+ACCOUNT_TOKEN_MAX_AGE_SECONDS = 60 * 60 * 24 * 30
+ACCOUNT_DEFAULT_MAX_DEVICES = 3
+USERNAME_RE = re.compile(r"^[A-Za-z0-9_]{2,30}$")
+EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 REMOTE_MESSAGE_STATUS_VALUES = {"pending", "sent", "running", "success", "failed", "canceled", "stopped"}
 REMOTE_MESSAGE_TYPE_VALUES = {"text", "command", "image", "status", "log"}
 REMOTE_SENDER_TYPE_VALUES = {"user", "client", "system"}
@@ -183,9 +189,15 @@ def init_db() -> None:
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 username TEXT UNIQUE NOT NULL,
+                email TEXT,
                 password_hash TEXT NOT NULL,
                 role TEXT NOT NULL DEFAULT 'user',
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                status TEXT NOT NULL DEFAULT 'active',
+                max_devices INTEGER NOT NULL DEFAULT 3,
+                edition TEXT NOT NULL DEFAULT 'pro',
+                expires_at TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
 
             CREATE TABLE IF NOT EXISTS dramas (
@@ -231,6 +243,21 @@ def init_db() -> None:
                 revoked_at TEXT,
                 FOREIGN KEY (license_id) REFERENCES licenses(id) ON DELETE CASCADE,
                 UNIQUE(license_id, machine_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS user_devices (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                machine_id TEXT NOT NULL,
+                device_name TEXT,
+                app_name TEXT,
+                app_version TEXT,
+                token_hash TEXT NOT NULL,
+                logged_in_at TEXT,
+                last_verified_at TEXT,
+                revoked_at TEXT,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                UNIQUE(user_id, machine_id)
             );
 
             CREATE TABLE IF NOT EXISTS remote_clients (
@@ -337,6 +364,12 @@ def init_db() -> None:
             "ALTER TABLE dramas ADD COLUMN remark3 TEXT DEFAULT NULL",
             "ALTER TABLE licenses ADD COLUMN deleted_at TEXT DEFAULT NULL",
             "ALTER TABLE licenses ADD COLUMN deleted_by INTEGER DEFAULT NULL",
+            "ALTER TABLE users ADD COLUMN email TEXT DEFAULT NULL",
+            "ALTER TABLE users ADD COLUMN status TEXT NOT NULL DEFAULT 'active'",
+            "ALTER TABLE users ADD COLUMN max_devices INTEGER NOT NULL DEFAULT 3",
+            "ALTER TABLE users ADD COLUMN edition TEXT NOT NULL DEFAULT 'pro'",
+            "ALTER TABLE users ADD COLUMN expires_at TEXT DEFAULT NULL",
+            "ALTER TABLE users ADD COLUMN updated_at TEXT DEFAULT NULL",
         ]:
             try:
                 db.execute(col_def)
@@ -351,6 +384,15 @@ def init_db() -> None:
         )
         db.execute(
             "CREATE INDEX IF NOT EXISTS idx_licenses_deleted_at ON licenses(deleted_at)"
+        )
+        db.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_unique ON users(lower(email)) WHERE email IS NOT NULL AND email != ''"
+        )
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_user_devices_user_id ON user_devices(user_id)"
+        )
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_user_devices_machine_id ON user_devices(machine_id)"
         )
         db.execute(
             "CREATE INDEX IF NOT EXISTS idx_remote_clients_owner_user_id ON remote_clients(owner_user_id)"
@@ -471,6 +513,36 @@ def verify_license_token(token: str) -> dict:
         raise ValueError("授权 token 无效或已过期")
 
 
+def normalize_email(value: str) -> str:
+    return str(value or "").strip().lower()
+
+
+def issue_account_token(*, user_row: sqlite3.Row, machine_id: str) -> str:
+    serializer = get_license_serializer()
+    payload = {
+        "user_id": user_row["id"],
+        "username": user_row["username"],
+        "email": user_row["email"] or "",
+        "machine_id": machine_id,
+        "edition": user_row["edition"],
+        "expires_at": user_row["expires_at"] or "",
+        "issued_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+    }
+    return serializer.dumps(payload, salt=ACCOUNT_TOKEN_SALT)
+
+
+def verify_account_token(token: str) -> dict:
+    serializer = get_license_serializer()
+    try:
+        return serializer.loads(
+            token,
+            salt=ACCOUNT_TOKEN_SALT,
+            max_age=ACCOUNT_TOKEN_MAX_AGE_SECONDS,
+        )
+    except (BadSignature, BadTimeSignature, SignatureExpired):
+        raise ValueError("account token is invalid or expired")
+
+
 def parse_iso_datetime(value: str | None) -> datetime.datetime | None:
     text = str(value or "").strip()
     if not text:
@@ -486,6 +558,39 @@ def is_license_expired(license_row: sqlite3.Row) -> bool:
     if not expires_at:
         return False
     return expires_at <= datetime.datetime.now()
+
+
+def is_user_account_expired(user_row: sqlite3.Row) -> bool:
+    expires_at = parse_iso_datetime(user_row["expires_at"])
+    if not expires_at:
+        return False
+    return expires_at <= datetime.datetime.now()
+
+
+def get_user_by_account(db: sqlite3.Connection, account: str) -> sqlite3.Row | None:
+    value = str(account or "").strip()
+    if not value:
+        return None
+    return db.execute(
+        """
+        SELECT *
+        FROM users
+        WHERE username = ? OR lower(COALESCE(email, '')) = lower(?)
+        """,
+        (value, value),
+    ).fetchone()
+
+
+def current_active_user_device_count(db: sqlite3.Connection, user_id: int) -> int:
+    row = db.execute(
+        """
+        SELECT COUNT(*) AS cnt
+        FROM user_devices
+        WHERE user_id = ? AND (revoked_at IS NULL OR revoked_at = '')
+        """,
+        (user_id,),
+    ).fetchone()
+    return int(row["cnt"] if row else 0)
 
 
 def current_active_activation_count(db: sqlite3.Connection, license_id: int) -> int:
@@ -1247,6 +1352,154 @@ def validate_client_license_payload(data: dict) -> tuple[dict, str | None]:
     return payload, None
 
 
+def validate_account_auth_payload(data: dict, *, require_registration: bool = False) -> tuple[dict, str | None]:
+    payload = {
+        "account": str(data.get("account") or data.get("username") or data.get("email") or "").strip(),
+        "username": str(data.get("username") or "").strip(),
+        "email": normalize_email(str(data.get("email") or "")),
+        "password": str(data.get("password") or ""),
+        "machine_id": str(data.get("machine_id") or "").strip(),
+        "device_name": str(data.get("device_name") or "").strip(),
+        "app_name": str(data.get("app_name") or "").strip(),
+        "app_version": str(data.get("app_version") or "").strip(),
+        "token": str(data.get("token") or "").strip(),
+    }
+    if require_registration:
+        if not USERNAME_RE.match(payload["username"]):
+            return payload, "username must be 2-30 letters, numbers, or underscores"
+        if not EMAIL_RE.match(payload["email"]):
+            return payload, "valid email is required"
+    elif not payload["account"]:
+        return payload, "username or email is required"
+    if require_registration or payload["password"]:
+        if len(payload["password"]) < 6:
+            return payload, "password must be at least 6 characters"
+    if not payload["machine_id"]:
+        return payload, "machine_id is required"
+    return payload, None
+
+
+def build_account_auth_response(
+    user_row: sqlite3.Row,
+    *,
+    machine_id: str,
+    token: str,
+    logged_in_at: str | None = None,
+    last_verified_at: str | None = None,
+) -> dict:
+    now_iso = datetime.datetime.now().isoformat(timespec="seconds")
+    username = str(user_row["username"] or "")
+    return {
+        "username": username,
+        "account_username": username,
+        "email": user_row["email"] or "",
+        "license_key_masked": username,
+        "machine_id": machine_id,
+        "token": token,
+        "activated_at": logged_in_at or last_verified_at or now_iso,
+        "last_verified_at": last_verified_at or now_iso,
+        "expires_at": user_row["expires_at"] or "",
+        "edition": user_row["edition"],
+        "licensee": username,
+        "max_devices": int(user_row["max_devices"] or ACCOUNT_DEFAULT_MAX_DEVICES),
+    }
+
+
+def ensure_account_can_login(user_row: sqlite3.Row) -> tuple[bool, str]:
+    if str(user_row["status"] or "active") != "active":
+        return False, "account is disabled"
+    if is_user_account_expired(user_row):
+        return False, "account is expired"
+    return True, ""
+
+
+def activate_account_for_machine(
+    db: sqlite3.Connection,
+    *,
+    user_row: sqlite3.Row,
+    machine_id: str,
+    device_name: str,
+    app_name: str,
+    app_version: str,
+) -> dict:
+    ok, error = ensure_account_can_login(user_row)
+    if not ok:
+        raise ValueError(error)
+
+    active_row = db.execute(
+        """
+        SELECT *
+        FROM user_devices
+        WHERE user_id = ? AND machine_id = ? AND (revoked_at IS NULL OR revoked_at = '')
+        """,
+        (user_row["id"], machine_id),
+    ).fetchone()
+
+    if not active_row:
+        active_count = current_active_user_device_count(db, user_row["id"])
+        max_devices = int(user_row["max_devices"] or ACCOUNT_DEFAULT_MAX_DEVICES)
+        if active_count >= max_devices:
+            raise ValueError("account has reached the maximum number of devices")
+
+    token = issue_account_token(user_row=user_row, machine_id=machine_id)
+    token_hash = hash_token(token)
+    now_iso = datetime.datetime.now().isoformat(timespec="seconds")
+
+    if active_row:
+        db.execute(
+            """
+            UPDATE user_devices
+            SET token_hash = ?, device_name = ?, app_name = ?, app_version = ?,
+                last_verified_at = ?, revoked_at = NULL
+            WHERE id = ?
+            """,
+            (
+                token_hash,
+                device_name or None,
+                app_name or None,
+                app_version or None,
+                now_iso,
+                active_row["id"],
+            ),
+        )
+    else:
+        db.execute(
+            """
+            INSERT INTO user_devices (
+                user_id, machine_id, device_name, app_name, app_version,
+                token_hash, logged_in_at, last_verified_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                user_row["id"],
+                machine_id,
+                device_name or None,
+                app_name or None,
+                app_version or None,
+                token_hash,
+                now_iso,
+                now_iso,
+            ),
+        )
+
+    db.execute(
+        "UPDATE users SET updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+        (user_row["id"],),
+    )
+    db.commit()
+    return build_account_auth_response(
+        user_row,
+        machine_id=machine_id,
+        token=token,
+        logged_in_at=(
+            str(active_row["logged_in_at"])
+            if active_row and active_row["logged_in_at"]
+            else now_iso
+        ),
+        last_verified_at=now_iso,
+    )
+
+
 def build_client_license_response(
     license_row: sqlite3.Row,
     *,
@@ -1375,8 +1628,12 @@ def login():
         password = request.form.get("password") or ""
         db = get_db()
         user = db.execute(
-            "SELECT id, username, password_hash, role FROM users WHERE username = ?",
-            (username,),
+            """
+            SELECT id, username, password_hash, role
+            FROM users
+            WHERE username = ? OR lower(COALESCE(email, '')) = lower(?)
+            """,
+            (username, username),
         ).fetchone()
         if user and check_password_hash(user["password_hash"], password):
             session.clear()
@@ -1499,6 +1756,143 @@ def delete_minidrama_settings_api(app_id: str):
         )
     db.commit()
     return jsonify(serialize_minidrama_settings(get_minidrama_server_settings()))
+
+
+@app.route("/client-api/account/register", methods=["POST"])
+@app.route("/account/register", methods=["POST"])
+def client_register_account():
+    data = request.get_json(silent=True) or {}
+    payload, error = validate_account_auth_payload(data, require_registration=True)
+    if error:
+        return jsonify({"ok": False, "message": error}), 400
+
+    db = get_db()
+    existing = db.execute(
+        """
+        SELECT id
+        FROM users
+        WHERE username = ? OR lower(COALESCE(email, '')) = lower(?)
+        """,
+        (payload["username"], payload["email"]),
+    ).fetchone()
+    if existing:
+        return jsonify({"ok": False, "message": "username or email already exists"}), 400
+
+    try:
+        db.execute(
+            """
+            INSERT INTO users (
+                username, email, password_hash, role, status, max_devices, edition, updated_at
+            ) VALUES (?, ?, ?, 'user', 'active', ?, 'pro', CURRENT_TIMESTAMP)
+            """,
+            (
+                payload["username"],
+                payload["email"],
+                generate_password_hash(payload["password"]),
+                ACCOUNT_DEFAULT_MAX_DEVICES,
+            ),
+        )
+        db.commit()
+    except sqlite3.IntegrityError:
+        return jsonify({"ok": False, "message": "username or email already exists"}), 400
+
+    user_row = get_user_by_account(db, payload["username"])
+    try:
+        result = activate_account_for_machine(
+            db,
+            user_row=user_row,
+            machine_id=payload["machine_id"],
+            device_name=payload["device_name"],
+            app_name=payload["app_name"],
+            app_version=payload["app_version"],
+        )
+    except ValueError as exc:
+        return jsonify({"ok": False, "message": str(exc)}), 400
+    return jsonify({"ok": True, "data": result})
+
+
+@app.route("/client-api/account/login", methods=["POST"])
+@app.route("/account/login", methods=["POST"])
+def client_login_account():
+    data = request.get_json(silent=True) or {}
+    payload, error = validate_account_auth_payload(data)
+    if error:
+        return jsonify({"ok": False, "message": error}), 400
+    if not payload["password"]:
+        return jsonify({"ok": False, "message": "password is required"}), 400
+
+    db = get_db()
+    user_row = get_user_by_account(db, payload["account"])
+    if not user_row or not check_password_hash(user_row["password_hash"], payload["password"]):
+        return jsonify({"ok": False, "message": "username/email or password is incorrect"}), 401
+
+    try:
+        result = activate_account_for_machine(
+            db,
+            user_row=user_row,
+            machine_id=payload["machine_id"],
+            device_name=payload["device_name"],
+            app_name=payload["app_name"],
+            app_version=payload["app_version"],
+        )
+    except ValueError as exc:
+        return jsonify({"ok": False, "message": str(exc)}), 400
+    return jsonify({"ok": True, "data": result})
+
+
+@app.route("/client-api/account/verify", methods=["POST"])
+@app.route("/account/verify", methods=["POST"])
+def client_verify_account():
+    data = request.get_json(silent=True) or {}
+    payload, error = validate_account_auth_payload(data)
+    if error:
+        return jsonify({"ok": False, "message": error}), 400
+    if not payload["token"]:
+        return jsonify({"ok": False, "message": "token is required"}), 400
+
+    try:
+        token_payload = verify_account_token(payload["token"])
+    except ValueError as exc:
+        return jsonify({"ok": False, "message": str(exc)}), 400
+
+    if token_payload.get("machine_id") != payload["machine_id"]:
+        return jsonify({"ok": False, "message": "token does not match this machine"}), 400
+
+    db = get_db()
+    user_row = db.execute(
+        "SELECT * FROM users WHERE id = ?",
+        (token_payload.get("user_id"),),
+    ).fetchone()
+    if not user_row:
+        return jsonify({"ok": False, "message": "account does not exist"}), 404
+    if payload["account"] and payload["account"] not in {user_row["username"], user_row["email"] or ""}:
+        return jsonify({"ok": False, "message": "token does not match this account"}), 400
+
+    device_row = db.execute(
+        """
+        SELECT *
+        FROM user_devices
+        WHERE user_id = ? AND machine_id = ? AND (revoked_at IS NULL OR revoked_at = '')
+        """,
+        (user_row["id"], payload["machine_id"]),
+    ).fetchone()
+    if not device_row:
+        return jsonify({"ok": False, "message": "this machine is not logged in"}), 400
+    if device_row["token_hash"] != hash_token(payload["token"]):
+        return jsonify({"ok": False, "message": "token has been revoked; please log in again"}), 400
+
+    try:
+        result = activate_account_for_machine(
+            db,
+            user_row=user_row,
+            machine_id=payload["machine_id"],
+            device_name=payload["device_name"],
+            app_name=payload["app_name"],
+            app_version=payload["app_version"],
+        )
+    except ValueError as exc:
+        return jsonify({"ok": False, "message": str(exc)}), 400
+    return jsonify({"ok": True, "data": result})
 
 
 @app.route("/client-api/licenses/activate", methods=["POST"])
@@ -2016,7 +2410,11 @@ def import_excel():
 def list_users():
     db = get_db()
     rows = db.execute(
-        "SELECT id, username, role, created_at FROM users ORDER BY created_at DESC"
+        """
+        SELECT id, username, email, role, status, max_devices, edition, expires_at, created_at
+        FROM users
+        ORDER BY created_at DESC
+        """
     ).fetchall()
     return jsonify([dict(row) for row in rows])
 
@@ -2027,17 +2425,23 @@ def list_users():
 def create_user():
     data = request.get_json(silent=True) or {}
     username = (data.get("username") or "").strip()
+    email = normalize_email(str(data.get("email") or ""))
     password = data.get("password") or ""
     role = data.get("role") or "user"
     if not username or not password:
         return jsonify({"error": "用户名和密码不能为空"}), 400
+    if email and not EMAIL_RE.match(email):
+        return jsonify({"error": "invalid email"}), 400
     if role not in {"admin", "user"}:
         role = "user"
     db = get_db()
     try:
         db.execute(
-            "INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)",
-            (username, generate_password_hash(password), role),
+            """
+            INSERT INTO users (username, email, password_hash, role, status, max_devices, edition, updated_at)
+            VALUES (?, ?, ?, ?, 'active', ?, 'pro', CURRENT_TIMESTAMP)
+            """,
+            (username, email or None, generate_password_hash(password), role, ACCOUNT_DEFAULT_MAX_DEVICES),
         )
         db.commit()
     except sqlite3.IntegrityError:
