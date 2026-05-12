@@ -106,6 +106,9 @@ MINIDRAMA_TOKEN_REFRESH_MARGIN_SECONDS = 300
 MINIDRAMA_TOKEN_REFRESH_LOCK_SECONDS = 60
 MINIDRAMA_APP_ID_SETTING_KEY = "minidrama_app_id"
 MINIDRAMA_APP_SECRET_SETTING_KEY = "minidrama_app_secret"
+KUAISHOU_API_BASE = "https://ad.e.kuaishou.com"
+KUAISHOU_TOKEN_REFRESH_MARGIN_SECONDS = 2 * 60 * 60
+KUAISHOU_TOKEN_REFRESH_LOCK_SECONDS = 60
 
 HEADER_MAP = {
     "日期": "date",
@@ -352,6 +355,35 @@ def init_db() -> None:
                 FOREIGN KEY (updated_by) REFERENCES users(id) ON DELETE SET NULL
             );
 
+            CREATE TABLE IF NOT EXISTS kuaishou_token_cache (
+                app_id TEXT PRIMARY KEY,
+                access_token TEXT,
+                expires_at INTEGER NOT NULL DEFAULT 0,
+                refreshing_by TEXT,
+                refreshing_until INTEGER NOT NULL DEFAULT 0,
+                last_error TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS kuaishou_apps (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                app_id TEXT UNIQUE NOT NULL,
+                app_secret TEXT NOT NULL,
+                advertiser_id TEXT,
+                name TEXT,
+                access_token TEXT,
+                refresh_token TEXT,
+                access_token_expires_at INTEGER NOT NULL DEFAULT 0,
+                refresh_token_expires_at INTEGER NOT NULL DEFAULT 0,
+                is_default INTEGER NOT NULL DEFAULT 0,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT,
+                updated_at TEXT,
+                updated_by INTEGER,
+                FOREIGN KEY (updated_by) REFERENCES users(id) ON DELETE SET NULL
+            );
+
             CREATE TABLE IF NOT EXISTS app_settings (
                 setting_key TEXT PRIMARY KEY,
                 setting_value TEXT,
@@ -421,6 +453,12 @@ def init_db() -> None:
         )
         db.execute(
             "CREATE INDEX IF NOT EXISTS idx_minidrama_apps_default ON minidrama_apps(is_default, enabled)"
+        )
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_kuaishou_token_expires_at ON kuaishou_token_cache(expires_at)"
+        )
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_kuaishou_apps_default ON kuaishou_apps(is_default, enabled)"
         )
         db.execute(
             "CREATE INDEX IF NOT EXISTS idx_dramas_created_at ON dramas(created_at)"
@@ -999,6 +1037,143 @@ def save_minidrama_app(
             """
         )
     return get_minidrama_app_row(normalized_app_id)
+
+
+def serialize_kuaishou_app(row: sqlite3.Row | dict[str, Any], *, include_secret: bool = False) -> dict[str, Any]:
+    app_secret = str((row["app_secret"] if isinstance(row, sqlite3.Row) else row.get("app_secret")) or "").strip()
+    payload = {
+        "id": int(row["id"] if isinstance(row, sqlite3.Row) else row.get("id") or 0),
+        "app_id": str((row["app_id"] if isinstance(row, sqlite3.Row) else row.get("app_id")) or "").strip(),
+        "advertiser_id": str((row["advertiser_id"] if isinstance(row, sqlite3.Row) else row.get("advertiser_id")) or "").strip(),
+        "name": str((row["name"] if isinstance(row, sqlite3.Row) else row.get("name")) or "").strip(),
+        "enabled": bool((row["enabled"] if isinstance(row, sqlite3.Row) else row.get("enabled", True))),
+        "is_default": bool((row["is_default"] if isinstance(row, sqlite3.Row) else row.get("is_default", False))),
+        "app_secret_configured": bool(app_secret),
+        "app_secret_masked": mask_secret_value(app_secret),
+        "access_token_configured": bool(str((row["access_token"] if isinstance(row, sqlite3.Row) else row.get("access_token")) or "").strip()),
+        "refresh_token_configured": bool(str((row["refresh_token"] if isinstance(row, sqlite3.Row) else row.get("refresh_token")) or "").strip()),
+        "access_token_expires_at": int((row["access_token_expires_at"] if isinstance(row, sqlite3.Row) else row.get("access_token_expires_at") or 0) or 0),
+        "refresh_token_expires_at": int((row["refresh_token_expires_at"] if isinstance(row, sqlite3.Row) else row.get("refresh_token_expires_at") or 0) or 0),
+        "source": "database",
+        "updated_at": str((row["updated_at"] if isinstance(row, sqlite3.Row) else row.get("updated_at")) or ""),
+        "updated_by": row["updated_by"] if isinstance(row, sqlite3.Row) else row.get("updated_by"),
+    }
+    if include_secret:
+        payload["app_secret"] = app_secret
+        payload["access_token"] = str((row["access_token"] if isinstance(row, sqlite3.Row) else row.get("access_token")) or "").strip()
+        payload["refresh_token"] = str((row["refresh_token"] if isinstance(row, sqlite3.Row) else row.get("refresh_token")) or "").strip()
+    return payload
+
+
+def list_kuaishou_app_rows(*, include_disabled: bool = True) -> list[sqlite3.Row]:
+    query = "SELECT * FROM kuaishou_apps"
+    params: tuple[Any, ...] = ()
+    if not include_disabled:
+        query += " WHERE enabled = 1"
+    query += " ORDER BY is_default DESC, updated_at DESC, id DESC"
+    return list(get_db().execute(query, params).fetchall())
+
+
+def get_kuaishou_app_row(app_id: str) -> sqlite3.Row | None:
+    normalized = str(app_id or "").strip()
+    if not normalized:
+        return None
+    return get_db().execute("SELECT * FROM kuaishou_apps WHERE app_id = ?", (normalized,)).fetchone()
+
+
+def get_default_kuaishou_app_row() -> sqlite3.Row | None:
+    row = get_db().execute(
+        "SELECT * FROM kuaishou_apps WHERE enabled = 1 AND is_default = 1 ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    if row:
+        return row
+    return get_db().execute(
+        "SELECT * FROM kuaishou_apps WHERE enabled = 1 ORDER BY updated_at DESC, id DESC LIMIT 1"
+    ).fetchone()
+
+
+def save_kuaishou_app(*, app_id: str, app_secret: str, advertiser_id: str = "", name: str = "", access_token: str = "", refresh_token: str = "", access_token_expires_at: int = 0, refresh_token_expires_at: int = 0, enabled: bool = True, is_default: bool = False, updated_by: int | None = None) -> sqlite3.Row:
+    db = get_db()
+    normalized_app_id = str(app_id or "").strip()
+    existing = get_kuaishou_app_row(normalized_app_id)
+    now = now_iso()
+    if is_default:
+        db.execute("UPDATE kuaishou_apps SET is_default = 0 WHERE app_id <> ?", (normalized_app_id,))
+    if existing:
+        db.execute(
+            "UPDATE kuaishou_apps SET app_secret = ?, advertiser_id = ?, name = ?, access_token = ?, refresh_token = ?, access_token_expires_at = ?, refresh_token_expires_at = ?, enabled = ?, is_default = ?, updated_at = ?, updated_by = ? WHERE app_id = ?",
+            (str(app_secret or "").strip(), str(advertiser_id or "").strip(), str(name or "").strip(), str(access_token or "").strip(), str(refresh_token or "").strip(), int(access_token_expires_at or 0), int(refresh_token_expires_at or 0), 1 if enabled else 0, 1 if is_default else int(existing["is_default"] or 0), now, updated_by, normalized_app_id),
+        )
+    else:
+        if not is_default and not get_default_kuaishou_app_row():
+            is_default = True
+        db.execute(
+            "INSERT INTO kuaishou_apps (app_id, app_secret, advertiser_id, name, access_token, refresh_token, access_token_expires_at, refresh_token_expires_at, enabled, is_default, created_at, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (normalized_app_id, str(app_secret or "").strip(), str(advertiser_id or "").strip(), str(name or "").strip(), str(access_token or "").strip(), str(refresh_token or "").strip(), int(access_token_expires_at or 0), int(refresh_token_expires_at or 0), 1 if enabled else 0, 1 if is_default else 0, now, now, updated_by),
+        )
+    if str(access_token or "").strip() and int(access_token_expires_at or 0) > 0:
+        db.execute(
+            "INSERT INTO kuaishou_token_cache (app_id, access_token, expires_at, refreshing_by, refreshing_until, last_error, created_at, updated_at) VALUES (?, ?, ?, NULL, 0, NULL, ?, ?) ON CONFLICT(app_id) DO UPDATE SET access_token = excluded.access_token, expires_at = excluded.expires_at, refreshing_by = NULL, refreshing_until = 0, last_error = NULL, updated_at = excluded.updated_at",
+            (normalized_app_id, str(access_token or "").strip(), int(access_token_expires_at or 0), now, now),
+        )
+    else:
+        db.execute("DELETE FROM kuaishou_token_cache WHERE app_id = ?", (normalized_app_id,))
+    if not get_default_kuaishou_app_row():
+        db.execute("UPDATE kuaishou_apps SET is_default = 1 WHERE id = (SELECT id FROM kuaishou_apps WHERE enabled = 1 ORDER BY updated_at DESC, id DESC LIMIT 1)")
+    return get_kuaishou_app_row(normalized_app_id)
+
+
+def get_kuaishou_server_settings(requested_app_id: str = "") -> dict[str, Any]:
+    requested = str(requested_app_id or "").strip()
+    if requested:
+        row = get_kuaishou_app_row(requested)
+        if row:
+            return serialize_kuaishou_app(row, include_secret=True)
+        return {"app_id": requested, "app_secret": "", "advertiser_id": "", "access_token": "", "refresh_token": "", "access_token_expires_at": 0, "refresh_token_expires_at": 0, "app_secret_configured": False, "source": "empty", "updated_at": "", "updated_by": None}
+    row = get_default_kuaishou_app_row()
+    if row:
+        payload = serialize_kuaishou_app(row, include_secret=True)
+        payload["apps"] = [serialize_kuaishou_app(item) for item in list_kuaishou_app_rows()]
+        return payload
+    return {"app_id": "", "app_secret": "", "advertiser_id": "", "access_token": "", "refresh_token": "", "access_token_expires_at": 0, "refresh_token_expires_at": 0, "app_secret_configured": False, "source": "empty", "updated_at": "", "updated_by": None, "apps": []}
+
+
+def serialize_kuaishou_settings(settings: dict[str, Any]) -> dict[str, Any]:
+    app_secret = str(settings.get("app_secret") or "").strip()
+    access_token = str(settings.get("access_token") or "").strip()
+    refresh_token = str(settings.get("refresh_token") or "").strip()
+    return {"app_id": str(settings.get("app_id") or "").strip(), "advertiser_id": str(settings.get("advertiser_id") or "").strip(), "name": str(settings.get("name") or "").strip(), "enabled": bool(settings.get("enabled", True)), "is_default": bool(settings.get("is_default", False)), "app_secret_configured": bool(app_secret), "app_secret_masked": mask_secret_value(app_secret), "access_token_configured": bool(access_token), "refresh_token_configured": bool(refresh_token), "access_token_expires_at": int(settings.get("access_token_expires_at") or 0), "refresh_token_expires_at": int(settings.get("refresh_token_expires_at") or 0), "source": str(settings.get("source") or "empty"), "updated_at": str(settings.get("updated_at") or ""), "updated_by": settings.get("updated_by"), "apps": settings.get("apps") if isinstance(settings.get("apps"), list) else []}
+
+
+def resolve_kuaishou_server_credentials(requested_app_id: str = "") -> tuple[sqlite3.Row | None, str | None]:
+    settings = get_kuaishou_server_settings(requested_app_id)
+    app_id = str(settings.get("app_id") or "").strip()
+    app_secret = str(settings.get("app_secret") or "").strip()
+    requested = str(requested_app_id or "").strip()
+    if requested and app_id and requested != app_id:
+        return None, "????? AppID ?????????"
+    if not app_id:
+        return None, "???????? AppID"
+    if not app_secret:
+        return None, f"???????? AppSecret?{app_id}"
+    if settings.get("enabled") is False:
+        return None, f"???????????{app_id}"
+    return get_kuaishou_app_row(app_id), None
+
+
+def refresh_kuaishou_access_token_from_api(app_id: str, app_secret: str, refresh_token: str) -> dict[str, Any]:
+    body = json.dumps({"app_id": int(app_id) if str(app_id).isdigit() else str(app_id), "secret": str(app_secret or "").strip(), "refresh_token": str(refresh_token or "").strip()}, ensure_ascii=False).encode("utf-8")
+    req = urlrequest.Request(f"{KUAISHOU_API_BASE}/rest/openapi/oauth2/authorize/refresh_token", data=body, method="POST", headers={"Content-Type": "application/json", "Accept": "application/json"})
+    with urlrequest.urlopen(req, timeout=20) as response:
+        payload = json.loads(response.read().decode("utf-8", errors="replace") or "{}")
+    if not isinstance(payload, dict):
+        raise ValueError("?? refresh token ????????")
+    if int(payload.get("code") or 0) != 0:
+        raise ValueError(f"?? refresh token ?????code={payload.get('code')}, message={payload.get('message') or ''}")
+    data = payload.get("data")
+    if not isinstance(data, dict) or not str(data.get("access_token") or "").strip():
+        raise ValueError("?? refresh token ????? access_token")
+    return data
 
 
 def get_minidrama_server_settings(requested_app_id: str = "") -> dict[str, Any]:
@@ -1696,6 +1871,70 @@ def api_me():
             "role": session.get("role", "user"),
         }
     )
+
+
+@app.route("/api/settings/kuaishou", methods=["GET"])
+@login_required
+@admin_required
+def get_kuaishou_settings_api():
+    return jsonify(serialize_kuaishou_settings(get_kuaishou_server_settings()))
+
+
+@app.route("/api/settings/kuaishou", methods=["PUT"])
+@login_required
+@admin_required
+def update_kuaishou_settings_api():
+    data = request.get_json(silent=True) or {}
+    app_id = str(data.get("app_id") or "").strip()
+    app_secret = str(data.get("app_secret") or "").strip()
+    if not app_id:
+        return jsonify({"error": "快手 AppID 不能为空"}), 400
+    if len(app_id) > 64:
+        return jsonify({"error": "快手 AppID 过长"}), 400
+    existing = get_kuaishou_server_settings(app_id)
+    if not app_secret:
+        app_secret = str(existing.get("app_secret") or "").strip()
+    if not app_secret:
+        return jsonify({"error": "快手 AppSecret 不能为空"}), 400
+    advertiser_id = str(data.get("advertiser_id") or existing.get("advertiser_id") or "").strip()
+    access_token = str(data.get("access_token") or existing.get("access_token") or "").strip()
+    refresh_token = str(data.get("refresh_token") or existing.get("refresh_token") or "").strip()
+    access_token_expires_at = int(data.get("access_token_expires_at") or existing.get("access_token_expires_at") or 0)
+    refresh_token_expires_at = int(data.get("refresh_token_expires_at") or existing.get("refresh_token_expires_at") or 0)
+    saved_row = save_kuaishou_app(
+        app_id=app_id,
+        app_secret=app_secret,
+        advertiser_id=advertiser_id,
+        name=str(data.get("name") or existing.get("name") or "").strip(),
+        access_token=access_token,
+        refresh_token=refresh_token,
+        access_token_expires_at=access_token_expires_at,
+        refresh_token_expires_at=refresh_token_expires_at,
+        enabled=bool(data.get("enabled", existing.get("enabled", True))),
+        is_default=bool(data.get("is_default")),
+        updated_by=session.get("user_id"),
+    )
+    get_db().commit()
+    payload = serialize_kuaishou_settings(get_kuaishou_server_settings())
+    payload["saved"] = serialize_kuaishou_app(saved_row)
+    return jsonify(payload)
+
+
+@app.route("/api/settings/kuaishou/<path:app_id>", methods=["DELETE"])
+@login_required
+@admin_required
+def delete_kuaishou_settings_api(app_id: str):
+    normalized = str(app_id or "").strip()
+    row = get_kuaishou_app_row(normalized)
+    if not row:
+        return jsonify({"error": "快手配置不存在"}), 404
+    db = get_db()
+    db.execute("DELETE FROM kuaishou_apps WHERE app_id = ?", (normalized,))
+    db.execute("DELETE FROM kuaishou_token_cache WHERE app_id = ?", (normalized,))
+    if not get_default_kuaishou_app_row():
+        db.execute("UPDATE kuaishou_apps SET is_default = 1 WHERE id = (SELECT id FROM kuaishou_apps WHERE enabled = 1 ORDER BY updated_at DESC, id DESC LIMIT 1)")
+    db.commit()
+    return jsonify(serialize_kuaishou_settings(get_kuaishou_server_settings()))
 
 
 @app.route("/api/settings/minidrama", methods=["GET"])
@@ -3105,6 +3344,148 @@ def client_register_remote():
     db.commit()
     refreshed = get_remote_client_by_public_id(db, client_row["client_id"])
     return jsonify({"ok": True, "data": serialize_remote_client(refreshed)})
+
+
+@app.route("/client-api/kuaishou/settings/status", methods=["GET"])
+def client_get_kuaishou_settings_status():
+    db, client_row = require_remote_client()
+    if client_row is None:
+        return jsonify({"ok": False, "message": "client_id ? client_token ??"}), 401
+    requested_app_id = str(request.args.get("app_id") or "").strip()
+    return jsonify({"ok": True, "data": serialize_kuaishou_settings(get_kuaishou_server_settings(requested_app_id))})
+
+
+@app.route("/client-api/kuaishou/settings/ensure", methods=["PUT", "POST"])
+def client_ensure_kuaishou_settings():
+    db, client_row = require_remote_client()
+    if client_row is None:
+        return jsonify({"ok": False, "message": "client_id ? client_token ??"}), 401
+    data = request.get_json(silent=True) or {}
+    app_id = str(data.get("app_id") or "").strip()
+    app_secret = str(data.get("app_secret") or "").strip()
+    if not app_id:
+        return jsonify({"ok": False, "message": "?? AppID ????"}), 400
+    if len(app_id) > 64:
+        return jsonify({"ok": False, "message": "?? AppID ??"}), 400
+
+    existing_row = get_kuaishou_app_row(app_id)
+    existing_settings = get_kuaishou_server_settings(app_id)
+    existing_secret = str(existing_settings.get("app_secret") or "").strip()
+    effective_secret = app_secret or existing_secret
+    if not effective_secret:
+        return jsonify({"ok": False, "message": "?? AppSecret ????"}), 400
+
+    existing_access_token = str(existing_settings.get("access_token") or "").strip()
+    existing_refresh_token = str(existing_settings.get("refresh_token") or "").strip()
+    existing_access_expires_at = int(existing_settings.get("access_token_expires_at") or 0)
+    existing_refresh_expires_at = int(existing_settings.get("refresh_token_expires_at") or 0)
+
+    incoming_access_token = str(data.get("access_token") or "").strip()
+    incoming_refresh_token = str(data.get("refresh_token") or "").strip()
+    incoming_access_expires_at = int(data.get("access_token_expires_at") or 0)
+    incoming_refresh_expires_at = int(data.get("refresh_token_expires_at") or 0)
+
+    merged_access_token = existing_access_token
+    merged_access_expires_at = existing_access_expires_at
+    if incoming_access_token and (incoming_access_expires_at > existing_access_expires_at or not existing_access_token):
+        merged_access_token = incoming_access_token
+        merged_access_expires_at = incoming_access_expires_at
+
+    merged_refresh_token = existing_refresh_token
+    merged_refresh_expires_at = existing_refresh_expires_at
+    if incoming_refresh_token and (incoming_refresh_expires_at > existing_refresh_expires_at or not existing_refresh_token):
+        merged_refresh_token = incoming_refresh_token
+        merged_refresh_expires_at = incoming_refresh_expires_at
+
+    merged_advertiser_id = str(data.get("advertiser_id") or existing_settings.get("advertiser_id") or "").strip()
+    merged_name = str(data.get("name") or existing_settings.get("name") or "").strip()
+    owner_user_id = int(client_row["owner_user_id"] or 0) or None
+    saved_row = save_kuaishou_app(
+        app_id=app_id,
+        app_secret=effective_secret,
+        advertiser_id=merged_advertiser_id,
+        name=merged_name,
+        access_token=merged_access_token,
+        refresh_token=merged_refresh_token,
+        access_token_expires_at=merged_access_expires_at,
+        refresh_token_expires_at=merged_refresh_expires_at,
+        enabled=bool(existing_settings.get("enabled", True)) if existing_row else True,
+        is_default=bool(existing_settings.get("is_default", False)) if existing_row else (not bool(get_default_kuaishou_app_row())),
+        updated_by=owner_user_id,
+    )
+    db.commit()
+
+    action = "updated"
+    updated = True
+    if existing_row is not None:
+        token_changed = (
+            merged_access_token != existing_access_token
+            or merged_refresh_token != existing_refresh_token
+            or merged_access_expires_at != existing_access_expires_at
+            or merged_refresh_expires_at != existing_refresh_expires_at
+            or merged_advertiser_id != str(existing_settings.get("advertiser_id") or "").strip()
+            or effective_secret != existing_secret
+        )
+        if not token_changed:
+            action = "unchanged"
+            updated = False
+
+    return jsonify({"ok": True, "data": {**serialize_kuaishou_app(saved_row), "action": action, "updated": updated}})
+
+
+@app.route("/client-api/kuaishou/token", methods=["POST"])
+
+def client_get_kuaishou_token():
+    db, client_row = require_remote_client()
+    if client_row is None:
+        return jsonify({"ok": False, "message": "client_id ? client_token ??"}), 401
+    data = request.get_json(silent=True) or {}
+    requested_app_id = str(data.get("app_id") or request.args.get("app_id") or "").strip()
+    row, error_message = resolve_kuaishou_server_credentials(requested_app_id)
+    if error_message:
+        return jsonify({"ok": False, "message": error_message}), 400
+    assert row is not None
+    app_id = str(row["app_id"] or "").strip()
+    now_ts = now_timestamp()
+    now_text = now_iso()
+    cache_row = db.execute("SELECT * FROM kuaishou_token_cache WHERE app_id = ?", (app_id,)).fetchone()
+    if cache_row and str(cache_row["access_token"] or "").strip() and int(cache_row["expires_at"] or 0) - now_ts > KUAISHOU_TOKEN_REFRESH_MARGIN_SECONDS:
+        return jsonify({"ok": True, "data": {"app_id": app_id, "advertiser_id": str(row["advertiser_id"] or "").strip(), "access_token": cache_row["access_token"], "expires_at": int(cache_row["expires_at"] or 0), "access_token_expires_at": int(cache_row["expires_at"] or 0), "refresh_token_expires_at": int(row["refresh_token_expires_at"] or 0), "expires_in": max(0, int(cache_row["expires_at"] or 0) - now_ts), "cached": True}})
+    db.execute("INSERT OR IGNORE INTO kuaishou_token_cache (app_id, access_token, expires_at, refreshing_by, refreshing_until, created_at, updated_at) VALUES (?, NULL, 0, NULL, 0, ?, ?)", (app_id, now_text, now_text))
+    db.commit()
+    lock_until = now_ts + KUAISHOU_TOKEN_REFRESH_LOCK_SECONDS
+    cursor = db.execute("UPDATE kuaishou_token_cache SET refreshing_by = ?, refreshing_until = ?, updated_at = ? WHERE app_id = ? AND (refreshing_until IS NULL OR refreshing_until <= ? OR refreshing_by = ?)", (client_row["client_id"], lock_until, now_text, app_id, now_ts, client_row["client_id"]))
+    db.commit()
+    if cursor.rowcount <= 0:
+        cache_row = db.execute("SELECT * FROM kuaishou_token_cache WHERE app_id = ?", (app_id,)).fetchone()
+        if cache_row and str(cache_row["access_token"] or "").strip() and int(cache_row["expires_at"] or 0) > now_ts + 60:
+            return jsonify({"ok": True, "data": {"app_id": app_id, "advertiser_id": str(row["advertiser_id"] or "").strip(), "access_token": cache_row["access_token"], "expires_at": int(cache_row["expires_at"] or 0), "access_token_expires_at": int(cache_row["expires_at"] or 0), "refresh_token_expires_at": int(row["refresh_token_expires_at"] or 0), "expires_in": max(0, int(cache_row["expires_at"] or 0) - now_ts), "cached": True, "refreshing": True}})
+        return jsonify({"ok": False, "message": "?? token ??????????"}), 409
+    refresh_token = str(row["refresh_token"] or "").strip()
+    if not refresh_token:
+        db.execute("UPDATE kuaishou_token_cache SET refreshing_by = NULL, refreshing_until = 0, last_error = ?, updated_at = ? WHERE app_id = ?", ("服务端未配置快手 refresh_token", now_iso(), app_id))
+        db.commit()
+        return jsonify({"ok": False, "message": "服务端未配置快手 refresh_token，请先在桌面端登录并同步"}), 400
+    refresh_expires_at = int(row["refresh_token_expires_at"] or 0)
+    if refresh_expires_at > 0 and refresh_expires_at <= now_ts:
+        db.execute("UPDATE kuaishou_token_cache SET refreshing_by = NULL, refreshing_until = 0, last_error = ?, updated_at = ? WHERE app_id = ?", ("快手 refresh_token 已过期", now_iso(), app_id))
+        db.commit()
+        return jsonify({"ok": False, "message": "快手 refresh_token 已过期，请在桌面端重新登录后同步"}), 400
+    try:
+        token_data = refresh_kuaishou_access_token_from_api(app_id, str(row["app_secret"] or "").strip(), refresh_token)
+    except Exception as exc:
+        db.execute("UPDATE kuaishou_token_cache SET refreshing_by = NULL, refreshing_until = 0, last_error = ?, updated_at = ? WHERE app_id = ?", (str(exc), now_iso(), app_id))
+        db.commit()
+        return jsonify({"ok": False, "message": str(exc)}), 502
+    access_token = str(token_data.get("access_token") or "").strip()
+    new_refresh_token = str(token_data.get("refresh_token") or refresh_token).strip()
+    advertiser_id = str(token_data.get("advertiser_id") or token_data.get("user_id") or row["advertiser_id"] or "").strip()
+    access_expires_at = now_timestamp() + max(0, int(token_data.get("access_token_expires_in") or 0) - 120)
+    refresh_expires_at = now_timestamp() + max(0, int(token_data.get("refresh_token_expires_in") or 0) - 120)
+    db.execute("UPDATE kuaishou_apps SET advertiser_id = ?, access_token = ?, refresh_token = ?, access_token_expires_at = ?, refresh_token_expires_at = ?, updated_at = ? WHERE app_id = ?", (advertiser_id, access_token, new_refresh_token, access_expires_at, refresh_expires_at, now_iso(), app_id))
+    db.execute("UPDATE kuaishou_token_cache SET access_token = ?, expires_at = ?, refreshing_by = NULL, refreshing_until = 0, last_error = NULL, updated_at = ? WHERE app_id = ?", (access_token, access_expires_at, now_iso(), app_id))
+    db.commit()
+    return jsonify({"ok": True, "data": {"app_id": app_id, "advertiser_id": advertiser_id, "access_token": access_token, "expires_at": access_expires_at, "access_token_expires_at": access_expires_at, "refresh_token_expires_at": refresh_expires_at, "expires_in": max(0, access_expires_at - now_timestamp()), "cached": False}})
 
 
 @app.route("/client-api/minidrama/settings/status", methods=["GET"])

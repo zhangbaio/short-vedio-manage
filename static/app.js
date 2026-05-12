@@ -32,10 +32,12 @@ const licenseModal = new bootstrap.Modal(document.getElementById("licenseModal")
 const licenseSecretModal = new bootstrap.Modal(document.getElementById("licenseSecretModal"));
 const remoteModal = new bootstrap.Modal(document.getElementById("remoteModal"));
 const minidramaSettingsModal = new bootstrap.Modal(document.getElementById("minidramaSettingsModal"));
+const kuaishouSettingsModal = new bootstrap.Modal(document.getElementById("kuaishouSettingsModal"));
 let currentLicenseId = null;
 let currentLicenseSecret = "";
 let currentRemoteConversationId = null;
 let minidramaSettingsState = { apps: [], editingAppId: "" };
+let kuaishouSettingsState = { apps: [], editingAppId: "" };
 let remoteQrUnreadCount = 0;
 let remoteNotificationsInitialized = false;
 const seenRemoteMessageIds = new Set();
@@ -122,10 +124,15 @@ function bindEvents() {
     userModal.show();
   });
   document.getElementById("minidramaSettingsBtn")?.addEventListener("click", openMinidramaSettingsModal);
+  document.getElementById("kuaishouSettingsBtn")?.addEventListener("click", openKuaishouSettingsModal);
   document.getElementById("saveMinidramaSettingsBtn")?.addEventListener("click", saveMinidramaSettings);
+  document.getElementById("saveKuaishouSettingsBtn")?.addEventListener("click", saveKuaishouSettings);
   document.getElementById("newMinidramaSettingsBtn")?.addEventListener("click", () => fillMinidramaSettingsForm(null));
+  document.getElementById("newKuaishouSettingsBtn")?.addEventListener("click", () => fillKuaishouSettingsForm(null));
   document.getElementById("minidramaSettingsTableBody")?.addEventListener("click", handleMinidramaSettingsTableClick);
+  document.getElementById("kuaishouSettingsTableBody")?.addEventListener("click", handleKuaishouSettingsTableClick);
   document.getElementById("minidramaSettingsModal")?.addEventListener("hidden.bs.modal", resetMinidramaSettingsForm);
+  document.getElementById("kuaishouSettingsModal")?.addEventListener("hidden.bs.modal", resetKuaishouSettingsForm);
   document.getElementById("licenseManageBtn")?.addEventListener("click", async () => {
     await loadLicenses();
     licenseModal.show();
@@ -206,6 +213,33 @@ function renderMinidramaSettingsMeta(data) {
   meta.textContent = parts.join(" · ");
 }
 
+function renderKuaishouSettingsMeta(data) {
+  const meta = document.getElementById("kuaishouSettingsMeta");
+  if (!meta) return;
+  if (!data || !data.app_id) {
+    meta.textContent = "请选择或新增一个快手配置";
+    return;
+  }
+  const parts = [
+    `AppID：${data.app_id || "-"}`,
+    `Advertiser ID：${data.advertiser_id || "-"}`,
+    `名称：${data.name || "未命名"}`,
+    `AppSecret：${data.app_secret_configured ? data.app_secret_masked || "已配置" : "未配置"}`,
+    `AccessToken：${data.access_token_configured ? "已同步" : "未同步"}`,
+    `RefreshToken：${data.refresh_token_configured ? "已同步" : "未同步"}`,
+  ];
+  if (data.access_token_expires_at) {
+    parts.push(`Access到期：${formatTimestamp(data.access_token_expires_at)}`);
+  }
+  if (data.refresh_token_expires_at) {
+    parts.push(`Refresh到期：${formatTimestamp(data.refresh_token_expires_at)}`);
+  }
+  if (data.updated_at) {
+    parts.push(`更新时间：${data.updated_at}`);
+  }
+  meta.textContent = parts.join(" · ");
+}
+
 function renderMinidramaSettingsTable(apps) {
   const tbody = document.getElementById("minidramaSettingsTableBody");
   if (!tbody) return;
@@ -234,6 +268,38 @@ function renderMinidramaSettingsTable(apps) {
     .join("");
 }
 
+function renderKuaishouSettingsTable(apps) {
+  const tbody = document.getElementById("kuaishouSettingsTableBody");
+  if (!tbody) return;
+  const items = Array.isArray(apps) ? apps : [];
+  if (!items.length) {
+    tbody.innerHTML = `<tr><td colspan="7" class="text-muted small">暂无快手配置</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = items
+    .map((item) => {
+      const appId = item.app_id || "";
+      const tokenStatus = item.access_token_configured
+        ? `已同步${item.access_token_expires_at ? ` / ${escapeHtml(formatTimestamp(item.access_token_expires_at))}` : ""}`
+        : '<span class="text-danger">未同步</span>';
+      return `
+        <tr>
+          <td>${escapeHtml(item.name || "未命名")}</td>
+          <td class="font-monospace">${escapeHtml(appId)}</td>
+          <td class="font-monospace">${escapeHtml(item.advertiser_id || "-")}</td>
+          <td>${item.app_secret_configured ? escapeHtml(item.app_secret_masked || "已配置") : '<span class="text-danger">未配置</span>'}</td>
+          <td>${tokenStatus}</td>
+          <td class="small text-muted">${escapeHtml(item.updated_at || "-")}</td>
+          <td class="text-end">
+            <button type="button" class="btn btn-sm btn-outline-primary" data-action="edit-kuaishou" data-app-id="${escapeHtml(appId)}">编辑</button>
+            <button type="button" class="btn btn-sm btn-outline-danger" data-action="delete-kuaishou" data-app-id="${escapeHtml(appId)}">删除</button>
+          </td>
+        </tr>
+      `;
+    })
+    .join("");
+}
+
 function fillMinidramaSettingsForm(item) {
   const form = document.getElementById("minidramaSettingsForm");
   const app = item || {};
@@ -247,6 +313,22 @@ function fillMinidramaSettingsForm(item) {
     clearFormValidation(form);
   }
   renderMinidramaSettingsMeta(app);
+}
+
+function fillKuaishouSettingsForm(item) {
+  const form = document.getElementById("kuaishouSettingsForm");
+  const app = item || {};
+  kuaishouSettingsState.editingAppId = app.app_id || "";
+  document.getElementById("kuaishouNameInput").value = app.name || "";
+  document.getElementById("kuaishouAppIdInput").value = app.app_id || "";
+  document.getElementById("kuaishouAdvertiserIdInput").value = app.advertiser_id || "";
+  document.getElementById("kuaishouAppSecretInput").value = "";
+  document.getElementById("kuaishouDefaultInput").checked = Boolean(app.is_default);
+  if (form) {
+    form.dataset.appSecretConfigured = app.app_secret_configured ? "1" : "0";
+    clearFormValidation(form);
+  }
+  renderKuaishouSettingsMeta(app);
 }
 
 function resetMinidramaSettingsForm() {
@@ -279,6 +361,37 @@ async function openMinidramaSettingsModal() {
   }
 }
 
+async function openKuaishouSettingsModal() {
+  resetKuaishouSettingsForm();
+  try {
+    const data = await requestJSON("/api/settings/kuaishou");
+    if (!data) return;
+    const apps = Array.isArray(data.apps) ? data.apps : [];
+    kuaishouSettingsState.apps = apps;
+    renderKuaishouSettingsTable(apps);
+    fillKuaishouSettingsForm(apps.find((item) => item.is_default) || apps[0] || data);
+    kuaishouSettingsModal.show();
+  } catch (error) {
+    showToast(error.message, "danger");
+  }
+}
+
+function resetKuaishouSettingsForm() {
+  const form = document.getElementById("kuaishouSettingsForm");
+  document.getElementById("kuaishouNameInput").value = "";
+  document.getElementById("kuaishouAppIdInput").value = "";
+  document.getElementById("kuaishouAdvertiserIdInput").value = "";
+  document.getElementById("kuaishouAppSecretInput").value = "";
+  document.getElementById("kuaishouDefaultInput").checked = false;
+  document.getElementById("kuaishouSettingsMeta").textContent = "";
+  renderKuaishouSettingsTable([]);
+  kuaishouSettingsState = { apps: [], editingAppId: "" };
+  if (form) {
+    form.dataset.appSecretConfigured = "0";
+    clearFormValidation(form);
+  }
+}
+
 function handleMinidramaSettingsTableClick(event) {
   const button = event.target.closest("button[data-action]");
   if (!button) return;
@@ -293,6 +406,20 @@ function handleMinidramaSettingsTableClick(event) {
   }
 }
 
+function handleKuaishouSettingsTableClick(event) {
+  const button = event.target.closest("button[data-action]");
+  if (!button) return;
+  const appId = button.dataset.appId || "";
+  const item = kuaishouSettingsState.apps.find((entry) => entry.app_id === appId);
+  if (button.dataset.action === "edit-kuaishou") {
+    fillKuaishouSettingsForm(item || null);
+    return;
+  }
+  if (button.dataset.action === "delete-kuaishou") {
+    deleteKuaishouSettings(appId);
+  }
+}
+
 async function deleteMinidramaSettings(appId) {
   if (!appId) return;
   if (!window.confirm(`确认删除小程序配置 ${appId}？`)) return;
@@ -303,6 +430,21 @@ async function deleteMinidramaSettings(appId) {
     renderMinidramaSettingsTable(apps);
     fillMinidramaSettingsForm(apps.find((item) => item.is_default) || apps[0] || null);
     showToast("小程序配置已删除", "success");
+  } catch (error) {
+    showToast(error.message, "danger");
+  }
+}
+
+async function deleteKuaishouSettings(appId) {
+  if (!appId) return;
+  if (!window.confirm(`确认删除快手配置 ${appId}？`)) return;
+  try {
+    const data = await requestJSON(`/api/settings/kuaishou/${encodeURIComponent(appId)}`, { method: "DELETE" });
+    const apps = Array.isArray(data.apps) ? data.apps : [];
+    kuaishouSettingsState.apps = apps;
+    renderKuaishouSettingsTable(apps);
+    fillKuaishouSettingsForm(apps.find((item) => item.is_default) || apps[0] || null);
+    showToast("快手配置已删除", "success");
   } catch (error) {
     showToast(error.message, "danger");
   }
@@ -358,6 +500,70 @@ async function saveMinidramaSettings() {
   } finally {
     saveBtn.disabled = false;
   }
+}
+
+async function saveKuaishouSettings() {
+  const form = document.getElementById("kuaishouSettingsForm");
+  const nameInput = document.getElementById("kuaishouNameInput");
+  const appIdInput = document.getElementById("kuaishouAppIdInput");
+  const advertiserIdInput = document.getElementById("kuaishouAdvertiserIdInput");
+  const appSecretInput = document.getElementById("kuaishouAppSecretInput");
+  const defaultInput = document.getElementById("kuaishouDefaultInput");
+  const name = nameInput.value.trim();
+  const appId = appIdInput.value.trim();
+  const advertiserId = advertiserIdInput.value.trim();
+  const appSecret = appSecretInput.value.trim();
+  const hasCurrentSecret = form.dataset.appSecretConfigured === "1";
+  let isValid = true;
+  let firstInvalid = null;
+  if (!validateField(appIdInput, () => appId.length > 0)) {
+    isValid = false;
+    firstInvalid = firstInvalid || appIdInput;
+  }
+  if (!validateField(appSecretInput, () => hasCurrentSecret || appSecret.length > 0)) {
+    isValid = false;
+    firstInvalid = firstInvalid || appSecretInput;
+  }
+  if (!isValid) {
+    firstInvalid?.focus();
+    return;
+  }
+
+  const saveBtn = document.getElementById("saveKuaishouSettingsBtn");
+  saveBtn.disabled = true;
+  try {
+    const data = await requestJSON("/api/settings/kuaishou", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name,
+        app_id: appId,
+        advertiser_id: advertiserId,
+        app_secret: appSecret,
+        is_default: defaultInput.checked,
+        enabled: true,
+      }),
+    });
+    if (!data) return;
+    const apps = Array.isArray(data.apps) ? data.apps : [];
+    kuaishouSettingsState.apps = apps;
+    renderKuaishouSettingsTable(apps);
+    fillKuaishouSettingsForm(data.saved || apps.find((item) => item.app_id === appId) || null);
+    showToast("快手配置已保存", "success");
+  } catch (error) {
+    showToast(error.message, "danger");
+  } finally {
+    saveBtn.disabled = false;
+  }
+}
+
+function formatTimestamp(timestampSeconds) {
+  const value = Number(timestampSeconds || 0);
+  if (!value) return "-";
+  const date = new Date(value * 1000);
+  if (Number.isNaN(date.getTime())) return "-";
+  const pad = (num) => String(num).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 }
 
 function changePage(target) {
