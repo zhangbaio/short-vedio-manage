@@ -82,7 +82,7 @@ ACCOUNT_TOKEN_SALT = "desktop-account"
 ACCOUNT_TOKEN_MAX_AGE_SECONDS = _int_env("ACCOUNT_TOKEN_MAX_AGE_SECONDS", 60 * 60 * 24)
 ACCOUNT_OFFLINE_GRACE_HOURS = _int_env("ACCOUNT_OFFLINE_GRACE_HOURS", 72)
 ACCOUNT_DEFAULT_MAX_DEVICES = _int_env("ACCOUNT_DEFAULT_MAX_DEVICES", 3)
-USERNAME_RE = re.compile(r"^[A-Za-z0-9_]{2,30}$")
+USERNAME_RE = re.compile(r"^(?:[A-Za-z0-9_]{2,30}|[^@\s]+@[^@\s]+\.[^@\s]+)$")
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 REMOTE_MESSAGE_STATUS_VALUES = {"pending", "sent", "running", "success", "failed", "canceled", "stopped"}
 REMOTE_MESSAGE_TYPE_VALUES = {"text", "command", "image", "status", "log"}
@@ -588,7 +588,7 @@ def verify_account_token(token: str) -> dict:
             max_age=ACCOUNT_TOKEN_MAX_AGE_SECONDS,
         )
     except (BadSignature, BadTimeSignature, SignatureExpired):
-        raise ValueError("account token is invalid or expired")
+        raise ValueError("账号登录凭证无效或已过期")
 
 
 def parse_iso_datetime(value: str | None) -> datetime.datetime | None:
@@ -1551,16 +1551,16 @@ def validate_account_auth_payload(data: dict, *, require_registration: bool = Fa
     }
     if require_registration:
         if not USERNAME_RE.match(payload["username"]):
-            return payload, "username must be 2-30 letters, numbers, or underscores"
+            return payload, "用户名需为 2-30 位字母、数字或下划线，或使用有效邮箱格式"
         if not EMAIL_RE.match(payload["email"]):
-            return payload, "valid email is required"
+            return payload, "请输入有效邮箱"
     elif not payload["account"]:
-        return payload, "username or email is required"
+        return payload, "请输入用户名或邮箱"
     if require_registration or payload["password"]:
         if len(payload["password"]) < 6:
-            return payload, "password must be at least 6 characters"
+            return payload, "密码至少需要 6 位"
     if not payload["machine_id"]:
-        return payload, "machine_id is required"
+        return payload, "机器码不能为空"
     return payload, None
 
 
@@ -1596,9 +1596,9 @@ def build_account_auth_response(
 
 def ensure_account_can_login(user_row: sqlite3.Row) -> tuple[bool, str]:
     if str(user_row["status"] or "active") != "active":
-        return False, "account is disabled"
+        return False, "账号已停用"
     if is_user_account_expired(user_row):
-        return False, "account is expired"
+        return False, "账号已过期"
     return True, ""
 
 
@@ -1628,7 +1628,7 @@ def activate_account_for_machine(
         active_count = current_active_user_device_count(db, user_row["id"])
         max_devices = int(user_row["max_devices"] or ACCOUNT_DEFAULT_MAX_DEVICES)
         if active_count >= max_devices:
-            raise ValueError("account has reached the maximum number of devices")
+            raise ValueError("账号已达到最大登录设备数")
 
     token = issue_account_token(user_row=user_row, machine_id=machine_id)
     token_hash = hash_token(token)
@@ -2029,7 +2029,7 @@ def client_register_account():
         (payload["username"], payload["email"]),
     ).fetchone()
     if existing:
-        return jsonify({"ok": False, "message": "username or email already exists"}), 400
+        return jsonify({"ok": False, "message": "用户名或邮箱已存在"}), 400
 
     try:
         db.execute(
@@ -2047,7 +2047,7 @@ def client_register_account():
         )
         db.commit()
     except sqlite3.IntegrityError:
-        return jsonify({"ok": False, "message": "username or email already exists"}), 400
+        return jsonify({"ok": False, "message": "用户名或邮箱已存在"}), 400
 
     user_row = get_user_by_account(db, payload["username"])
     try:
@@ -2072,12 +2072,12 @@ def client_login_account():
     if error:
         return jsonify({"ok": False, "message": error}), 400
     if not payload["password"]:
-        return jsonify({"ok": False, "message": "password is required"}), 400
+        return jsonify({"ok": False, "message": "请输入密码"}), 400
 
     db = get_db()
     user_row = get_user_by_account(db, payload["account"])
     if not user_row or not check_password_hash(user_row["password_hash"], payload["password"]):
-        return jsonify({"ok": False, "message": "username/email or password is incorrect"}), 401
+        return jsonify({"ok": False, "message": "用户名/邮箱或密码不正确"}), 401
 
     try:
         result = activate_account_for_machine(
@@ -2101,7 +2101,7 @@ def client_verify_account():
     if error:
         return jsonify({"ok": False, "message": error}), 400
     if not payload["token"]:
-        return jsonify({"ok": False, "message": "token is required"}), 400
+        return jsonify({"ok": False, "message": "登录凭证不能为空"}), 400
 
     try:
         token_payload = verify_account_token(payload["token"])
@@ -2109,7 +2109,7 @@ def client_verify_account():
         return jsonify({"ok": False, "message": str(exc)}), 400
 
     if token_payload.get("machine_id") != payload["machine_id"]:
-        return jsonify({"ok": False, "message": "token does not match this machine"}), 400
+        return jsonify({"ok": False, "message": "登录凭证与当前机器不匹配"}), 400
 
     db = get_db()
     user_row = db.execute(
@@ -2117,9 +2117,9 @@ def client_verify_account():
         (token_payload.get("user_id"),),
     ).fetchone()
     if not user_row:
-        return jsonify({"ok": False, "message": "account does not exist"}), 404
+        return jsonify({"ok": False, "message": "账号不存在"}), 404
     if payload["account"] and payload["account"] not in {user_row["username"], user_row["email"] or ""}:
-        return jsonify({"ok": False, "message": "token does not match this account"}), 400
+        return jsonify({"ok": False, "message": "登录凭证与当前账号不匹配"}), 400
 
     device_row = db.execute(
         """
@@ -2130,9 +2130,9 @@ def client_verify_account():
         (user_row["id"], payload["machine_id"]),
     ).fetchone()
     if not device_row:
-        return jsonify({"ok": False, "message": "this machine is not logged in"}), 400
+        return jsonify({"ok": False, "message": "当前机器未登录"}), 400
     if device_row["token_hash"] != hash_token(payload["token"]):
-        return jsonify({"ok": False, "message": "token has been revoked; please log in again"}), 400
+        return jsonify({"ok": False, "message": "登录凭证已失效，请重新登录"}), 400
 
     try:
         result = activate_account_for_machine(
