@@ -8,6 +8,7 @@ import os
 import re
 import secrets
 import sqlite3
+import threading
 import uuid
 from functools import wraps
 from io import BytesIO
@@ -108,7 +109,11 @@ MINIDRAMA_APP_ID_SETTING_KEY = "minidrama_app_id"
 MINIDRAMA_APP_SECRET_SETTING_KEY = "minidrama_app_secret"
 KUAISHOU_API_BASE = "https://ad.e.kuaishou.com"
 KUAISHOU_TOKEN_REFRESH_MARGIN_SECONDS = 2 * 60 * 60
+KUAISHOU_ACCESS_TOKEN_RENEW_MARGIN_SECONDS = 6 * 60 * 60
+KUAISHOU_REFRESH_TOKEN_RENEW_MARGIN_SECONDS = 7 * 24 * 60 * 60
 KUAISHOU_TOKEN_REFRESH_LOCK_SECONDS = 60
+KUAISHOU_TOKEN_REFRESH_SCHEDULER_INTERVAL_SECONDS = _int_env('KUAISHOU_TOKEN_REFRESH_SCHEDULER_INTERVAL_SECONDS', 60 * 60)
+KUAISHOU_TOKEN_REFRESH_STARTUP_DELAY_SECONDS = _int_env('KUAISHOU_TOKEN_REFRESH_STARTUP_DELAY_SECONDS', 10)
 
 HEADER_MAP = {
     "日期": "date",
@@ -1175,6 +1180,230 @@ def refresh_kuaishou_access_token_from_api(app_id: str, app_secret: str, refresh
         raise ValueError("?? refresh token ????? access_token")
     return data
 
+
+
+def _safe_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _kuaishou_token_expiry_from_response(data: dict[str, Any], *, expires_in_key: str, expires_at_key: str, fallback: int = 0) -> int:
+    now_ts = now_timestamp()
+    expires_in = _safe_int(data.get(expires_in_key), 0)
+    if expires_in > 0:
+        return now_ts + max(0, expires_in - 120)
+    expires_at = _safe_int(data.get(expires_at_key), 0)
+    if expires_at > 0:
+        return expires_at
+    return int(fallback or 0)
+
+
+def _kuaishou_app_needs_token_refresh(row: sqlite3.Row, *, now_ts: int | None = None) -> bool:
+    current_ts = now_timestamp() if now_ts is None else int(now_ts)
+    if not bool(row["enabled"]):
+        return False
+    if not str(row["app_secret"] or "").strip() or not str(row["refresh_token"] or "").strip():
+        return False
+    refresh_expires_at = _safe_int(row["refresh_token_expires_at"], 0)
+    if refresh_expires_at > 0 and refresh_expires_at <= current_ts:
+        return False
+    access_token = str(row["access_token"] or "").strip()
+    access_expires_at = _safe_int(row["access_token_expires_at"], 0)
+    if not access_token or access_expires_at <= 0:
+        return True
+    if access_expires_at - current_ts <= KUAISHOU_ACCESS_TOKEN_RENEW_MARGIN_SECONDS:
+        return True
+    if refresh_expires_at > 0 and refresh_expires_at - current_ts <= KUAISHOU_REFRESH_TOKEN_RENEW_MARGIN_SECONDS:
+        return True
+    return False
+
+
+def _kuaishou_token_payload(row: sqlite3.Row, *, cached: bool, refreshing: bool = False) -> dict[str, Any]:
+    expires_at = _safe_int(row["access_token_expires_at"], 0)
+    return {
+        "app_id": str(row["app_id"] or "").strip(),
+        "advertiser_id": str(row["advertiser_id"] or "").strip(),
+        "access_token": str(row["access_token"] or "").strip(),
+        "expires_at": expires_at,
+        "access_token_expires_at": expires_at,
+        "refresh_token_expires_at": _safe_int(row["refresh_token_expires_at"], 0),
+        "expires_in": max(0, expires_at - now_timestamp()),
+        "cached": cached,
+        "refreshing": refreshing,
+    }
+
+
+def _release_kuaishou_refresh_lock(db: sqlite3.Connection, app_id: str, *, last_error: str | None = None) -> None:
+    if last_error:
+        db.execute(
+            "UPDATE kuaishou_token_cache SET refreshing_by = NULL, refreshing_until = 0, last_error = ?, updated_at = ? WHERE app_id = ?",
+            (last_error, now_iso(), app_id),
+        )
+    else:
+        db.execute(
+            "UPDATE kuaishou_token_cache SET refreshing_by = NULL, refreshing_until = 0, updated_at = ? WHERE app_id = ?",
+            (now_iso(), app_id),
+        )
+
+
+def refresh_kuaishou_app_token_if_due(app_id: str, *, refreshing_by: str, force: bool = False) -> tuple[dict[str, Any] | None, str | None, int]:
+    db = get_db()
+    row, error_message = resolve_kuaishou_server_credentials(app_id)
+    if error_message:
+        return None, error_message, 400
+    assert row is not None
+    app_id = str(row["app_id"] or "").strip()
+    now_ts = now_timestamp()
+    now_text = now_iso()
+
+    cache_row = db.execute("SELECT * FROM kuaishou_token_cache WHERE app_id = ?", (app_id,)).fetchone()
+    if (
+        not force
+        and cache_row
+        and str(cache_row["access_token"] or "").strip()
+        and _safe_int(cache_row["expires_at"], 0) - now_ts > KUAISHOU_TOKEN_REFRESH_MARGIN_SECONDS
+    ):
+        return {
+            "app_id": app_id,
+            "advertiser_id": str(row["advertiser_id"] or "").strip(),
+            "access_token": str(cache_row["access_token"] or "").strip(),
+            "expires_at": _safe_int(cache_row["expires_at"], 0),
+            "access_token_expires_at": _safe_int(cache_row["expires_at"], 0),
+            "refresh_token_expires_at": _safe_int(row["refresh_token_expires_at"], 0),
+            "expires_in": max(0, _safe_int(cache_row["expires_at"], 0) - now_ts),
+            "cached": True,
+        }, None, 200
+
+    if not force and not _kuaishou_app_needs_token_refresh(row, now_ts=now_ts):
+        return _kuaishou_token_payload(row, cached=True), None, 200
+
+    db.execute(
+        "INSERT OR IGNORE INTO kuaishou_token_cache (app_id, access_token, expires_at, refreshing_by, refreshing_until, created_at, updated_at) VALUES (?, NULL, 0, NULL, 0, ?, ?)",
+        (app_id, now_text, now_text),
+    )
+    db.commit()
+    lock_owner = str(refreshing_by or "system")
+    lock_until = now_ts + KUAISHOU_TOKEN_REFRESH_LOCK_SECONDS
+    cursor = db.execute(
+        "UPDATE kuaishou_token_cache SET refreshing_by = ?, refreshing_until = ?, updated_at = ? WHERE app_id = ? AND (refreshing_until IS NULL OR refreshing_until <= ? OR refreshing_by = ?)",
+        (lock_owner, lock_until, now_text, app_id, now_ts, lock_owner),
+    )
+    db.commit()
+    if cursor.rowcount <= 0:
+        latest = get_kuaishou_app_row(app_id)
+        if latest and str(latest["access_token"] or "").strip() and _safe_int(latest["access_token_expires_at"], 0) > now_ts + 60:
+            return _kuaishou_token_payload(latest, cached=True, refreshing=True), None, 200
+        return None, "快手 token 正在刷新，请稍后重试", 409
+
+    row = get_kuaishou_app_row(app_id)
+    if row is None:
+        _release_kuaishou_refresh_lock(db, app_id, last_error="快手配置不存在")
+        db.commit()
+        return None, "快手配置不存在", 404
+    refresh_token = str(row["refresh_token"] or "").strip()
+    if not refresh_token:
+        _release_kuaishou_refresh_lock(db, app_id, last_error="服务端未配置快手 refresh_token")
+        db.commit()
+        return None, "服务端未配置快手 refresh_token，请先在桌面端登录并同步", 400
+    refresh_expires_at = _safe_int(row["refresh_token_expires_at"], 0)
+    if refresh_expires_at > 0 and refresh_expires_at <= now_ts:
+        _release_kuaishou_refresh_lock(db, app_id, last_error="快手 refresh_token 已过期")
+        db.commit()
+        return None, "快手 refresh_token 已过期，请在桌面端重新登录后同步", 400
+
+    try:
+        token_data = refresh_kuaishou_access_token_from_api(app_id, str(row["app_secret"] or "").strip(), refresh_token)
+    except Exception as exc:
+        _release_kuaishou_refresh_lock(db, app_id, last_error=str(exc))
+        db.commit()
+        return None, str(exc), 502
+
+    access_token = str(token_data.get("access_token") or "").strip()
+    new_refresh_token = str(token_data.get("refresh_token") or refresh_token).strip()
+    advertiser_id = str(token_data.get("advertiser_id") or token_data.get("user_id") or row["advertiser_id"] or "").strip()
+    access_expires_at = _kuaishou_token_expiry_from_response(
+        token_data,
+        expires_in_key="access_token_expires_in",
+        expires_at_key="access_token_expires_at",
+        fallback=_safe_int(row["access_token_expires_at"], 0),
+    )
+    refresh_expires_at = _kuaishou_token_expiry_from_response(
+        token_data,
+        expires_in_key="refresh_token_expires_in",
+        expires_at_key="refresh_token_expires_at",
+        fallback=_safe_int(row["refresh_token_expires_at"], 0),
+    )
+    cursor = db.execute(
+        "UPDATE kuaishou_apps SET advertiser_id = ?, access_token = ?, refresh_token = ?, access_token_expires_at = ?, refresh_token_expires_at = ?, updated_at = ? WHERE app_id = ? AND refresh_token = ?",
+        (advertiser_id, access_token, new_refresh_token, access_expires_at, refresh_expires_at, now_iso(), app_id, refresh_token),
+    )
+    if cursor.rowcount <= 0:
+        _release_kuaishou_refresh_lock(db, app_id)
+        db.commit()
+        latest = get_kuaishou_app_row(app_id)
+        if latest and str(latest["access_token"] or "").strip():
+            return _kuaishou_token_payload(latest, cached=True, refreshing=True), None, 200
+        return None, "快手 token 已被其他进程刷新，请稍后重试", 409
+    db.execute(
+        "UPDATE kuaishou_token_cache SET access_token = ?, expires_at = ?, refreshing_by = NULL, refreshing_until = 0, last_error = NULL, updated_at = ? WHERE app_id = ?",
+        (access_token, access_expires_at, now_iso(), app_id),
+    )
+    db.commit()
+    latest = get_kuaishou_app_row(app_id)
+    return _kuaishou_token_payload(latest, cached=False) if latest else None, None, 200
+
+
+def refresh_due_kuaishou_apps_once() -> dict[str, int]:
+    summary = {"checked": 0, "refreshed": 0, "failed": 0, "skipped": 0}
+    db = get_db()
+    rows = list(db.execute("SELECT * FROM kuaishou_apps WHERE enabled = 1 ORDER BY updated_at ASC, id ASC").fetchall())
+    now_ts = now_timestamp()
+    for row in rows:
+        summary["checked"] += 1
+        if not _kuaishou_app_needs_token_refresh(row, now_ts=now_ts):
+            summary["skipped"] += 1
+            continue
+        payload, error_message, _status = refresh_kuaishou_app_token_if_due(
+            str(row["app_id"] or ""),
+            refreshing_by="system-scheduler",
+            force=True,
+        )
+        if payload and not error_message:
+            summary["refreshed"] += 1
+        else:
+            summary["failed"] += 1
+            print(f"[kuaishou-token] refresh failed app_id={row['app_id']}: {error_message}")
+    return summary
+
+
+_kuaishou_scheduler_started = False
+_kuaishou_scheduler_lock = threading.Lock()
+
+
+def _kuaishou_token_scheduler_loop() -> None:
+    if KUAISHOU_TOKEN_REFRESH_STARTUP_DELAY_SECONDS > 0:
+        threading.Event().wait(KUAISHOU_TOKEN_REFRESH_STARTUP_DELAY_SECONDS)
+    while True:
+        try:
+            with app.app_context():
+                summary = refresh_due_kuaishou_apps_once()
+                if summary.get("refreshed") or summary.get("failed"):
+                    print(f"[kuaishou-token] scheduled refresh summary: {summary}")
+        except Exception as exc:
+            print(f"[kuaishou-token] scheduled refresh crashed: {type(exc).__name__}: {exc}")
+        threading.Event().wait(max(60, KUAISHOU_TOKEN_REFRESH_SCHEDULER_INTERVAL_SECONDS))
+
+
+def start_kuaishou_token_refresh_scheduler() -> None:
+    global _kuaishou_scheduler_started
+    with _kuaishou_scheduler_lock:
+        if _kuaishou_scheduler_started:
+            return
+        _kuaishou_scheduler_started = True
+        thread = threading.Thread(target=_kuaishou_token_scheduler_loop, name="kuaishou-token-refresh", daemon=True)
+        thread.start()
 
 def get_minidrama_server_settings(requested_app_id: str = "") -> dict[str, Any]:
     requested = str(requested_app_id or "").strip()
@@ -3434,58 +3663,20 @@ def client_ensure_kuaishou_settings():
 
 
 @app.route("/client-api/kuaishou/token", methods=["POST"])
-
 def client_get_kuaishou_token():
     db, client_row = require_remote_client()
     if client_row is None:
-        return jsonify({"ok": False, "message": "client_id ? client_token ??"}), 401
+        return jsonify({"ok": False, "message": "client_id 或 client_token 无效"}), 401
     data = request.get_json(silent=True) or {}
     requested_app_id = str(data.get("app_id") or request.args.get("app_id") or "").strip()
-    row, error_message = resolve_kuaishou_server_credentials(requested_app_id)
+    payload, error_message, status_code = refresh_kuaishou_app_token_if_due(
+        requested_app_id,
+        refreshing_by=str(client_row["client_id"] or "client"),
+        force=False,
+    )
     if error_message:
-        return jsonify({"ok": False, "message": error_message}), 400
-    assert row is not None
-    app_id = str(row["app_id"] or "").strip()
-    now_ts = now_timestamp()
-    now_text = now_iso()
-    cache_row = db.execute("SELECT * FROM kuaishou_token_cache WHERE app_id = ?", (app_id,)).fetchone()
-    if cache_row and str(cache_row["access_token"] or "").strip() and int(cache_row["expires_at"] or 0) - now_ts > KUAISHOU_TOKEN_REFRESH_MARGIN_SECONDS:
-        return jsonify({"ok": True, "data": {"app_id": app_id, "advertiser_id": str(row["advertiser_id"] or "").strip(), "access_token": cache_row["access_token"], "expires_at": int(cache_row["expires_at"] or 0), "access_token_expires_at": int(cache_row["expires_at"] or 0), "refresh_token_expires_at": int(row["refresh_token_expires_at"] or 0), "expires_in": max(0, int(cache_row["expires_at"] or 0) - now_ts), "cached": True}})
-    db.execute("INSERT OR IGNORE INTO kuaishou_token_cache (app_id, access_token, expires_at, refreshing_by, refreshing_until, created_at, updated_at) VALUES (?, NULL, 0, NULL, 0, ?, ?)", (app_id, now_text, now_text))
-    db.commit()
-    lock_until = now_ts + KUAISHOU_TOKEN_REFRESH_LOCK_SECONDS
-    cursor = db.execute("UPDATE kuaishou_token_cache SET refreshing_by = ?, refreshing_until = ?, updated_at = ? WHERE app_id = ? AND (refreshing_until IS NULL OR refreshing_until <= ? OR refreshing_by = ?)", (client_row["client_id"], lock_until, now_text, app_id, now_ts, client_row["client_id"]))
-    db.commit()
-    if cursor.rowcount <= 0:
-        cache_row = db.execute("SELECT * FROM kuaishou_token_cache WHERE app_id = ?", (app_id,)).fetchone()
-        if cache_row and str(cache_row["access_token"] or "").strip() and int(cache_row["expires_at"] or 0) > now_ts + 60:
-            return jsonify({"ok": True, "data": {"app_id": app_id, "advertiser_id": str(row["advertiser_id"] or "").strip(), "access_token": cache_row["access_token"], "expires_at": int(cache_row["expires_at"] or 0), "access_token_expires_at": int(cache_row["expires_at"] or 0), "refresh_token_expires_at": int(row["refresh_token_expires_at"] or 0), "expires_in": max(0, int(cache_row["expires_at"] or 0) - now_ts), "cached": True, "refreshing": True}})
-        return jsonify({"ok": False, "message": "?? token ??????????"}), 409
-    refresh_token = str(row["refresh_token"] or "").strip()
-    if not refresh_token:
-        db.execute("UPDATE kuaishou_token_cache SET refreshing_by = NULL, refreshing_until = 0, last_error = ?, updated_at = ? WHERE app_id = ?", ("服务端未配置快手 refresh_token", now_iso(), app_id))
-        db.commit()
-        return jsonify({"ok": False, "message": "服务端未配置快手 refresh_token，请先在桌面端登录并同步"}), 400
-    refresh_expires_at = int(row["refresh_token_expires_at"] or 0)
-    if refresh_expires_at > 0 and refresh_expires_at <= now_ts:
-        db.execute("UPDATE kuaishou_token_cache SET refreshing_by = NULL, refreshing_until = 0, last_error = ?, updated_at = ? WHERE app_id = ?", ("快手 refresh_token 已过期", now_iso(), app_id))
-        db.commit()
-        return jsonify({"ok": False, "message": "快手 refresh_token 已过期，请在桌面端重新登录后同步"}), 400
-    try:
-        token_data = refresh_kuaishou_access_token_from_api(app_id, str(row["app_secret"] or "").strip(), refresh_token)
-    except Exception as exc:
-        db.execute("UPDATE kuaishou_token_cache SET refreshing_by = NULL, refreshing_until = 0, last_error = ?, updated_at = ? WHERE app_id = ?", (str(exc), now_iso(), app_id))
-        db.commit()
-        return jsonify({"ok": False, "message": str(exc)}), 502
-    access_token = str(token_data.get("access_token") or "").strip()
-    new_refresh_token = str(token_data.get("refresh_token") or refresh_token).strip()
-    advertiser_id = str(token_data.get("advertiser_id") or token_data.get("user_id") or row["advertiser_id"] or "").strip()
-    access_expires_at = now_timestamp() + max(0, int(token_data.get("access_token_expires_in") or 0) - 120)
-    refresh_expires_at = now_timestamp() + max(0, int(token_data.get("refresh_token_expires_in") or 0) - 120)
-    db.execute("UPDATE kuaishou_apps SET advertiser_id = ?, access_token = ?, refresh_token = ?, access_token_expires_at = ?, refresh_token_expires_at = ?, updated_at = ? WHERE app_id = ?", (advertiser_id, access_token, new_refresh_token, access_expires_at, refresh_expires_at, now_iso(), app_id))
-    db.execute("UPDATE kuaishou_token_cache SET access_token = ?, expires_at = ?, refreshing_by = NULL, refreshing_until = 0, last_error = NULL, updated_at = ? WHERE app_id = ?", (access_token, access_expires_at, now_iso(), app_id))
-    db.commit()
-    return jsonify({"ok": True, "data": {"app_id": app_id, "advertiser_id": advertiser_id, "access_token": access_token, "expires_at": access_expires_at, "access_token_expires_at": access_expires_at, "refresh_token_expires_at": refresh_expires_at, "expires_in": max(0, access_expires_at - now_timestamp()), "cached": False}})
+        return jsonify({"ok": False, "message": error_message}), status_code
+    return jsonify({"ok": True, "data": payload})
 
 
 @app.route("/client-api/minidrama/settings/status", methods=["GET"])
@@ -3776,6 +3967,11 @@ def client_upload_remote_image():
             },
         }
     )
+
+
+@app.before_request
+def _ensure_background_schedulers_started():
+    start_kuaishou_token_refresh_scheduler()
 
 
 @app.route("/api/remote/attachments/<int:attachment_id>", methods=["GET"])
