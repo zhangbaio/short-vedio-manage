@@ -2,6 +2,9 @@ let minidramaSettingsState = { apps: [], editingAppId: "" };
 let kuaishouSettingsState = { apps: [], editingAppId: "" };
 let currentRemoteConversationId = null;
 let passwordTargetUserId = null;
+let editingUserId = null;
+let usersCache = [];
+let currentDevicesUserId = null;
 
 document.addEventListener("DOMContentLoaded", () => {
   cacheDefaultFeedbackMessages();
@@ -14,12 +17,14 @@ document.addEventListener("DOMContentLoaded", () => {
 function initUsersPage() {
   document.getElementById("addUserBtn")?.addEventListener("click", showUserEditor);
   document.getElementById("cancelUserEditBtn")?.addEventListener("click", hideUserEditor);
-  document.getElementById("createUserBtn")?.addEventListener("click", createUser);
+  document.getElementById("createUserBtn")?.addEventListener("click", saveUser);
   document.getElementById("cancelPasswordEditBtn")?.addEventListener("click", hidePasswordEditor);
   document.getElementById("generatePasswordBtn")?.addEventListener("click", fillGeneratedPassword);
   document.getElementById("savePasswordBtn")?.addEventListener("click", resetUserPassword);
   document.getElementById("refreshUsersBtn")?.addEventListener("click", loadUsers);
   document.getElementById("userTableBody")?.addEventListener("click", handleUserTableClick);
+  document.getElementById("cancelDevicesBtn")?.addEventListener("click", hideDevicesPanel);
+  document.getElementById("userDevicesTableBody")?.addEventListener("click", handleUserDevicesTableClick);
   loadUsers();
 }
 
@@ -54,21 +59,31 @@ async function loadUsers() {
   try {
     const users = await requestJSON("/api/users");
     if (!users) return;
+    usersCache = users;
     const tbody = document.getElementById("userTableBody");
     tbody.innerHTML = "";
     if (!users.length) {
-      tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted py-4">暂无用户</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-4">暂无用户</td></tr>';
       return;
     }
     users.forEach((user) => {
       const tr = document.createElement("tr");
+      const isSelf = user.username === window.currentUser.username;
+      const statusText = user.status === "disabled" ? "停用" : "启用";
+      const statusClass = user.status === "disabled" ? "text-bg-secondary" : "text-bg-success";
       tr.innerHTML = `
         <td>${escapeHtml(user.username)}</td>
+        <td>${escapeHtml(user.email || "-")}</td>
         <td>${user.role === "admin" ? "管理员" : "普通用户"}</td>
+        <td><span class="badge ${statusClass}">${statusText}</span> <span class="text-muted small">${escapeHtml(user.edition || "pro")}</span></td>
+        <td>${Number(user.active_devices || 0)}/${Number(user.max_devices || 0)}</td>
+        <td>${escapeHtml(user.expires_at || "永久")}</td>
         <td><span class="text-muted small">已加密保存</span></td>
         <td class="text-end">
-          <button class="btn btn-sm btn-outline-primary" data-action="reset-password" data-id="${user.id}" data-username="${escapeHtml(user.username)}">重置/查看新密码</button>
-          <button class="btn btn-sm btn-outline-danger" data-action="delete-user" data-id="${user.id}" data-username="${escapeHtml(user.username)}" ${user.username === window.currentUser.username ? "disabled" : ""}>删除</button>
+          <button class="btn btn-sm btn-outline-secondary" data-action="edit-user" data-id="${user.id}">编辑</button>
+          <button class="btn btn-sm btn-outline-info" data-action="view-devices" data-id="${user.id}" data-username="${escapeHtml(user.username)}">设备</button>
+          <button class="btn btn-sm btn-outline-primary" data-action="reset-password" data-id="${user.id}" data-username="${escapeHtml(user.username)}">重置密码</button>
+          <button class="btn btn-sm btn-outline-danger" data-action="delete-user" data-id="${user.id}" data-username="${escapeHtml(user.username)}" ${isSelf ? "disabled" : ""}>删除</button>
         </td>
       `;
       tbody.appendChild(tr);
@@ -78,9 +93,23 @@ async function loadUsers() {
   }
 }
 
-function showUserEditor() {
+function showUserEditor(user = null) {
   resetUserForm();
   hidePasswordEditor();
+  hideDevicesPanel();
+  editingUserId = user?.id || null;
+  document.getElementById("userEditorTitle").textContent = editingUserId ? "编辑用户授权" : "新增用户";
+  document.getElementById("createUserBtn").textContent = editingUserId ? "保存修改" : "保存";
+  document.getElementById("userNameInput").value = user?.username || "";
+  document.getElementById("userEmailInput").value = user?.email || "";
+  document.getElementById("userPasswordInput").value = "";
+  document.getElementById("userPasswordInput").disabled = Boolean(editingUserId);
+  document.getElementById("userPasswordInput").placeholder = editingUserId ? "\u8bf7\u4f7f\u7528\u91cd\u7f6e\u5bc6\u7801\u5165\u53e3\u4fee\u6539" : "\u8bf7\u8f93\u5165\u5bc6\u7801";
+  document.getElementById("userRoleInput").value = user?.role || "user";
+  document.getElementById("userStatusInput").value = user?.status || "active";
+  document.getElementById("userEditionInput").value = user?.edition || "pro";
+  document.getElementById("userMaxDevicesInput").value = String(user?.max_devices || 3);
+  document.getElementById("userExpiresAtInput").value = (user?.expires_at || "").slice(0, 10);
   const panel = document.getElementById("userEditorPanel");
   panel.hidden = false;
   document.getElementById("userNameInput")?.focus();
@@ -93,6 +122,7 @@ function hideUserEditor() {
 
 function showPasswordEditor(userId, username) {
   hideUserEditor();
+  hideDevicesPanel();
   passwordTargetUserId = userId;
   document.getElementById("passwordTargetUser").textContent = username || "-";
   document.getElementById("resetPasswordInput").value = "";
@@ -126,23 +156,39 @@ function generateReadablePassword() {
   return Array.from(bytes, (value) => chars[value % chars.length]).join("");
 }
 
-async function createUser() {
+async function saveUser() {
   const usernameInput = document.getElementById("userNameInput");
+  const emailInput = document.getElementById("userEmailInput");
   const passwordInput = document.getElementById("userPasswordInput");
-  const roleInput = document.getElementById("userRoleInput");
-  const username = usernameInput.value.trim();
-  const password = passwordInput.value.trim();
-  const role = roleInput.value;
+  const maxDevicesInput = document.getElementById("userMaxDevicesInput");
+  const payload = {
+    username: usernameInput.value.trim(),
+    email: emailInput.value.trim(),
+    password: passwordInput.value.trim(),
+    role: document.getElementById("userRoleInput").value,
+    status: document.getElementById("userStatusInput").value,
+    edition: document.getElementById("userEditionInput").value,
+    max_devices: Number.parseInt(maxDevicesInput.value || "3", 10),
+    expires_at: document.getElementById("userExpiresAtInput").value.trim(),
+  };
   let isValid = true;
   let firstInvalid = null;
 
-  if (!validateField(usernameInput, () => /^[A-Za-z0-9_]{2,30}$/.test(username))) {
+  if (!validateField(usernameInput, () => /^(?:[A-Za-z0-9_]{2,30}|[^@\s]+@[^@\s]+\.[^@\s]+)$/.test(payload.username))) {
     isValid = false;
     firstInvalid = firstInvalid || usernameInput;
   }
-  if (!validateField(passwordInput, () => password.length >= 6)) {
+  if (!validateField(emailInput, () => !payload.email || /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(payload.email))) {
+    isValid = false;
+    firstInvalid = firstInvalid || emailInput;
+  }
+  if (!editingUserId && !validateField(passwordInput, () => payload.password.length >= 6)) {
     isValid = false;
     firstInvalid = firstInvalid || passwordInput;
+  }
+  if (!validateField(maxDevicesInput, () => Number.isInteger(payload.max_devices) && payload.max_devices > 0)) {
+    isValid = false;
+    firstInvalid = firstInvalid || maxDevicesInput;
   }
   if (!isValid) {
     firstInvalid?.focus();
@@ -150,12 +196,15 @@ async function createUser() {
   }
 
   try {
-    await requestJSON("/api/users", {
-      method: "POST",
+    const url = editingUserId ? `/api/users/${editingUserId}` : "/api/users";
+    const method = editingUserId ? "PUT" : "POST";
+    if (editingUserId) delete payload.password;
+    await requestJSON(url, {
+      method,
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username, password, role }),
+      body: JSON.stringify(payload),
     });
-    showToast("新增用户成功", "success");
+    showToast(editingUserId ? "用户已更新" : "新增用户成功", "success");
     resetUserForm();
     hideUserEditor();
     await loadUsers();
@@ -169,16 +218,26 @@ async function handleUserTableClick(event) {
   if (!button) return;
   const id = Number(button.dataset.id);
   const username = button.dataset.username;
+  if (button.dataset.action === "edit-user") {
+    const user = usersCache.find((item) => Number(item.id) === id);
+    if (user) showUserEditor(user);
+    return;
+  }
+  if (button.dataset.action === "view-devices") {
+    await loadUserDevices(id, username);
+    return;
+  }
   if (button.dataset.action === "reset-password") {
     showPasswordEditor(id, username);
     return;
   }
   if (button.dataset.action !== "delete-user") return;
-  if (!confirm(`确定删除用户 ${username} 吗？`)) return;
+  if (!confirm(`确定删除用户 ${username} 吗？删除后该账号的桌面端登录设备也会失效。`)) return;
   try {
     await requestJSON(`/api/users/${id}`, { method: "DELETE" });
     showToast("用户删除成功", "success");
     await loadUsers();
+    if (currentDevicesUserId === id) hideDevicesPanel();
   } catch (error) {
     showToast(error.message, "danger");
   }
@@ -207,9 +266,76 @@ async function resetUserPassword() {
 }
 
 function resetUserForm() {
+  editingUserId = null;
   document.getElementById("userNameInput").value = "";
+  document.getElementById("userEmailInput").value = "";
   document.getElementById("userPasswordInput").value = "";
+  document.getElementById("userPasswordInput").disabled = false;
+  document.getElementById("userPasswordInput").placeholder = "\u8bf7\u8f93\u5165\u5bc6\u7801";
+  document.getElementById("userRoleInput").value = "user";
+  document.getElementById("userStatusInput").value = "active";
+  document.getElementById("userEditionInput").value = "pro";
+  document.getElementById("userMaxDevicesInput").value = "3";
+  document.getElementById("userExpiresAtInput").value = "";
   clearFormValidation(document.getElementById("userEditorPanel"));
+}
+
+async function loadUserDevices(userId, username = "") {
+  try {
+    hideUserEditor();
+    hidePasswordEditor();
+    currentDevicesUserId = userId;
+    const data = await requestJSON(`/api/users/${userId}/devices`);
+    const user = data?.user || {};
+    const devices = data?.devices || [];
+    document.getElementById("userDevicesTitle").textContent = `${username || user.username || "\u7528\u6237"} \u00b7 ${devices.length} \u53f0\u8bbe\u5907`;
+    const tbody = document.getElementById("userDevicesTableBody");
+    tbody.innerHTML = "";
+    if (!devices.length) {
+      tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-4">暂无登录设备</td></tr>';
+    } else {
+      devices.forEach((device) => {
+        const revoked = Boolean(device.revoked_at);
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td>${escapeHtml(device.device_name || "-")}</td>
+          <td class="font-monospace small">${escapeHtml(device.machine_id || "-")}</td>
+          <td>${escapeHtml([device.app_name, device.app_version].filter(Boolean).join(" ") || "-")}</td>
+          <td>${escapeHtml(device.logged_in_at || "-")}</td>
+          <td>${escapeHtml(device.last_verified_at || "-")}</td>
+          <td>${revoked ? '<span class="badge text-bg-secondary">已解绑</span>' : '<span class="badge text-bg-success">有效</span>'}</td>
+          <td class="text-end">
+            <button class="btn btn-sm btn-outline-warning" data-action="revoke-device" data-id="${device.id}" ${revoked ? "disabled" : ""}>解绑</button>
+          </td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+    document.getElementById("userDevicesPanel").hidden = false;
+  } catch (error) {
+    showToast(error.message, "danger");
+  }
+}
+
+function hideDevicesPanel() {
+  currentDevicesUserId = null;
+  const panel = document.getElementById("userDevicesPanel");
+  if (panel) panel.hidden = true;
+}
+
+async function handleUserDevicesTableClick(event) {
+  const button = event.target.closest("button[data-action='revoke-device']");
+  if (!button || !currentDevicesUserId) return;
+  const deviceId = Number(button.dataset.id);
+  if (!confirm("确定解绑这台设备吗？客户端下次联网校验后需要重新登录。")) return;
+  try {
+    await requestJSON(`/api/users/${currentDevicesUserId}/devices/${deviceId}/revoke`, { method: "POST" });
+    showToast("设备已解绑", "success");
+    await loadUserDevices(currentDevicesUserId);
+    await loadUsers();
+  } catch (error) {
+    showToast(error.message, "danger");
+  }
 }
 
 async function loadMinidramaSettings() {

@@ -645,6 +645,45 @@ def get_user_by_account(db: sqlite3.Connection, account: str) -> sqlite3.Row | N
     ).fetchone()
 
 
+def _users_has_email_column(db: sqlite3.Connection) -> bool:
+    try:
+        rows = db.execute("PRAGMA table_info(users)").fetchall()
+    except Exception:
+        return False
+    for row in rows:
+        if isinstance(row, sqlite3.Row):
+            name = str(row["name"] or "")
+        else:
+            name = str(row[1] if len(row) > 1 else "")
+        if name == "email":
+            return True
+    return False
+
+
+def _find_existing_registration_conflict(
+    db: sqlite3.Connection,
+    *,
+    username: str,
+    email: str,
+) -> str | None:
+    username = str(username or "").strip()
+    email = normalize_email(str(email or ""))
+    existing_username = db.execute(
+        "SELECT id FROM users WHERE username = ?",
+        (username,),
+    ).fetchone()
+    if existing_username:
+        return "用户名已存在"
+    if email and _users_has_email_column(db):
+        existing_email = db.execute(
+            "SELECT id FROM users WHERE lower(COALESCE(email, '')) = lower(?)",
+            (email,),
+        ).fetchone()
+        if existing_email:
+            return "邮箱已存在"
+    return None
+
+
 def current_active_user_device_count(db: sqlite3.Connection, user_id: int) -> int:
     row = db.execute(
         """
@@ -1889,16 +1928,16 @@ def activate_account_for_machine(
     if not ok:
         raise ValueError(error)
 
-    active_row = db.execute(
+    device_row = db.execute(
         """
         SELECT *
         FROM user_devices
-        WHERE user_id = ? AND machine_id = ? AND (revoked_at IS NULL OR revoked_at = '')
+        WHERE user_id = ? AND machine_id = ?
         """,
         (user_row["id"], machine_id),
     ).fetchone()
 
-    if not active_row:
+    if not device_row:
         active_count = current_active_user_device_count(db, user_row["id"])
         max_devices = int(user_row["max_devices"] or ACCOUNT_DEFAULT_MAX_DEVICES)
         if active_count >= max_devices:
@@ -1908,7 +1947,7 @@ def activate_account_for_machine(
     token_hash = hash_token(token)
     now_iso = datetime.datetime.now().isoformat(timespec="seconds")
 
-    if active_row:
+    if device_row:
         db.execute(
             """
             UPDATE user_devices
@@ -1922,7 +1961,7 @@ def activate_account_for_machine(
                 app_name or None,
                 app_version or None,
                 now_iso,
-                active_row["id"],
+                device_row["id"],
             ),
         )
     else:
@@ -1955,8 +1994,8 @@ def activate_account_for_machine(
         machine_id=machine_id,
         token=token,
         logged_in_at=(
-            str(active_row["logged_in_at"])
-            if active_row and active_row["logged_in_at"]
+            str(device_row["logged_in_at"])
+            if device_row and device_row["logged_in_at"]
             else now_iso
         ),
         last_verified_at=now_iso,
@@ -2133,6 +2172,7 @@ def monitor_dashboard():
 @admin_required
 def license_management():
     return render_template("licenses.html")
+
 
 @app.route("/users")
 @login_required
@@ -2321,16 +2361,13 @@ def client_register_account():
         return jsonify({"ok": False, "message": error}), 400
 
     db = get_db()
-    existing = db.execute(
-        """
-        SELECT id
-        FROM users
-        WHERE username = ? OR lower(COALESCE(email, '')) = lower(?)
-        """,
-        (payload["username"], payload["email"]),
-    ).fetchone()
-    if existing:
-        return jsonify({"ok": False, "message": "用户名或邮箱已存在"}), 400
+    conflict_message = _find_existing_registration_conflict(
+        db,
+        username=payload["username"],
+        email=payload["email"],
+    )
+    if conflict_message:
+        return jsonify({"ok": False, "message": conflict_message}), 400
 
     try:
         db.execute(
@@ -2348,7 +2385,12 @@ def client_register_account():
         )
         db.commit()
     except sqlite3.IntegrityError:
-        return jsonify({"ok": False, "message": "用户名或邮箱已存在"}), 400
+        conflict_message = _find_existing_registration_conflict(
+            db,
+            username=payload["username"],
+            email=payload["email"],
+        )
+        return jsonify({"ok": False, "message": conflict_message or "用户名或邮箱已存在"}), 400
 
     user_row = get_user_by_account(db, payload["username"])
     try:
@@ -2958,6 +3000,49 @@ def import_excel():
     )
 
 
+def sanitize_user_payload(data: dict, *, require_password: bool = False) -> tuple[dict, str | None]:
+    username = str(data.get("username") or "").strip()
+    email = normalize_email(str(data.get("email") or ""))
+    password = str(data.get("password") or "")
+    role = str(data.get("role") or "user").strip().lower()
+    status = str(data.get("status") or "active").strip().lower()
+    edition = str(data.get("edition") or "pro").strip().lower()
+    expires_at = str(data.get("expires_at") or "").strip()
+    try:
+        max_devices = int(data.get("max_devices") or ACCOUNT_DEFAULT_MAX_DEVICES)
+    except (TypeError, ValueError):
+        return {}, "最大设备数必须是正整数"
+    if not USERNAME_RE.match(username):
+        return {}, "用户名需为 2-30 位字母数字下划线，或使用邮箱格式"
+    if require_password and len(password) < 6:
+        return {}, "密码至少6位"
+    if email and not EMAIL_RE.match(email):
+        return {}, "邮箱格式不正确"
+    if role not in {"admin", "user"}:
+        role = "user"
+    if status not in {"active", "disabled"}:
+        return {}, "账号状态不正确"
+    if edition not in LICENSE_EDITION_VALUES:
+        edition = "pro"
+    if max_devices < 1:
+        return {}, "最大设备数必须是正整数"
+    if expires_at:
+        try:
+            datetime.datetime.fromisoformat(expires_at)
+        except ValueError:
+            return {}, "到期时间格式不正确"
+    return {
+        "username": username,
+        "email": email,
+        "password": password,
+        "role": role,
+        "status": status,
+        "edition": edition,
+        "max_devices": max_devices,
+        "expires_at": expires_at or None,
+    }, None
+
+
 @app.route("/api/users", methods=["GET"])
 @login_required
 @admin_required
@@ -2965,9 +3050,14 @@ def list_users():
     db = get_db()
     rows = db.execute(
         """
-        SELECT id, username, email, role, status, max_devices, edition, expires_at, created_at
-        FROM users
-        ORDER BY created_at DESC
+        SELECT
+            u.id, u.username, u.email, u.role, u.status, u.max_devices,
+            u.edition, u.expires_at, u.created_at,
+            (SELECT COUNT(*) FROM user_devices d WHERE d.user_id = u.id AND (d.revoked_at IS NULL OR d.revoked_at = '')) AS active_devices,
+            (SELECT COUNT(*) FROM user_devices d WHERE d.user_id = u.id) AS total_devices,
+            (SELECT COALESCE(MAX(d.last_verified_at), '') FROM user_devices d WHERE d.user_id = u.id) AS last_verified_at
+        FROM users u
+        ORDER BY u.created_at DESC
         """
     ).fetchall()
     return jsonify([dict(row) for row in rows])
@@ -2978,29 +3068,116 @@ def list_users():
 @admin_required
 def create_user():
     data = request.get_json(silent=True) or {}
-    username = (data.get("username") or "").strip()
-    email = normalize_email(str(data.get("email") or ""))
-    password = data.get("password") or ""
-    role = data.get("role") or "user"
-    if not username or not password:
-        return jsonify({"error": "用户名和密码不能为空"}), 400
-    if email and not EMAIL_RE.match(email):
-        return jsonify({"error": "invalid email"}), 400
-    if role not in {"admin", "user"}:
-        role = "user"
+    payload, error = sanitize_user_payload(data, require_password=True)
+    if error:
+        return jsonify({"error": error}), 400
     db = get_db()
     try:
         db.execute(
             """
-            INSERT INTO users (username, email, password_hash, role, status, max_devices, edition, updated_at)
-            VALUES (?, ?, ?, ?, 'active', ?, 'pro', CURRENT_TIMESTAMP)
+            INSERT INTO users (
+                username, email, password_hash, role, status,
+                max_devices, edition, expires_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             """,
-            (username, email or None, generate_password_hash(password), role, ACCOUNT_DEFAULT_MAX_DEVICES),
+            (
+                payload["username"],
+                payload["email"] or None,
+                generate_password_hash(payload["password"]),
+                payload["role"],
+                payload["status"],
+                payload["max_devices"],
+                payload["edition"],
+                payload["expires_at"],
+            ),
         )
         db.commit()
     except sqlite3.IntegrityError:
-        return jsonify({"error": "用户名已存在"}), 400
+        return jsonify({"error": "用户名或邮箱已存在"}), 400
     return jsonify({"message": "创建用户成功"}), 201
+
+
+@app.route("/api/users/<int:user_id>", methods=["PUT"])
+@login_required
+@admin_required
+def update_user(user_id: int):
+    data = request.get_json(silent=True) or {}
+    payload, error = sanitize_user_payload(data)
+    if error:
+        return jsonify({"error": error}), 400
+    if session.get("user_id") == user_id:
+        if payload["status"] != "active":
+            return jsonify({"error": "不能停用当前登录用户"}), 400
+        if payload["role"] != "admin":
+            return jsonify({"error": "不能将当前登录管理员改为普通用户"}), 400
+    db = get_db()
+    try:
+        result = db.execute(
+            """
+            UPDATE users
+            SET username = ?, email = ?, role = ?, status = ?, max_devices = ?,
+                edition = ?, expires_at = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (
+                payload["username"],
+                payload["email"] or None,
+                payload["role"],
+                payload["status"],
+                payload["max_devices"],
+                payload["edition"],
+                payload["expires_at"],
+                user_id,
+            ),
+        )
+        db.commit()
+    except sqlite3.IntegrityError:
+        return jsonify({"error": "用户名或邮箱已存在"}), 400
+    if result.rowcount == 0:
+        return jsonify({"error": "未找到该用户"}), 404
+    return jsonify({"message": "用户已更新"})
+
+
+@app.route("/api/users/<int:user_id>/devices", methods=["GET"])
+@login_required
+@admin_required
+def list_user_devices(user_id: int):
+    db = get_db()
+    user = db.execute(
+        "SELECT id, username, email, status, max_devices, edition, expires_at FROM users WHERE id = ?",
+        (user_id,),
+    ).fetchone()
+    if not user:
+        return jsonify({"error": "未找到该用户"}), 404
+    rows = db.execute(
+        """
+        SELECT id, machine_id, device_name, app_name, app_version, logged_in_at, last_verified_at, revoked_at
+        FROM user_devices
+        WHERE user_id = ?
+        ORDER BY COALESCE(last_verified_at, logged_in_at, '') DESC, id DESC
+        """,
+        (user_id,),
+    ).fetchall()
+    return jsonify({"user": dict(user), "devices": [dict(row) for row in rows]})
+
+
+@app.route("/api/users/<int:user_id>/devices/<int:device_id>/revoke", methods=["POST"])
+@login_required
+@admin_required
+def revoke_user_device(user_id: int, device_id: int):
+    db = get_db()
+    result = db.execute(
+        """
+        UPDATE user_devices
+        SET revoked_at = ?
+        WHERE id = ? AND user_id = ? AND (revoked_at IS NULL OR revoked_at = '')
+        """,
+        (now_iso(), device_id, user_id),
+    )
+    db.commit()
+    if result.rowcount == 0:
+        return jsonify({"error": "未找到可解绑的设备"}), 404
+    return jsonify({"message": "设备已解绑"})
 
 
 @app.route("/api/users/<int:user_id>", methods=["DELETE"])
