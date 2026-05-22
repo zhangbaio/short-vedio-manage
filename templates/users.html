@@ -66,12 +66,41 @@
                 </div>
               </div>
 
+              <div class="inline-editor" id="userPasswordPanel" hidden>
+                <div class="inline-editor-header">
+                  <div>
+                    <h3 class="h6 mb-1">重置密码</h3>
+                    <div class="text-muted small">当前用户：<span id="passwordTargetUser">-</span></div>
+                  </div>
+                  <button type="button" class="btn btn-sm btn-outline-secondary" id="cancelPasswordEditBtn">取消</button>
+                </div>
+                <div class="row g-3 align-items-end">
+                  <div class="col-lg-6">
+                    <label class="form-label" for="resetPasswordInput">新密码</label>
+                    <input type="text" class="form-control font-monospace" id="resetPasswordInput" autocomplete="off" />
+                    <div class="invalid-feedback">新密码至少6位</div>
+                  </div>
+                  <div class="col-lg-3">
+                    <button type="button" class="btn btn-outline-secondary w-100" id="generatePasswordBtn">生成密码</button>
+                  </div>
+                  <div class="col-lg-3">
+                    <button type="button" class="btn btn-primary w-100" id="savePasswordBtn">保存新密码</button>
+                  </div>
+                </div>
+                <div class="alert alert-success mt-3 mb-0" id="passwordResetResult" hidden>
+                  <div class="fw-semibold mb-1">新密码已设置</div>
+                  <div class="font-monospace" id="passwordResetValue"></div>
+                </div>
+                <div class="form-text mt-2">系统只保存加密后的密码哈希，旧密码无法查看；这里显示的是本次重置后的新密码。</div>
+              </div>
+
               <div class="table-responsive">
                 <table class="table table-hover align-middle mb-0">
                   <thead>
                     <tr>
                       <th>用户名</th>
                       <th>角色</th>
+                      <th>密码</th>
                       <th class="text-end">操作</th>
                     </tr>
                   </thead>

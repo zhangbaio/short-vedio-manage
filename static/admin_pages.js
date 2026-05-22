@@ -1,6 +1,7 @@
 let minidramaSettingsState = { apps: [], editingAppId: "" };
 let kuaishouSettingsState = { apps: [], editingAppId: "" };
 let currentRemoteConversationId = null;
+let passwordTargetUserId = null;
 
 document.addEventListener("DOMContentLoaded", () => {
   cacheDefaultFeedbackMessages();
@@ -14,6 +15,9 @@ function initUsersPage() {
   document.getElementById("addUserBtn")?.addEventListener("click", showUserEditor);
   document.getElementById("cancelUserEditBtn")?.addEventListener("click", hideUserEditor);
   document.getElementById("createUserBtn")?.addEventListener("click", createUser);
+  document.getElementById("cancelPasswordEditBtn")?.addEventListener("click", hidePasswordEditor);
+  document.getElementById("generatePasswordBtn")?.addEventListener("click", fillGeneratedPassword);
+  document.getElementById("savePasswordBtn")?.addEventListener("click", resetUserPassword);
   document.getElementById("refreshUsersBtn")?.addEventListener("click", loadUsers);
   document.getElementById("userTableBody")?.addEventListener("click", handleUserTableClick);
   loadUsers();
@@ -53,7 +57,7 @@ async function loadUsers() {
     const tbody = document.getElementById("userTableBody");
     tbody.innerHTML = "";
     if (!users.length) {
-      tbody.innerHTML = '<tr><td colspan="3" class="text-center text-muted py-4">暂无用户</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted py-4">暂无用户</td></tr>';
       return;
     }
     users.forEach((user) => {
@@ -61,7 +65,9 @@ async function loadUsers() {
       tr.innerHTML = `
         <td>${escapeHtml(user.username)}</td>
         <td>${user.role === "admin" ? "管理员" : "普通用户"}</td>
+        <td><span class="text-muted small">已加密保存</span></td>
         <td class="text-end">
+          <button class="btn btn-sm btn-outline-primary" data-action="reset-password" data-id="${user.id}" data-username="${escapeHtml(user.username)}">重置/查看新密码</button>
           <button class="btn btn-sm btn-outline-danger" data-action="delete-user" data-id="${user.id}" data-username="${escapeHtml(user.username)}" ${user.username === window.currentUser.username ? "disabled" : ""}>删除</button>
         </td>
       `;
@@ -74,6 +80,7 @@ async function loadUsers() {
 
 function showUserEditor() {
   resetUserForm();
+  hidePasswordEditor();
   const panel = document.getElementById("userEditorPanel");
   panel.hidden = false;
   document.getElementById("userNameInput")?.focus();
@@ -82,6 +89,41 @@ function showUserEditor() {
 function hideUserEditor() {
   resetUserForm();
   document.getElementById("userEditorPanel").hidden = true;
+}
+
+function showPasswordEditor(userId, username) {
+  hideUserEditor();
+  passwordTargetUserId = userId;
+  document.getElementById("passwordTargetUser").textContent = username || "-";
+  document.getElementById("resetPasswordInput").value = "";
+  document.getElementById("passwordResetValue").textContent = "";
+  document.getElementById("passwordResetResult").hidden = true;
+  clearFormValidation(document.getElementById("userPasswordPanel"));
+  document.getElementById("userPasswordPanel").hidden = false;
+  document.getElementById("resetPasswordInput")?.focus();
+}
+
+function hidePasswordEditor() {
+  passwordTargetUserId = null;
+  const panel = document.getElementById("userPasswordPanel");
+  if (!panel) return;
+  document.getElementById("resetPasswordInput").value = "";
+  document.getElementById("passwordResetValue").textContent = "";
+  document.getElementById("passwordResetResult").hidden = true;
+  clearFormValidation(panel);
+  panel.hidden = true;
+}
+
+function fillGeneratedPassword() {
+  document.getElementById("resetPasswordInput").value = generateReadablePassword();
+  document.getElementById("resetPasswordInput").focus();
+}
+
+function generateReadablePassword() {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+  const bytes = new Uint32Array(12);
+  window.crypto.getRandomValues(bytes);
+  return Array.from(bytes, (value) => chars[value % chars.length]).join("");
 }
 
 async function createUser() {
@@ -124,9 +166,14 @@ async function createUser() {
 
 async function handleUserTableClick(event) {
   const button = event.target.closest("button[data-action]");
-  if (!button || button.dataset.action !== "delete-user") return;
+  if (!button) return;
   const id = Number(button.dataset.id);
   const username = button.dataset.username;
+  if (button.dataset.action === "reset-password") {
+    showPasswordEditor(id, username);
+    return;
+  }
+  if (button.dataset.action !== "delete-user") return;
   if (!confirm(`确定删除用户 ${username} 吗？`)) return;
   try {
     await requestJSON(`/api/users/${id}`, { method: "DELETE" });
@@ -137,10 +184,32 @@ async function handleUserTableClick(event) {
   }
 }
 
+async function resetUserPassword() {
+  if (!passwordTargetUserId) return;
+  const input = document.getElementById("resetPasswordInput");
+  const newPassword = input.value.trim();
+  if (!validateField(input, () => newPassword.length >= 6)) {
+    input.focus();
+    return;
+  }
+  try {
+    await requestJSON(`/api/users/${passwordTargetUserId}/password`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ new_password: newPassword }),
+    });
+    document.getElementById("passwordResetValue").textContent = newPassword;
+    document.getElementById("passwordResetResult").hidden = false;
+    showToast("密码已更新", "success");
+  } catch (error) {
+    showToast(error.message, "danger");
+  }
+}
+
 function resetUserForm() {
   document.getElementById("userNameInput").value = "";
   document.getElementById("userPasswordInput").value = "";
-  clearFormValidation(document.querySelector(".app-content"));
+  clearFormValidation(document.getElementById("userEditorPanel"));
 }
 
 async function loadMinidramaSettings() {
