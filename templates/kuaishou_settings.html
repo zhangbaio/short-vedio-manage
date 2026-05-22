@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>快手配置 - 视频号短剧管理系统</title>
+    <link href="https://cdn.bootcdn.net/ajax/libs/bootstrap/5.3.2/css/bootstrap.min.css" rel="stylesheet" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+  </head>
+  <body class="app-body">
+    {% set active_page = 'kuaishou_settings' %}
+    <div class="app-shell">
+      {% include "partials/sidebar.html" %}
+      <div class="app-main">
+        <header class="app-topbar">
+          <div>
+            <h1 class="app-page-title">快手配置</h1>
+            <p class="app-page-subtitle">维护快手 AppID、Advertiser ID 与 Token 状态</p>
+          </div>
+          <div class="app-userbar">
+            <span class="app-user-chip">{{ session.username }} · {{ session.role }}</span>
+            <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('logout') }}">退出</a>
+          </div>
+        </header>
+
+        <main class="app-content app-content-fluid">
+          <div class="card list-page-card">
+            <div class="card-body">
+              <div class="list-page-toolbar">
+                <div>
+                  <h2 class="h5 mb-1">快手配置列表</h2>
+                  <div class="text-muted small">维护快手 AppID、Advertiser ID 与 Token 状态</div>
+                </div>
+                <div class="d-flex gap-2">
+                  <button type="button" class="btn btn-primary" id="newKuaishouSettingsBtn">新增配置</button>
+                  <button class="btn btn-outline-secondary" id="refreshKuaishouSettingsBtn">刷新</button>
+                </div>
+              </div>
+
+              <div class="inline-editor" id="kuaishouEditorPanel" hidden>
+                <div class="inline-editor-header">
+                  <h3 class="h6 mb-0" id="kuaishouEditorTitle">新增配置</h3>
+                  <button type="button" class="btn btn-sm btn-outline-secondary" id="cancelKuaishouSettingsBtn">取消</button>
+                </div>
+                <form id="kuaishouSettingsForm">
+                  <div class="row g-3">
+                    <div class="col-lg-2">
+                      <label class="form-label" for="kuaishouNameInput">配置名称</label>
+                      <input type="text" class="form-control" id="kuaishouNameInput" autocomplete="off" placeholder="例如：快手主账号" />
+                    </div>
+                    <div class="col-lg-3">
+                      <label class="form-label" for="kuaishouAppIdInput">快手 AppID</label>
+                      <input type="text" class="form-control font-monospace" id="kuaishouAppIdInput" autocomplete="off" />
+                      <div class="invalid-feedback">快手 AppID 不能为空</div>
+                    </div>
+                    <div class="col-lg-2">
+                      <label class="form-label" for="kuaishouAdvertiserIdInput">Advertiser ID</label>
+                      <input type="text" class="form-control font-monospace" id="kuaishouAdvertiserIdInput" autocomplete="off" />
+                    </div>
+                    <div class="col-lg-3">
+                      <label class="form-label" for="kuaishouAppSecretInput">快手 AppSecret</label>
+                      <input type="password" class="form-control font-monospace" id="kuaishouAppSecretInput" autocomplete="new-password" placeholder="留空则保持当前密钥" />
+                      <div class="invalid-feedback">首次配置时 AppSecret 不能为空</div>
+                    </div>
+                    <div class="col-lg-2 d-flex align-items-end gap-3">
+                      <div class="form-check mb-2">
+                        <input class="form-check-input" type="checkbox" id="kuaishouDefaultInput" />
+                        <label class="form-check-label" for="kuaishouDefaultInput">默认</label>
+                      </div>
+                      <button type="button" class="btn btn-primary ms-auto" id="saveKuaishouSettingsBtn">保存</button>
+                    </div>
+                  </div>
+                  <div class="small text-muted mt-3" id="kuaishouSettingsMeta"></div>
+                </form>
+              </div>
+
+              <div class="table-responsive">
+                <table class="table table-sm align-middle mb-0">
+                  <thead>
+                    <tr>
+                      <th>名称</th>
+                      <th>AppID</th>
+                      <th>Advertiser ID</th>
+                      <th>AppSecret</th>
+                      <th>Token 状态</th>
+                      <th>更新时间</th>
+                      <th class="text-end">操作</th>
+                    </tr>
+                  </thead>
+                  <tbody id="kuaishouSettingsTableBody">
+                    <tr><td colspan="7" class="text-muted small">暂无快手配置</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </main>
+      </div>
+    </div>
+
+    <script>
+      window.currentUser = {
+        username: {{ session.username|tojson }},
+        role: {{ session.role|tojson }}
+      };
+      window.adminPage = "kuaishou";
+    </script>
+    <div class="toast-container position-fixed top-0 end-0 p-3" style="z-index:9999" id="toastContainer"></div>
+    <script src="https://cdn.bootcdn.net/ajax/libs/bootstrap/5.3.2/js/bootstrap.bundle.min.js"></script>
+    <script src="{{ url_for('static', filename='admin_pages.js') }}"></script>
+  </body>
+</html>

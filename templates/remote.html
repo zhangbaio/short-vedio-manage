@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>远程控制 - 视频号短剧管理系统</title>
+    <link href="https://cdn.bootcdn.net/ajax/libs/bootstrap/5.3.2/css/bootstrap.min.css" rel="stylesheet" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+  </head>
+  <body class="app-body">
+    {% set active_page = 'remote' %}
+    <div class="app-shell">
+      {% include "partials/sidebar.html" %}
+      <div class="app-main">
+        <header class="app-topbar">
+          <div>
+            <h1 class="app-page-title">远程控制</h1>
+            <p class="app-page-subtitle">管理客户端会话，发送批量导入与执行命令</p>
+          </div>
+          <div class="app-userbar">
+            <span class="app-user-chip">{{ session.username }} · {{ session.role }}</span>
+            <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('logout') }}">退出</a>
+          </div>
+        </header>
+
+        <main class="app-content">
+          <div class="row g-4">
+            <div class="col-xl-4">
+              <div class="card mb-4">
+                <div class="card-body">
+                  <h2 class="h5 mb-3">客户端</h2>
+                  <label class="form-label" for="remoteClientSelect">选择客户端</label>
+                  <div class="d-flex gap-2 mb-3">
+                    <select id="remoteClientSelect" class="form-select"></select>
+                    <button class="btn btn-outline-secondary" id="refreshRemoteClientsBtn">刷新</button>
+                  </div>
+                  <label class="form-label" for="remoteClientNameInput">新客户端名称</label>
+                  <div class="d-flex gap-2">
+                    <input type="text" class="form-control" id="remoteClientNameInput" placeholder="例如：剪辑工作站 A" />
+                    <button class="btn btn-primary" id="createRemoteClientBtn">创建设备</button>
+                  </div>
+                  <div class="mt-3 small text-muted" id="remoteClientSecretBox" hidden>
+                    <div>客户端 ID：<code id="remoteClientIdValue"></code></div>
+                    <div class="mt-1">客户端 Token：<code id="remoteClientTokenValue"></code></div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="card">
+                <div class="card-body">
+                  <h2 class="h5 mb-3">执行策略</h2>
+                  <div class="mb-3">
+                    <label class="form-label" for="remoteWorkspacePathInput">工作目录</label>
+                    <input class="form-control" id="remoteWorkspacePathInput" placeholder="可选，例如 D:/drama-workspace" />
+                  </div>
+                  <div class="row g-3">
+                    <div class="col-md-6">
+                      <label class="form-label" for="remoteOnProjectErrorSelect">失败策略</label>
+                      <select class="form-select" id="remoteOnProjectErrorSelect">
+                        <option value="skip" selected>失败后继续</option>
+                        <option value="stop">失败后停止</option>
+                      </select>
+                    </div>
+                    <div class="col-md-6">
+                      <label class="form-label" for="remoteParallelProjectsSelect">并发项目数</label>
+                      <select class="form-select" id="remoteParallelProjectsSelect">
+                        <option value="1">1</option>
+                        <option value="2" selected>2</option>
+                        <option value="3">3</option>
+                        <option value="4">4</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="col-xl-8">
+              <div class="card mb-4">
+                <div class="card-body">
+                  <h2 class="h5 mb-3">会话消息</h2>
+                  <div class="remote-messages-box" id="remoteMessagesBox"></div>
+                </div>
+              </div>
+
+              <div class="card">
+                <div class="card-body">
+                  <h2 class="h5 mb-3">发送导入命令</h2>
+                  <div class="mb-3">
+                    <label class="form-label" for="remoteDramaTitlesInput">批量导入短剧名</label>
+                    <textarea class="form-control" id="remoteDramaTitlesInput" rows="7" placeholder="一行一个短剧名"></textarea>
+                  </div>
+                  <div class="mb-3">
+                    <label class="form-label">执行步骤</label>
+                    <div class="remote-step-grid">
+                      <label class="form-check">
+                        <input class="form-check-input remote-step-checkbox" type="checkbox" id="remoteStepDownload" value="download" checked />
+                        <span class="form-check-label">下载剧集</span>
+                      </label>
+                      <label class="form-check">
+                        <input class="form-check-input remote-step-checkbox" type="checkbox" id="remoteStepRewriteInfo" value="rewrite_info" />
+                        <span class="form-check-label">改写信息</span>
+                      </label>
+                      <label class="form-check">
+                        <input class="form-check-input remote-step-checkbox" type="checkbox" id="remoteStepTranscode" value="material_transcode" />
+                        <span class="form-check-label">素材转码</span>
+                      </label>
+                      <label class="form-check">
+                        <input class="form-check-input remote-step-checkbox" type="checkbox" id="remoteStepAutoRepair" value="material_auto_repair" />
+                        <span class="form-check-label">一键修复</span>
+                      </label>
+                      <label class="form-check">
+                        <input class="form-check-input remote-step-checkbox" type="checkbox" id="remoteStepAutoFillInfo" value="auto_fill_info" />
+                        <span class="form-check-label">补齐字段</span>
+                      </label>
+                      <label class="form-check">
+                        <input class="form-check-input remote-step-checkbox" type="checkbox" id="remoteStepGeneratePoster" value="generate_poster" />
+                        <span class="form-check-label">生成海报</span>
+                      </label>
+                      <label class="form-check">
+                        <input class="form-check-input remote-step-checkbox" type="checkbox" id="remoteStepGenerateMaterials" value="generate_materials" />
+                        <span class="form-check-label">生成派生物料</span>
+                      </label>
+                      <label class="form-check">
+                        <input class="form-check-input remote-step-checkbox" type="checkbox" id="remoteStepValidate" value="material_validate" />
+                        <span class="form-check-label">素材校验</span>
+                      </label>
+                      <label class="form-check">
+                        <input class="form-check-input remote-step-checkbox" type="checkbox" id="remoteStepUploadSeries" value="upload_series" checked />
+                        <span class="form-check-label">上传剧集</span>
+                      </label>
+                      <label class="form-check">
+                        <input class="form-check-input remote-step-checkbox" type="checkbox" id="remoteStepPublishMaterials" value="publish_materials" />
+                        <span class="form-check-label">发表素材</span>
+                      </label>
+                    </div>
+                  </div>
+                  <div class="d-flex flex-wrap justify-content-between align-items-center gap-3">
+                    <div class="d-grid gap-2">
+                      <label class="form-check mb-0">
+                        <input class="form-check-input" type="checkbox" id="remoteSyncDownloadCheckbox" checked />
+                        <span class="form-check-label">同步加入下载队列</span>
+                      </label>
+                      <label class="form-check mb-0">
+                        <input class="form-check-input" type="checkbox" id="remoteAutoRunCheckbox" checked />
+                        <span class="form-check-label">导入后立即执行任务队列</span>
+                      </label>
+                    </div>
+                    <button class="btn btn-success" id="sendRemoteImportBtn">发送导入命令</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </main>
+      </div>
+    </div>
+
+    <script>
+      window.currentUser = {
+        username: {{ session.username|tojson }},
+        role: {{ session.role|tojson }}
+      };
+      window.adminPage = "remote";
+    </script>
+    <div class="toast-container position-fixed top-0 end-0 p-3" style="z-index:9999" id="toastContainer"></div>
+    <script src="https://cdn.bootcdn.net/ajax/libs/bootstrap/5.3.2/js/bootstrap.bundle.min.js"></script>
+    <script src="{{ url_for('static', filename='admin_pages.js') }}"></script>
+  </body>
+</html>

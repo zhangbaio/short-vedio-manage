@@ -3,30 +3,31 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>短剧监控屏</title>
+    <title>数据监控 - 视频号短剧管理系统</title>
     <link
       href="https://cdn.bootcdn.net/ajax/libs/bootstrap/5.3.2/css/bootstrap.min.css"
       rel="stylesheet"
     />
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
   </head>
-  <body>
-    <nav class="navbar navbar-dark navbar-expand-lg bg-dark">
-      <div class="container-fluid">
-        <a class="navbar-brand" href="{{ url_for('index') }}">视频号短剧管理系统</a>
-        <div class="d-flex align-items-center gap-2">
-          <a class="btn btn-outline-light btn-sm" href="{{ url_for('index') }}">返回列表</a>
-          <a class="btn btn-outline-light btn-sm" href="{{ url_for('logout') }}">退出</a>
-        </div>
-      </div>
-    </nav>
+  <body class="app-body">
+    {% set active_page = 'monitor' %}
+    <div class="app-shell">
+      {% include "partials/sidebar.html" %}
+      <div class="app-main">
+        <header class="app-topbar">
+          <div>
+            <h1 class="app-page-title">数据监控</h1>
+            <p class="app-page-subtitle">按录入或上线日期查看短剧增长、审核和上传趋势</p>
+          </div>
+          <div class="app-userbar">
+            <span class="app-user-chip">{{ session.username }} · {{ session.role }}</span>
+            <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('logout') }}">退出</a>
+          </div>
+        </header>
 
-    <div class="container py-4 monitor-page">
-      <div class="d-flex flex-wrap align-items-end justify-content-between gap-3 mb-4">
-        <div>
-          <h1 class="monitor-title mb-1">短剧监控屏</h1>
-          <div class="text-secondary">统计每日新增、审核通过、上传通过趋势</div>
-        </div>
+        <main class="app-content monitor-page">
+      <div class="d-flex flex-wrap justify-content-end gap-3 mb-3">
         <div class="monitor-last-updated text-secondary" id="monitorLastUpdated">--</div>
       </div>
 
@@ -137,6 +138,8 @@
             </table>
           </div>
         </div>
+      </div>
+        </main>
       </div>
     </div>
 

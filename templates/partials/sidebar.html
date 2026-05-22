@@ -1,0 +1,53 @@
+<aside class="app-sidebar">
+  <a class="app-brand" href="{{ url_for('index') }}" aria-label="视频号短剧管理系统">
+    <span class="app-brand-mark">短</span>
+    <span class="app-brand-text">
+      <strong>短剧管理</strong>
+      <small>运营工作台</small>
+    </span>
+  </a>
+
+  <nav class="app-nav" aria-label="主导航">
+    <a class="app-nav-link {% if active_page == 'dramas' %}active{% endif %}" href="{{ url_for('index') }}">
+      <span class="app-nav-icon">剧</span>
+      <span>短剧管理</span>
+    </a>
+    <a class="app-nav-link {% if active_page == 'monitor' %}active{% endif %}" href="{{ url_for('monitor_dashboard') }}">
+      <span class="app-nav-icon">图</span>
+      <span>数据监控</span>
+    </a>
+    {% if session.role == 'admin' %}
+    <a class="app-nav-link {% if active_page == 'licenses' %}active{% endif %}" href="{{ url_for('license_management') }}">
+      <span class="app-nav-icon">权</span>
+      <span>授权码管理</span>
+    </a>
+    {% endif %}
+  </nav>
+
+  {% if session.role == 'admin' %}
+  <div class="app-sidebar-section">
+    <div class="app-sidebar-title">快捷管理</div>
+    <a class="app-nav-link {% if active_page == 'users' %}active{% endif %}" href="{{ url_for('user_management') }}">
+      <span class="app-nav-icon">人</span>
+      <span>用户管理</span>
+    </a>
+    <a class="app-nav-link {% if active_page == 'minidrama_settings' %}active{% endif %}" href="{{ url_for('minidrama_settings_page') }}">
+      <span class="app-nav-icon">微</span>
+      <span>小程序配置</span>
+    </a>
+    <a class="app-nav-link {% if active_page == 'kuaishou_settings' %}active{% endif %}" href="{{ url_for('kuaishou_settings_page') }}">
+      <span class="app-nav-icon">快</span>
+      <span>快手配置</span>
+    </a>
+    <a class="app-nav-link {% if active_page == 'remote' %}active{% endif %}" href="{{ url_for('remote_management') }}">
+      <span class="app-nav-icon">远</span>
+      <span>远程控制</span>
+      <span
+        id="sidebarRemoteUnreadBadge"
+        class="app-nav-badge"
+        hidden
+      >0</span>
+    </a>
+  </div>
+  {% endif %}
+</aside>

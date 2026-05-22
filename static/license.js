@@ -52,6 +52,8 @@ function bindLicenseEvents() {
   });
   document.getElementById("refreshLicenseBtn").addEventListener("click", () => loadLicenses({ preserveSelection: true }));
   document.getElementById("exportLicenseBtn").addEventListener("click", exportLicenses);
+  document.getElementById("addLicenseBtn").addEventListener("click", showLicenseEditor);
+  document.getElementById("cancelLicenseEditBtn").addEventListener("click", hideLicenseEditor);
   document.getElementById("licenseFirstPageBtn").addEventListener("click", () => changeLicensePage(1));
   document.getElementById("licensePrevPageBtn").addEventListener("click", () => changeLicensePage(licenseState.page - 1));
   document.getElementById("licenseNextPageBtn").addEventListener("click", () => changeLicensePage(licenseState.page + 1));
@@ -68,6 +70,17 @@ function bindLicenseEvents() {
   document.getElementById("batchDeleteLicenseBtn").addEventListener("click", batchDeleteLicenses);
   document.getElementById("batchRestoreLicenseBtn").addEventListener("click", batchRestoreLicenses);
   document.querySelector("#licenseTableBody")?.closest("table")?.querySelector("thead")?.addEventListener("click", handleLicenseSortClick);
+}
+
+function showLicenseEditor() {
+  resetLicenseForm();
+  document.getElementById("licenseEditorPanel").hidden = false;
+  document.getElementById("licenseeInput").focus();
+}
+
+function hideLicenseEditor() {
+  resetLicenseForm();
+  document.getElementById("licenseEditorPanel").hidden = true;
 }
 
 function updateLicenseFiltersFromInputs() {

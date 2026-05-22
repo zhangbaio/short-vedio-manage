@@ -2089,6 +2089,33 @@ def monitor_dashboard():
 def license_management():
     return render_template("licenses.html")
 
+@app.route("/users")
+@login_required
+@admin_required
+def user_management():
+    return render_template("users.html")
+
+
+@app.route("/settings/minidrama")
+@login_required
+@admin_required
+def minidrama_settings_page():
+    return render_template("minidrama_settings.html")
+
+
+@app.route("/settings/kuaishou")
+@login_required
+@admin_required
+def kuaishou_settings_page():
+    return render_template("kuaishou_settings.html")
+
+
+@app.route("/remote")
+@login_required
+@admin_required
+def remote_management():
+    return render_template("remote.html")
+
 
 @app.route("/api/me", methods=["GET"])
 @login_required

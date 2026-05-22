@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>用户管理 - 视频号短剧管理系统</title>
+    <link href="https://cdn.bootcdn.net/ajax/libs/bootstrap/5.3.2/css/bootstrap.min.css" rel="stylesheet" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+  </head>
+  <body class="app-body">
+    {% set active_page = 'users' %}
+    <div class="app-shell">
+      {% include "partials/sidebar.html" %}
+      <div class="app-main">
+        <header class="app-topbar">
+          <div>
+            <h1 class="app-page-title">用户管理</h1>
+            <p class="app-page-subtitle">创建后台用户并维护角色权限</p>
+          </div>
+          <div class="app-userbar">
+            <span class="app-user-chip">{{ session.username }} · {{ session.role }}</span>
+            <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('logout') }}">退出</a>
+          </div>
+        </header>
+
+        <main class="app-content app-content-fluid">
+          <div class="card list-page-card">
+            <div class="card-body">
+              <div class="list-page-toolbar">
+                <div>
+                  <h2 class="h5 mb-1">用户列表</h2>
+                  <div class="text-muted small">管理后台登录账号和角色权限</div>
+                </div>
+                <div class="d-flex gap-2">
+                  <button class="btn btn-primary" id="addUserBtn">新增用户</button>
+                  <button class="btn btn-outline-secondary" id="refreshUsersBtn">刷新</button>
+                </div>
+              </div>
+
+              <div class="inline-editor" id="userEditorPanel" hidden>
+                <div class="inline-editor-header">
+                  <h3 class="h6 mb-0">新增用户</h3>
+                  <button type="button" class="btn btn-sm btn-outline-secondary" id="cancelUserEditBtn">取消</button>
+                </div>
+                <div class="row g-3 align-items-end">
+                  <div class="col-lg-4">
+                    <label class="form-label" for="userNameInput">用户名</label>
+                    <input type="text" class="form-control" id="userNameInput" autocomplete="off" />
+                    <div class="invalid-feedback">用户名不能为空，2-30位字母数字下划线</div>
+                  </div>
+                  <div class="col-lg-4">
+                    <label class="form-label" for="userPasswordInput">密码</label>
+                    <input type="password" class="form-control" id="userPasswordInput" autocomplete="new-password" />
+                    <div class="invalid-feedback">密码不能为空，至少6位</div>
+                  </div>
+                  <div class="col-lg-2">
+                    <label class="form-label" for="userRoleInput">角色</label>
+                    <select class="form-select" id="userRoleInput">
+                      <option value="user">普通用户</option>
+                      <option value="admin">管理员</option>
+                    </select>
+                  </div>
+                  <div class="col-lg-2">
+                    <button class="btn btn-primary w-100" id="createUserBtn">保存</button>
+                  </div>
+                </div>
+              </div>
+
+              <div class="table-responsive">
+                <table class="table table-hover align-middle mb-0">
+                  <thead>
+                    <tr>
+                      <th>用户名</th>
+                      <th>角色</th>
+                      <th class="text-end">操作</th>
+                    </tr>
+                  </thead>
+                  <tbody id="userTableBody"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </main>
+      </div>
+    </div>
+
+    <script>
+      window.currentUser = {
+        username: {{ session.username|tojson }},
+        role: {{ session.role|tojson }}
+      };
+      window.adminPage = "users";
+    </script>
+    <div class="toast-container position-fixed top-0 end-0 p-3" style="z-index:9999" id="toastContainer"></div>
+    <script src="https://cdn.bootcdn.net/ajax/libs/bootstrap/5.3.2/js/bootstrap.bundle.min.js"></script>
+    <script src="{{ url_for('static', filename='admin_pages.js') }}"></script>
+  </body>
+</html>

@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>小程序配置 - 视频号短剧管理系统</title>
+    <link href="https://cdn.bootcdn.net/ajax/libs/bootstrap/5.3.2/css/bootstrap.min.css" rel="stylesheet" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+  </head>
+  <body class="app-body">
+    {% set active_page = 'minidrama_settings' %}
+    <div class="app-shell">
+      {% include "partials/sidebar.html" %}
+      <div class="app-main">
+        <header class="app-topbar">
+          <div>
+            <h1 class="app-page-title">小程序配置</h1>
+            <p class="app-page-subtitle">维护多个小程序 AppID 与 AppSecret</p>
+          </div>
+          <div class="app-userbar">
+            <span class="app-user-chip">{{ session.username }} · {{ session.role }}</span>
+            <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('logout') }}">退出</a>
+          </div>
+        </header>
+
+        <main class="app-content app-content-fluid">
+          <div class="card list-page-card">
+            <div class="card-body">
+              <div class="list-page-toolbar">
+                <div>
+                  <h2 class="h5 mb-1">小程序配置列表</h2>
+                  <div class="text-muted small">维护多个小程序 AppID 与 AppSecret</div>
+                </div>
+                <div class="d-flex gap-2">
+                  <button type="button" class="btn btn-primary" id="newMinidramaSettingsBtn">新增配置</button>
+                  <button class="btn btn-outline-secondary" id="refreshMinidramaSettingsBtn">刷新</button>
+                </div>
+              </div>
+
+              <div class="inline-editor" id="minidramaEditorPanel" hidden>
+                <div class="inline-editor-header">
+                  <h3 class="h6 mb-0" id="minidramaEditorTitle">新增配置</h3>
+                  <button type="button" class="btn btn-sm btn-outline-secondary" id="cancelMinidramaSettingsBtn">取消</button>
+                </div>
+                <form id="minidramaSettingsForm">
+                  <div class="row g-3">
+                    <div class="col-lg-3">
+                      <label class="form-label" for="minidramaNameInput">配置名称</label>
+                      <input type="text" class="form-control" id="minidramaNameInput" autocomplete="off" placeholder="例如：主小程序" />
+                    </div>
+                    <div class="col-lg-3">
+                      <label class="form-label" for="minidramaAppIdInput">小程序 AppID</label>
+                      <input type="text" class="form-control font-monospace" id="minidramaAppIdInput" autocomplete="off" />
+                      <div class="invalid-feedback">小程序 AppID 不能为空</div>
+                    </div>
+                    <div class="col-lg-3">
+                      <label class="form-label" for="minidramaAppSecretInput">小程序 AppSecret</label>
+                      <input type="password" class="form-control font-monospace" id="minidramaAppSecretInput" autocomplete="new-password" placeholder="留空则保持当前密钥" />
+                      <div class="invalid-feedback">首次配置时 AppSecret 不能为空</div>
+                    </div>
+                    <div class="col-lg-3 d-flex align-items-end gap-3">
+                      <div class="form-check mb-2">
+                        <input class="form-check-input" type="checkbox" id="minidramaDefaultInput" />
+                        <label class="form-check-label" for="minidramaDefaultInput">设为默认</label>
+                      </div>
+                      <button type="button" class="btn btn-primary ms-auto" id="saveMinidramaSettingsBtn">保存</button>
+                    </div>
+                  </div>
+                  <div class="small text-muted mt-3" id="minidramaSettingsMeta"></div>
+                </form>
+              </div>
+
+              <div class="table-responsive">
+                <table class="table table-sm align-middle mb-0">
+                  <thead>
+                    <tr>
+                      <th>名称</th>
+                      <th>AppID</th>
+                      <th>AppSecret</th>
+                      <th>默认</th>
+                      <th>更新时间</th>
+                      <th class="text-end">操作</th>
+                    </tr>
+                  </thead>
+                  <tbody id="minidramaSettingsTableBody">
+                    <tr><td colspan="6" class="text-muted small">暂无小程序配置</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </main>
+      </div>
+    </div>
+
+    <script>
+      window.currentUser = {
+        username: {{ session.username|tojson }},
+        role: {{ session.role|tojson }}
+      };
+      window.adminPage = "minidrama";
+    </script>
+    <div class="toast-container position-fixed top-0 end-0 p-3" style="z-index:9999" id="toastContainer"></div>
+    <script src="https://cdn.bootcdn.net/ajax/libs/bootstrap/5.3.2/js/bootstrap.bundle.min.js"></script>
+    <script src="{{ url_for('static', filename='admin_pages.js') }}"></script>
+  </body>
+</html>

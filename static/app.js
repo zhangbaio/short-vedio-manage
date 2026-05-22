@@ -48,9 +48,11 @@ async function initPage() {
   cacheDefaultFeedbackMessages();
   applyRoleVisibility();
   bindEvents();
+  bindSidebarActions();
   await Promise.all([fetchCompanies(), loadDramas()]);
   updateSortIcons();
   startRemoteNotificationPolling();
+  openSidebarActionFromHash();
 }
 
 document.addEventListener("DOMContentLoaded", initPage);
@@ -69,8 +71,10 @@ function clearStaleModalBackdrop() {
 
 function applyRoleVisibility() {
   if (window.currentUser?.role === "admin") {
-    document.getElementById("adminActions").hidden = false;
-    document.getElementById("adminRemoteActions").hidden = false;
+    const adminActions = document.getElementById("adminActions");
+    const adminRemoteActions = document.getElementById("adminRemoteActions");
+    if (adminActions) adminActions.hidden = false;
+    if (adminRemoteActions) adminRemoteActions.hidden = false;
   }
 }
 
@@ -166,6 +170,33 @@ function bindEvents() {
     updateSortIcons();
     loadDramas();
   });
+}
+
+function bindSidebarActions() {
+  document.querySelectorAll("[data-sidebar-action]").forEach((entry) => {
+    entry.addEventListener("click", (event) => {
+      event.preventDefault();
+      runSidebarAction(entry.dataset.sidebarAction);
+    });
+  });
+}
+
+function openSidebarActionFromHash() {
+  const action = window.location.hash.replace(/^#/, "");
+  if (!action) return;
+  runSidebarAction(action);
+  history.replaceState(null, "", window.location.pathname + window.location.search);
+}
+
+function runSidebarAction(action) {
+  const actionTargets = {
+    users: "userManageBtn",
+    minidrama: "minidramaSettingsBtn",
+    kuaishou: "kuaishouSettingsBtn",
+    remote: "remoteManageBtn",
+  };
+  const target = document.getElementById(actionTargets[action]);
+  target?.click();
 }
 
 function updateFiltersFromInputs() {
@@ -1557,8 +1588,8 @@ function startRemoteNotificationPolling() {
 }
 
 async function refreshRemoteNotifications() {
-  const button = document.getElementById("remoteManageBtn");
-  if (!button) return;
+  const hasBadgeTarget = document.getElementById("remoteUnreadBadge") || document.getElementById("sidebarRemoteUnreadBadge");
+  if (!hasBadgeTarget) return;
   const clients = await requestJSON("/api/remote/clients");
   if (!Array.isArray(clients) || !clients.length) {
     remoteNotificationsInitialized = true;
@@ -1622,15 +1653,17 @@ function isLoginQrMessage(message) {
 }
 
 function updateRemoteUnreadBadge() {
-  const badge = document.getElementById("remoteUnreadBadge");
-  if (!badge) return;
-  if (remoteQrUnreadCount > 0) {
-    badge.hidden = false;
-    badge.textContent = String(remoteQrUnreadCount);
-  } else {
-    badge.hidden = true;
-    badge.textContent = "0";
-  }
+  [document.getElementById("remoteUnreadBadge"), document.getElementById("sidebarRemoteUnreadBadge")]
+    .filter(Boolean)
+    .forEach((badge) => {
+      if (remoteQrUnreadCount > 0) {
+        badge.hidden = false;
+        badge.textContent = String(remoteQrUnreadCount);
+      } else {
+        badge.hidden = true;
+        badge.textContent = "0";
+      }
+    });
 }
 
 function clearRemoteUnreadNotifications() {
