@@ -156,6 +156,10 @@ function bindEvents() {
   document.getElementById("createRemoteClientBtn")?.addEventListener("click", createRemoteClient);
   document.getElementById("remoteClientSelect")?.addEventListener("change", handleRemoteClientChange);
   document.getElementById("sendRemoteImportBtn")?.addEventListener("click", sendRemoteImportCommand);
+  document.getElementById("sendRemoteKuaishouUploadBtn")?.addEventListener("click", sendRemoteKuaishouUploadCommand);
+  document.getElementById("sendRemoteKuaishouStartQueueBtn")?.addEventListener("click", () => sendRemoteSimpleKuaishouCommand("ks_start_queue", "快手执行队列命令已发送"));
+  document.getElementById("sendRemoteKuaishouStopBtn")?.addEventListener("click", () => sendRemoteSimpleKuaishouCommand("ks_stop_queue", "快手停止命令已发送"));
+  document.getElementById("sendRemoteKuaishouStatusBtn")?.addEventListener("click", () => sendRemoteSimpleKuaishouCommand("ks_query_status", "快手状态查询命令已发送"));
   document.querySelector("thead")?.addEventListener("click", (e) => {
     const th = e.target.closest("th[data-sort]");
     if (!th) return;
@@ -1882,4 +1886,51 @@ async function sendRemoteImportCommand() {
   } catch (error) {
     showToast(error.message, "danger");
   }
+}
+
+async function sendRemoteCommandPayload(payload, successMessage) {
+  if (!currentRemoteConversationId) {
+    showToast("请先选择客户端", "warning");
+    return;
+  }
+  try {
+    await requestJSON(`/api/remote/conversations/${currentRemoteConversationId}/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        message_type: "command",
+        payload,
+      }),
+    });
+    await loadRemoteMessages(currentRemoteConversationId);
+    showToast(successMessage, "success");
+  } catch (error) {
+    showToast(error.message, "danger");
+  }
+}
+
+async function sendRemoteKuaishouUploadCommand() {
+  const rawTitles = document.getElementById("remoteKuaishouTitlesInput").value.trim();
+  const titles = rawTitles
+    .split("\n")
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+  if (!titles.length) {
+    showToast("请至少输入一个快手短剧名", "warning");
+    return;
+  }
+  await sendRemoteCommandPayload(
+    {
+      command: "ks_upload_series",
+      titles,
+      skip_submitted: document.getElementById("remoteKuaishouSkipSubmittedCheckbox").checked,
+      auto_download: document.getElementById("remoteKuaishouAutoDownloadCheckbox").checked,
+    },
+    "快手上传命令已发送"
+  );
+  document.getElementById("remoteKuaishouTitlesInput").value = "";
+}
+
+async function sendRemoteSimpleKuaishouCommand(command, successMessage) {
+  await sendRemoteCommandPayload({ command }, successMessage);
 }

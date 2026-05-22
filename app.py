@@ -89,6 +89,17 @@ REMOTE_MESSAGE_STATUS_VALUES = {"pending", "sent", "running", "success", "failed
 REMOTE_MESSAGE_TYPE_VALUES = {"text", "command", "image", "status", "log"}
 REMOTE_SENDER_TYPE_VALUES = {"user", "client", "system"}
 REMOTE_COMMAND_IMPORT_DRAMA_TITLES = "import_drama_titles"
+REMOTE_COMMAND_KUAISHOU_UPLOAD_SERIES = "ks_upload_series"
+REMOTE_COMMAND_KUAISHOU_START_QUEUE = "ks_start_queue"
+REMOTE_COMMAND_KUAISHOU_STOP_QUEUE = "ks_stop_queue"
+REMOTE_COMMAND_KUAISHOU_QUERY_STATUS = "ks_query_status"
+REMOTE_COMMAND_ALLOWED_COMMANDS = {
+    REMOTE_COMMAND_IMPORT_DRAMA_TITLES,
+    REMOTE_COMMAND_KUAISHOU_UPLOAD_SERIES,
+    REMOTE_COMMAND_KUAISHOU_START_QUEUE,
+    REMOTE_COMMAND_KUAISHOU_STOP_QUEUE,
+    REMOTE_COMMAND_KUAISHOU_QUERY_STATUS,
+}
 REMOTE_IMPORT_DRAMA_ALLOWED_STEPS = {
     "download",
     "rewrite_info",
@@ -1608,10 +1619,23 @@ def require_remote_client() -> tuple[sqlite3.Connection, sqlite3.Row] | tuple[sq
 
 
 def build_remote_command_summary(command: str, payload: dict[str, Any]) -> str:
-    if command != REMOTE_COMMAND_IMPORT_DRAMA_TITLES:
-        return command or "远程命令"
+    if command == REMOTE_COMMAND_KUAISHOU_START_QUEUE:
+        return "快手执行队列"
+    if command == REMOTE_COMMAND_KUAISHOU_STOP_QUEUE:
+        return "快手停止队列"
+    if command == REMOTE_COMMAND_KUAISHOU_QUERY_STATUS:
+        return "快手查询状态"
     titles = payload.get("titles") if isinstance(payload.get("titles"), list) else []
     normalized_titles = [str(item).strip() for item in titles if str(item).strip()]
+    if command == REMOTE_COMMAND_KUAISHOU_UPLOAD_SERIES:
+        if not normalized_titles:
+            return "快手上传短剧"
+        preview = "、".join(normalized_titles[:3])
+        if len(normalized_titles) > 3:
+            preview += f" 等 {len(normalized_titles)} 部"
+        return f"快手上传短剧：{preview}"
+    if command != REMOTE_COMMAND_IMPORT_DRAMA_TITLES:
+        return command or "远程命令"
     if not normalized_titles:
         return "导入短剧"
     preview = "、".join(normalized_titles[:3])
@@ -1634,8 +1658,18 @@ def sanitize_remote_command_payload(message_type: str, data: dict[str, Any]) -> 
         return None, "command 消息缺少 payload 对象", content_text
 
     command = str(payload.get("command") or "").strip().lower()
-    if command != REMOTE_COMMAND_IMPORT_DRAMA_TITLES:
-        return None, "仅支持 import_drama_titles 命令", content_text
+    if command not in REMOTE_COMMAND_ALLOWED_COMMANDS:
+        return None, "仅支持 import_drama_titles / ks_upload_series / ks_start_queue / ks_stop_queue / ks_query_status 命令", content_text
+
+    if command in {
+        REMOTE_COMMAND_KUAISHOU_START_QUEUE,
+        REMOTE_COMMAND_KUAISHOU_STOP_QUEUE,
+        REMOTE_COMMAND_KUAISHOU_QUERY_STATUS,
+    }:
+        normalized_payload = {"command": command}
+        if not content_text:
+            content_text = build_remote_command_summary(command, normalized_payload)
+        return normalized_payload, None, content_text
 
     raw_titles = payload.get("titles")
     if not isinstance(raw_titles, list):
@@ -1650,6 +1684,17 @@ def sanitize_remote_command_payload(message_type: str, data: dict[str, Any]) -> 
         titles.append(title)
     if not titles:
         return None, "titles 不能为空", content_text
+
+    if command == REMOTE_COMMAND_KUAISHOU_UPLOAD_SERIES:
+        normalized_payload = {
+            "command": REMOTE_COMMAND_KUAISHOU_UPLOAD_SERIES,
+            "titles": titles,
+            "skip_submitted": bool(payload.get("skip_submitted", True)),
+            "auto_download": bool(payload.get("auto_download", True)),
+        }
+        if not content_text:
+            content_text = build_remote_command_summary(REMOTE_COMMAND_KUAISHOU_UPLOAD_SERIES, normalized_payload)
+        return normalized_payload, None, content_text
 
     workspace_path = str(payload.get("workspace_path") or "").strip()
     sync_download = bool(payload.get("sync_download", True))
