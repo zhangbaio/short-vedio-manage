@@ -35,7 +35,8 @@
         </header>
 
         <main class="app-content">
-      <div class="mb-3 d-flex flex-wrap gap-2" id="adminActions" hidden>
+      {% if session.role == 'admin' %}
+      <div class="mb-3 d-flex flex-wrap gap-2" id="adminActions">
         <button class="btn btn-success" data-bs-toggle="modal" data-bs-target="#importModal">
           导入Excel
         </button>
@@ -46,6 +47,7 @@
         <a class="btn btn-outline-dark" href="{{ url_for('remote_management') }}">远程控制</a>
         <button class="btn btn-danger" id="batchDeleteBtn" disabled>批量删除</button>
       </div>
+      {% endif %}
 
       <div class="card mb-4">
         <div class="card-body">
