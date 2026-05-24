@@ -62,7 +62,10 @@ function bindLicenseEvents() {
   document.getElementById("resetLicenseFormBtn").addEventListener("click", () => resetLicenseForm());
   document.getElementById("licenseTableBody").addEventListener("click", handleLicenseTableClick);
   document.getElementById("licenseTableBody").addEventListener("change", handleLicenseTableChange);
+  document.getElementById("licenseMobileList")?.addEventListener("click", handleLicenseTableClick);
+  document.getElementById("licenseMobileList")?.addEventListener("change", handleLicenseTableChange);
   document.getElementById("licenseActivationsBody").addEventListener("click", handleLicenseActivationTableClick);
+  document.getElementById("licenseActivationsMobileList")?.addEventListener("click", handleLicenseActivationTableClick);
   document.getElementById("copyLicenseSecretBtn").addEventListener("click", copyCurrentLicenseSecret);
   document.getElementById("licenseSelectAll").addEventListener("change", toggleSelectAllLicenses);
   document.getElementById("batchEnableLicenseBtn").addEventListener("click", batchEnableLicenses);
@@ -139,10 +142,13 @@ async function loadLicenses({ preserveSelection = false } = {}) {
 
 function renderLicenseRows(items) {
   const tbody = document.getElementById("licenseTableBody");
+  const mobileList = document.getElementById("licenseMobileList");
   tbody.innerHTML = "";
+  if (mobileList) mobileList.innerHTML = "";
 
   if (!items.length) {
     renderEmptyState(tbody, 9, "暂无符合条件的授权码");
+    renderMobileEmptyState(mobileList, "暂无符合条件的授权码");
     return;
   }
 
@@ -153,27 +159,7 @@ function renderLicenseRows(items) {
       tr.classList.add("license-row-active");
     }
 
-    const canDelete = canDeleteLicense(item);
-    const isDeleted = Boolean(item.deleted_at);
-    const actionButtons = [
-      `<button class="btn btn-sm btn-outline-dark" data-action="view-secret" data-id="${item.id}">完整码</button>`,
-      `<button class="btn btn-sm btn-outline-primary" data-action="view-activations" data-id="${item.id}">查看设备</button>`,
-    ];
-
-    if (isDeleted) {
-      actionButtons.push(
-        `<button class="btn btn-sm btn-outline-success" data-action="restore-license" data-id="${item.id}" data-name="${escapeHtml(item.license_key_masked || "该授权码")}">恢复</button>`
-      );
-    } else {
-      actionButtons.push(
-        item.status === "active"
-          ? `<button class="btn btn-sm btn-outline-warning" data-action="disable-license" data-id="${item.id}">停用</button>`
-          : `<button class="btn btn-sm btn-outline-success" data-action="enable-license" data-id="${item.id}">启用</button>`
-      );
-      actionButtons.push(
-        `<button class="btn btn-sm btn-outline-danger" data-action="delete-license" data-id="${item.id}" data-name="${escapeHtml(item.license_key_masked || "该授权码")}">删除</button>`
-      );
-    }
+    const actionButtons = buildLicenseActionButtons(item);
 
     tr.innerHTML = `
       <td class="text-center">
@@ -194,9 +180,97 @@ function renderLicenseRows(items) {
       <td class="license-actions-cell">${actionButtons.join("")}</td>
     `;
     tbody.appendChild(tr);
+    mobileList?.appendChild(buildLicenseMobileCard(item));
   });
 
   syncLicenseSelectAllState();
+}
+
+function buildLicenseActionButtons(item) {
+  const isDeleted = Boolean(item.deleted_at);
+  const actionButtons = [
+    `<button class="btn btn-sm btn-outline-dark" data-action="view-secret" data-id="${item.id}">完整码</button>`,
+    `<button class="btn btn-sm btn-outline-primary" data-action="view-activations" data-id="${item.id}">设备</button>`,
+  ];
+
+  if (isDeleted) {
+    actionButtons.push(
+      `<button class="btn btn-sm btn-outline-success" data-action="restore-license" data-id="${item.id}" data-name="${escapeHtml(item.license_key_masked || "该授权码")}">恢复</button>`
+    );
+    return actionButtons;
+  }
+
+  actionButtons.push(
+    item.status === "active"
+      ? `<button class="btn btn-sm btn-outline-warning" data-action="disable-license" data-id="${item.id}">停用</button>`
+      : `<button class="btn btn-sm btn-outline-success" data-action="enable-license" data-id="${item.id}">启用</button>`
+  );
+  actionButtons.push(
+    `<button class="btn btn-sm btn-outline-danger" data-action="delete-license" data-id="${item.id}" data-name="${escapeHtml(item.license_key_masked || "该授权码")}">删除</button>`
+  );
+  return actionButtons;
+}
+
+function buildLicenseMobileCard(item) {
+  const card = document.createElement("article");
+  card.className = "mobile-record-card license-mobile-card";
+  card.dataset.id = String(item.id);
+  if (item.id === currentLicenseId) {
+    card.classList.add("is-active");
+  }
+  const moreActions = buildLicenseMobileMoreActions(item);
+  card.innerHTML = `
+    <div class="mobile-record-head">
+      <label class="mobile-select-line">
+        <input
+          type="checkbox"
+          class="form-check-input license-row-checkbox"
+          data-id="${item.id}"
+          ${selectedLicenseIds.has(item.id) ? "checked" : ""}
+        />
+        <span class="mobile-record-title font-monospace">${escapeHtml(item.license_key_masked || "-")}</span>
+      </label>
+      ${buildLicenseStatusBadge(item)}
+    </div>
+    <div class="mobile-record-subtitle">${escapeHtml(item.licensee || "未填写授权对象")}</div>
+    <div class="license-mobile-meta">
+      <div><span>版本</span><strong>${escapeHtml(item.edition || "-")}</strong></div>
+      <div><span>设备</span><strong>${item.active_activations || 0}/${item.max_activations || 0}</strong></div>
+      <div><span>到期</span><strong>${escapeHtml(item.expires_at || "永久")}</strong></div>
+    </div>
+    <div class="license-mobile-actions">
+      <button class="btn btn-sm btn-outline-primary" data-action="view-activations" data-id="${item.id}">设备</button>
+      <details class="license-mobile-more">
+        <summary>更多</summary>
+        <div class="license-mobile-more-menu">${moreActions.join("")}</div>
+      </details>
+    </div>
+  `;
+  return card;
+}
+
+function buildLicenseMobileMoreActions(item) {
+  const isDeleted = Boolean(item.deleted_at);
+  const actions = [
+    `<button class="btn btn-sm btn-outline-dark" data-action="view-secret" data-id="${item.id}">完整码</button>`,
+  ];
+
+  if (isDeleted) {
+    actions.push(
+      `<button class="btn btn-sm btn-outline-success" data-action="restore-license" data-id="${item.id}" data-name="${escapeHtml(item.license_key_masked || "该授权码")}">恢复</button>`
+    );
+    return actions;
+  }
+
+  actions.push(
+    item.status === "active"
+      ? `<button class="btn btn-sm btn-outline-warning" data-action="disable-license" data-id="${item.id}">停用</button>`
+      : `<button class="btn btn-sm btn-outline-success" data-action="enable-license" data-id="${item.id}">启用</button>`
+  );
+  actions.push(
+    `<button class="btn btn-sm btn-outline-danger" data-action="delete-license" data-id="${item.id}" data-name="${escapeHtml(item.license_key_masked || "该授权码")}">删除</button>`
+  );
+  return actions;
 }
 
 function updateLicensePaginationInfo() {
@@ -310,6 +384,7 @@ function handleLicenseTableChange(event) {
   } else {
     selectedLicenseIds.delete(id);
   }
+  syncVisibleLicenseCheckboxes();
   syncLicenseSelectAllState();
   updateLicenseBatchButtons();
 }
@@ -331,15 +406,22 @@ function toggleSelectAllLicenses(event) {
 
 function syncLicenseSelectAllState() {
   const selectAll = document.getElementById("licenseSelectAll");
-  const checkboxes = Array.from(document.querySelectorAll(".license-row-checkbox"));
-  if (!checkboxes.length) {
+  const visibleIds = currentLicenseItems.map((item) => item.id);
+  if (!visibleIds.length) {
     selectAll.checked = false;
     selectAll.indeterminate = false;
     return;
   }
-  const checkedCount = checkboxes.filter((checkbox) => checkbox.checked).length;
-  selectAll.checked = checkedCount > 0 && checkedCount === checkboxes.length;
-  selectAll.indeterminate = checkedCount > 0 && checkedCount < checkboxes.length;
+  const checkedCount = visibleIds.filter((id) => selectedLicenseIds.has(id)).length;
+  selectAll.checked = checkedCount > 0 && checkedCount === visibleIds.length;
+  selectAll.indeterminate = checkedCount > 0 && checkedCount < visibleIds.length;
+}
+
+function syncVisibleLicenseCheckboxes() {
+  document.querySelectorAll(".license-row-checkbox").forEach((checkbox) => {
+    const id = Number.parseInt(checkbox.dataset.id || "0", 10);
+    checkbox.checked = selectedLicenseIds.has(id);
+  });
 }
 
 function updateLicenseBatchButtons() {
@@ -562,14 +644,20 @@ async function loadLicenseActivations(licenseId, { silent = false } = {}) {
     document.getElementById("licenseActivationsTitle").textContent =
       `当前激活码：${data.license?.license_key_masked || "-"} ｜ 状态：${data.license?.deleted_at ? "已删除" : data.license?.status || "-"}`;
     const tbody = document.getElementById("licenseActivationsBody");
+    const mobileList = document.getElementById("licenseActivationsMobileList");
     tbody.innerHTML = "";
+    if (mobileList) mobileList.innerHTML = "";
 
     document.querySelectorAll("#licenseTableBody tr").forEach((row) => row.classList.remove("license-row-active"));
+    document.querySelectorAll("#licenseMobileList .mobile-record-card").forEach((card) => card.classList.remove("is-active"));
     const selectedRow = document.querySelector(`#licenseTableBody tr[data-id="${licenseId}"]`);
     selectedRow?.classList.add("license-row-active");
+    const selectedCard = document.querySelector(`#licenseMobileList .mobile-record-card[data-id="${licenseId}"]`);
+    selectedCard?.classList.add("is-active");
 
     if (!(data.items || []).length) {
       renderEmptyState(tbody, 7, "该授权码暂无设备绑定记录");
+      renderMobileEmptyState(mobileList, "该授权码暂无设备绑定记录");
       return;
     }
 
@@ -592,12 +680,38 @@ async function loadLicenseActivations(licenseId, { silent = false } = {}) {
         </td>
       `;
       tbody.appendChild(tr);
+      mobileList?.appendChild(buildActivationMobileCard(item, active, data.license));
     });
   } catch (error) {
     if (!silent) {
       showToast(error.message, "danger");
     }
   }
+}
+
+function buildActivationMobileCard(item, active, license) {
+  const card = document.createElement("article");
+  card.className = "mobile-record-card";
+  card.innerHTML = `
+    <div class="mobile-record-head">
+      <div class="mobile-record-title font-monospace">${escapeHtml(item.machine_id || "-")}</div>
+      ${active ? '<span class="badge bg-success">已绑定</span>' : '<span class="badge bg-secondary">已解绑</span>'}
+    </div>
+    <div class="mobile-record-grid">
+      <div><span>应用</span><strong>${escapeHtml(item.app_name || "-")}</strong></div>
+      <div><span>版本</span><strong>${escapeHtml(item.app_version || "-")}</strong></div>
+      <div><span>激活时间</span><strong>${escapeHtml(item.activated_at || "-")}</strong></div>
+      <div><span>最近校验</span><strong>${escapeHtml(item.last_verified_at || "-")}</strong></div>
+    </div>
+    <div class="mobile-record-actions">
+      ${
+        active && !license?.deleted_at
+          ? `<button class="btn btn-sm btn-outline-danger" data-action="unbind-machine" data-machine-id="${escapeHtml(item.machine_id || "")}">解绑</button>`
+          : ""
+      }
+    </div>
+  `;
+  return card;
 }
 
 async function handleLicenseActivationTableClick(event) {
@@ -639,10 +753,17 @@ function clearLicenseActivations() {
   document.getElementById("licenseActivationsTitle").textContent = "请选择一条激活码查看";
   renderEmptyState(document.getElementById("licenseActivationsBody"), 7, "请选择一条激活码查看");
   document.querySelectorAll("#licenseTableBody tr").forEach((row) => row.classList.remove("license-row-active"));
+  document.querySelectorAll("#licenseMobileList .mobile-record-card").forEach((card) => card.classList.remove("is-active"));
+  renderMobileEmptyState(document.getElementById("licenseActivationsMobileList"), "请选择一条激活码查看");
 }
 
 function renderEmptyState(tbody, colSpan, message) {
   tbody.innerHTML = `<tr><td colspan="${colSpan}" class="text-center text-muted py-4">${escapeHtml(message)}</td></tr>`;
+}
+
+function renderMobileEmptyState(container, message) {
+  if (!container) return;
+  container.innerHTML = `<div class="mobile-empty-state">${escapeHtml(message)}</div>`;
 }
 
 async function requestJSON(url, options = {}) {

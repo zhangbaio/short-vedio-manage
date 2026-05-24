@@ -24,8 +24,10 @@ function initUsersPage() {
   document.getElementById("savePasswordBtn")?.addEventListener("click", resetUserPassword);
   document.getElementById("refreshUsersBtn")?.addEventListener("click", loadUsers);
   document.getElementById("userTableBody")?.addEventListener("click", handleUserTableClick);
+  document.getElementById("userMobileList")?.addEventListener("click", handleUserTableClick);
   document.getElementById("cancelDevicesBtn")?.addEventListener("click", hideDevicesPanel);
   document.getElementById("userDevicesTableBody")?.addEventListener("click", handleUserDevicesTableClick);
+  document.getElementById("userDevicesMobileList")?.addEventListener("click", handleUserDevicesTableClick);
   document.getElementById("userEditorModal")?.addEventListener("hidden.bs.modal", resetUserForm);
   loadUsers();
 }
@@ -63,9 +65,12 @@ async function loadUsers() {
     if (!users) return;
     usersCache = users;
     const tbody = document.getElementById("userTableBody");
+    const mobileList = document.getElementById("userMobileList");
     tbody.innerHTML = "";
+    if (mobileList) mobileList.innerHTML = "";
     if (!users.length) {
       tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-4">暂无用户</td></tr>';
+      renderMobileEmptyState(mobileList, "暂无用户");
       return;
     }
     users.forEach((user) => {
@@ -73,6 +78,7 @@ async function loadUsers() {
       const isSelf = user.username === window.currentUser.username;
       const statusText = user.status === "disabled" ? "停用" : "启用";
       const statusClass = user.status === "disabled" ? "text-bg-secondary" : "text-bg-success";
+      const actionButtons = buildUserActionButtons(user, isSelf);
       tr.innerHTML = `
         <td>${escapeHtml(user.username)}</td>
         <td>${escapeHtml(user.email || "-")}</td>
@@ -81,18 +87,44 @@ async function loadUsers() {
         <td>${Number(user.active_devices || 0)}/${Number(user.max_devices || 0)}</td>
         <td>${escapeHtml(user.expires_at || "永久")}</td>
         <td><span class="text-muted small">已加密保存</span></td>
-        <td class="text-end">
-          <button class="btn btn-sm btn-outline-secondary" data-action="edit-user" data-id="${user.id}">编辑</button>
-          <button class="btn btn-sm btn-outline-info" data-action="view-devices" data-id="${user.id}" data-username="${escapeHtml(user.username)}">设备</button>
-          <button class="btn btn-sm btn-outline-primary" data-action="reset-password" data-id="${user.id}" data-username="${escapeHtml(user.username)}">重置密码</button>
-          <button class="btn btn-sm btn-outline-danger" data-action="delete-user" data-id="${user.id}" data-username="${escapeHtml(user.username)}" ${isSelf ? "disabled" : ""}>删除</button>
-        </td>
+        <td class="text-end">${actionButtons.join("")}</td>
       `;
       tbody.appendChild(tr);
+      mobileList?.appendChild(buildUserMobileCard(user, actionButtons, statusText, statusClass));
     });
   } catch (error) {
     showToast(error.message, "danger");
   }
+}
+
+function buildUserActionButtons(user, isSelf) {
+  return [
+    `<button class="btn btn-sm btn-outline-secondary" data-action="edit-user" data-id="${user.id}">编辑</button>`,
+    `<button class="btn btn-sm btn-outline-info" data-action="view-devices" data-id="${user.id}" data-username="${escapeHtml(user.username)}">设备</button>`,
+    `<button class="btn btn-sm btn-outline-primary" data-action="reset-password" data-id="${user.id}" data-username="${escapeHtml(user.username)}">重置密码</button>`,
+    `<button class="btn btn-sm btn-outline-danger" data-action="delete-user" data-id="${user.id}" data-username="${escapeHtml(user.username)}" ${isSelf ? "disabled" : ""}>删除</button>`,
+  ];
+}
+
+function buildUserMobileCard(user, actionButtons, statusText, statusClass) {
+  const card = document.createElement("article");
+  card.className = "mobile-record-card";
+  card.innerHTML = `
+    <div class="mobile-record-head">
+      <div class="mobile-record-title">${escapeHtml(user.username)}</div>
+      <span class="badge ${statusClass}">${statusText}</span>
+    </div>
+    <div class="mobile-record-subtitle">${escapeHtml(user.email || "未填写邮箱")}</div>
+    <div class="mobile-record-grid">
+      <div><span>角色</span><strong>${user.role === "admin" ? "管理员" : "普通用户"}</strong></div>
+      <div><span>授权</span><strong>${escapeHtml(user.edition || "pro")}</strong></div>
+      <div><span>设备</span><strong>${Number(user.active_devices || 0)}/${Number(user.max_devices || 0)}</strong></div>
+      <div><span>到期</span><strong>${escapeHtml(user.expires_at || "永久")}</strong></div>
+      <div><span>密码</span><strong>已加密保存</strong></div>
+    </div>
+    <div class="mobile-record-actions">${actionButtons.join("")}</div>
+  `;
+  return card;
 }
 
 function showUserEditor(user = null) {
@@ -291,9 +323,12 @@ async function loadUserDevices(userId, username = "") {
     const devices = data?.devices || [];
     document.getElementById("userDevicesTitle").textContent = `${username || user.username || "\u7528\u6237"} \u00b7 ${devices.length} \u53f0\u8bbe\u5907`;
     const tbody = document.getElementById("userDevicesTableBody");
+    const mobileList = document.getElementById("userDevicesMobileList");
     tbody.innerHTML = "";
+    if (mobileList) mobileList.innerHTML = "";
     if (!devices.length) {
       tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-4">暂无登录设备</td></tr>';
+      renderMobileEmptyState(mobileList, "暂无登录设备");
     } else {
       devices.forEach((device) => {
         const revoked = Boolean(device.revoked_at);
@@ -310,12 +345,34 @@ async function loadUserDevices(userId, username = "") {
           </td>
         `;
         tbody.appendChild(tr);
+        mobileList?.appendChild(buildUserDeviceMobileCard(device, revoked));
       });
     }
     document.getElementById("userDevicesPanel").hidden = false;
   } catch (error) {
     showToast(error.message, "danger");
   }
+}
+
+function buildUserDeviceMobileCard(device, revoked) {
+  const card = document.createElement("article");
+  card.className = "mobile-record-card";
+  card.innerHTML = `
+    <div class="mobile-record-head">
+      <div class="mobile-record-title">${escapeHtml(device.device_name || "-")}</div>
+      ${revoked ? '<span class="badge text-bg-secondary">已解绑</span>' : '<span class="badge text-bg-success">有效</span>'}
+    </div>
+    <div class="mobile-record-subtitle font-monospace">${escapeHtml(device.machine_id || "-")}</div>
+    <div class="mobile-record-grid">
+      <div><span>应用</span><strong>${escapeHtml([device.app_name, device.app_version].filter(Boolean).join(" ") || "-")}</strong></div>
+      <div><span>登录时间</span><strong>${escapeHtml(device.logged_in_at || "-")}</strong></div>
+      <div><span>最近校验</span><strong>${escapeHtml(device.last_verified_at || "-")}</strong></div>
+    </div>
+    <div class="mobile-record-actions">
+      <button class="btn btn-sm btn-outline-warning" data-action="revoke-device" data-id="${device.id}" ${revoked ? "disabled" : ""}>解绑</button>
+    </div>
+  `;
+  return card;
 }
 
 function hideDevicesPanel() {
@@ -903,6 +960,11 @@ function showToast(message, type = "info") {
   const toast = new bootstrap.Toast(toastEl, { delay: 2500, autohide: true });
   toastEl.addEventListener("hidden.bs.toast", () => toastEl.remove());
   toast.show();
+}
+
+function renderMobileEmptyState(container, message) {
+  if (!container) return;
+  container.innerHTML = `<div class="mobile-empty-state">${escapeHtml(message)}</div>`;
 }
 
 function validateField(input, validator, message) {

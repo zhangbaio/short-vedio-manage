@@ -73,7 +73,7 @@
                   </div>
                   <button type="button" class="btn btn-sm btn-outline-secondary" id="cancelDevicesBtn">关闭</button>
                 </div>
-                <div class="table-responsive">
+                <div class="table-responsive desktop-table mobile-switchable">
                   <table class="table table-sm align-middle mb-0">
                     <thead>
                       <tr>
@@ -89,9 +89,10 @@
                     <tbody id="userDevicesTableBody"></tbody>
                   </table>
                 </div>
+                <div class="mobile-card-list" id="userDevicesMobileList" aria-live="polite"></div>
               </div>
 
-              <div class="table-responsive">
+              <div class="table-responsive desktop-table mobile-switchable">
                 <table class="table table-hover align-middle mb-0">
                   <thead>
                     <tr>
@@ -108,6 +109,7 @@
                   <tbody id="userTableBody"></tbody>
                 </table>
               </div>
+              <div class="mobile-card-list" id="userMobileList" aria-live="polite"></div>
             </div>
           </div>
         </main>

@@ -139,16 +139,16 @@
               </div>
               </div>
 
-              <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+              <div class="license-batch-bar d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
                 <div class="text-muted small" id="licenseSelectionInfo">已选择 0 条</div>
-                <div class="d-flex gap-2">
+                <div class="license-batch-actions d-flex gap-2">
                   <button class="btn btn-outline-secondary btn-sm" id="batchEnableLicenseBtn" disabled>批量启用</button>
                   <button class="btn btn-outline-warning btn-sm" id="batchDisableLicenseBtn" disabled>批量停用</button>
                   <button class="btn btn-outline-danger btn-sm" id="batchDeleteLicenseBtn" disabled>批量删除</button>
                   <button class="btn btn-outline-success btn-sm" id="batchRestoreLicenseBtn" disabled>批量恢复</button>
                 </div>
               </div>
-              <div class="d-flex justify-content-between align-items-center gap-3 mb-3">
+              <div class="license-pager-bar d-flex justify-content-between align-items-center gap-3 mb-3">
                 <div class="btn-group" role="group">
                   <button class="btn btn-outline-secondary" id="licenseFirstPageBtn">首页</button>
                   <button class="btn btn-outline-secondary" id="licensePrevPageBtn">上一页</button>
@@ -156,7 +156,7 @@
                   <button class="btn btn-outline-secondary" id="licenseLastPageBtn">末页</button>
                 </div>
               </div>
-              <div class="table-responsive">
+              <div class="table-responsive desktop-table mobile-switchable">
                 <table class="table table-sm align-middle mb-0">
                   <thead>
                     <tr>
@@ -174,6 +174,7 @@
                   <tbody id="licenseTableBody"></tbody>
                 </table>
               </div>
+              <div class="mobile-card-list" id="licenseMobileList" aria-live="polite"></div>
             </div>
           </div>
 
@@ -185,7 +186,7 @@
                   <div class="text-muted small" id="licenseActivationsTitle">请选择一条激活码查看</div>
                 </div>
               </div>
-              <div class="table-responsive">
+              <div class="table-responsive desktop-table mobile-switchable">
                 <table class="table table-sm align-middle mb-0">
                   <thead>
                     <tr>
@@ -201,6 +202,7 @@
                   <tbody id="licenseActivationsBody"></tbody>
                 </table>
               </div>
+              <div class="mobile-card-list" id="licenseActivationsMobileList" aria-live="polite"></div>
             </div>
           </div>
         </main>

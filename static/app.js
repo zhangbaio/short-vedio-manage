@@ -107,6 +107,7 @@ function bindEvents() {
   document.getElementById("addDramaBtn")?.addEventListener("click", openCreateModal);
   document.getElementById("saveDramaBtn").addEventListener("click", submitDramaForm);
   document.getElementById("dramaTableBody").addEventListener("click", handleTableClick);
+  document.getElementById("dramaMobileList")?.addEventListener("click", handleTableClick);
   document.getElementById("selectAll").addEventListener("change", toggleSelectAll);
   document.getElementById("batchDeleteBtn")?.addEventListener("click", () => openDeleteModal("batch"));
   document.getElementById("confirmDeleteBtn").addEventListener("click", confirmDelete);
@@ -647,9 +648,15 @@ function updateSortIcons() {
 function renderDramas(items, options = {}) {
   const { preserveSelection = false } = options;
   const tbody = document.getElementById("dramaTableBody");
+  const mobileList = document.getElementById("dramaMobileList");
   tbody.innerHTML = "";
+  if (mobileList) mobileList.innerHTML = "";
   if (!preserveSelection) {
     selectedIds.clear();
+  }
+
+  if (!items.length) {
+    mobileList?.insertAdjacentHTML("beforeend", '<div class="mobile-empty-state">暂无符合条件的短剧</div>');
   }
 
   items.forEach((item, index) => {
@@ -675,6 +682,7 @@ function renderDramas(items, options = {}) {
       checkbox.checked = true;
     }
     tbody.appendChild(tr);
+    mobileList?.appendChild(buildDramaMobileCard(item, rowNumber));
 
     if (state.expandedRowIds.has(item.id)) {
       const detailRow = document.createElement("tr");
@@ -699,6 +707,47 @@ function renderDramas(items, options = {}) {
   const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.has(id));
   document.getElementById("selectAll").checked = allVisibleSelected;
   updateBatchButton();
+}
+
+function buildDramaMobileCard(item, rowNumber) {
+  const card = document.createElement("article");
+  card.className = "mobile-record-card";
+  card.dataset.id = String(item.id);
+  card.innerHTML = `
+    <div class="mobile-record-head">
+      <label class="mobile-select-line">
+        <input
+          type="checkbox"
+          class="form-check-input row-checkbox"
+          data-id="${item.id}"
+          ${selectedIds.has(item.id) ? "checked" : ""}
+        />
+        <span class="mobile-record-title">${escapeHtml(item.new_name || item.original_name || "-")}</span>
+      </label>
+      <span class="badge text-bg-light">#${rowNumber}</span>
+    </div>
+    <div class="mobile-record-subtitle">${escapeHtml(item.original_name || "-")}</div>
+    <div class="mobile-record-grid">
+      <div><span>日期</span><strong>${escapeHtml(item.date || "-")}</strong></div>
+      <div><span>集数</span><strong>${item.episodes ?? "-"}</strong></div>
+      <div><span>时长</span><strong>${item.duration ?? "-"} 分钟</strong></div>
+      <div><span>审核</span><strong>${buildBadge(item.review_passed)}</strong></div>
+      <div><span>上传</span><strong>${buildBadge(item.uploaded)}</strong></div>
+      <div><span>公司</span><strong>${escapeHtml(item.company || "-")}</strong></div>
+      <div><span>上传者</span><strong>${escapeHtml(item.uploader || "-")}</strong></div>
+    </div>
+    ${
+      state.expandedRowIds.has(item.id)
+        ? `<div class="drama-detail-grid mobile-drama-detail">
+            ${buildDetailItem("素材", item.materials)}
+            ${buildDetailItem("推广语", item.promo_text)}
+            ${buildDetailItem("简介", item.description, true)}
+          </div>`
+        : ""
+    }
+    <div class="mobile-record-actions">${buildActions(item)}</div>
+  `;
+  return card;
 }
 
 function buildBadge(flag) {
@@ -811,6 +860,7 @@ function handleTableClick(event) {
       selectedIds.delete(id);
       document.getElementById("selectAll").checked = false;
     }
+    syncDramaCheckboxes();
     updateBatchButton();
     return;
   }
@@ -991,6 +1041,12 @@ function toggleSelectAll(event) {
     }
   });
   updateBatchButton();
+}
+
+function syncDramaCheckboxes() {
+  document.querySelectorAll(".row-checkbox").forEach((checkbox) => {
+    checkbox.checked = selectedIds.has(Number(checkbox.dataset.id));
+  });
 }
 
 function updateBatchButton() {
