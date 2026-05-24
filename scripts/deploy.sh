@@ -144,7 +144,7 @@ mkdir -p "$REMOTE_DIR" "$REMOTE_DIR/backups" "$REMOTE_DIR/data"
 
 existing_owner=""
 if command -v stat >/dev/null 2>&1; then
-  existing_owner="$(stat -c '%U:%G' "$REMOTE_DIR" 2>/dev/null || true)"
+  existing_owner="$(stat -c '%u:%g' "$REMOTE_DIR" 2>/dev/null || true)"
 fi
 
 if [[ "${HAVE_ENV_UPLOAD:-}" == "1" ]]; then
@@ -165,7 +165,7 @@ fi
 tar -xzf "$REMOTE_ARCHIVE" -C "$REMOTE_DIR"
 rm -f "$REMOTE_ARCHIVE"
 
-if [[ -n "$existing_owner" ]] && [[ "$existing_owner" != "root:root" ]]; then
+if [[ -n "$existing_owner" ]] && [[ "$existing_owner" != "0:0" ]]; then
   chown -R "$existing_owner" "$REMOTE_DIR"
 fi
 
