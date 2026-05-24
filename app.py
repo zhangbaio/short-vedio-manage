@@ -82,7 +82,7 @@ LICENSE_TOKEN_MAX_AGE_SECONDS = 60 * 60 * 24 * 30
 ACCOUNT_TOKEN_SALT = "desktop-account"
 ACCOUNT_TOKEN_MAX_AGE_SECONDS = _int_env("ACCOUNT_TOKEN_MAX_AGE_SECONDS", 60 * 60 * 24)
 ACCOUNT_OFFLINE_GRACE_HOURS = _int_env("ACCOUNT_OFFLINE_GRACE_HOURS", 72)
-ACCOUNT_DEFAULT_MAX_DEVICES = _int_env("ACCOUNT_DEFAULT_MAX_DEVICES", 3)
+ACCOUNT_DEFAULT_MAX_DEVICES = 1
 USERNAME_RE = re.compile(r"^(?:[A-Za-z0-9_]{2,30}|[^@\s]+@[^@\s]+\.[^@\s]+)$")
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 REMOTE_MESSAGE_STATUS_VALUES = {"pending", "sent", "running", "success", "failed", "canceled", "stopped"}
@@ -222,7 +222,7 @@ def init_db() -> None:
                 password_hash TEXT NOT NULL,
                 role TEXT NOT NULL DEFAULT 'user',
                 status TEXT NOT NULL DEFAULT 'active',
-                max_devices INTEGER NOT NULL DEFAULT 3,
+                max_devices INTEGER NOT NULL DEFAULT 1,
                 edition TEXT NOT NULL DEFAULT 'pro',
                 expires_at TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -424,7 +424,7 @@ def init_db() -> None:
             "ALTER TABLE licenses ADD COLUMN deleted_by INTEGER DEFAULT NULL",
             "ALTER TABLE users ADD COLUMN email TEXT DEFAULT NULL",
             "ALTER TABLE users ADD COLUMN status TEXT NOT NULL DEFAULT 'active'",
-            "ALTER TABLE users ADD COLUMN max_devices INTEGER NOT NULL DEFAULT 3",
+            "ALTER TABLE users ADD COLUMN max_devices INTEGER NOT NULL DEFAULT 1",
             "ALTER TABLE users ADD COLUMN edition TEXT NOT NULL DEFAULT 'pro'",
             "ALTER TABLE users ADD COLUMN expires_at TEXT DEFAULT NULL",
             "ALTER TABLE users ADD COLUMN updated_at TEXT DEFAULT NULL",
@@ -484,6 +484,14 @@ def init_db() -> None:
         )
         db.execute(
             "CREATE INDEX IF NOT EXISTS idx_dramas_company ON dramas(company)"
+        )
+        db.execute(
+            """
+            UPDATE users
+            SET max_devices = ?
+            WHERE max_devices IS NULL OR max_devices > ?
+            """,
+            (ACCOUNT_DEFAULT_MAX_DEVICES, ACCOUNT_DEFAULT_MAX_DEVICES),
         )
         migrate_legacy_minidrama_settings(db)
         seed_default_users(db)
@@ -3211,6 +3219,65 @@ def change_password(user_id: int):
     if result.rowcount == 0:
         return jsonify({"error": "未找到该用户"}), 404
     return jsonify({"message": "密码已更新"})
+
+
+@app.route("/api/users/<int:user_id>/devices-legacy", methods=["GET"])
+@login_required
+@admin_required
+def list_user_devices_legacy(user_id: int):
+    db = get_db()
+    user = db.execute(
+        "SELECT id, username, max_devices FROM users WHERE id = ?",
+        (user_id,),
+    ).fetchone()
+    if not user:
+        return jsonify({"error": "未找到该用户"}), 404
+    rows = db.execute(
+        """
+        SELECT id, user_id, machine_id, device_name, app_name, app_version,
+               logged_in_at, last_verified_at, revoked_at
+        FROM user_devices
+        WHERE user_id = ?
+        ORDER BY
+            CASE WHEN revoked_at IS NULL OR revoked_at = '' THEN 0 ELSE 1 END,
+            COALESCE(last_verified_at, logged_in_at, '') DESC
+        """,
+        (user_id,),
+    ).fetchall()
+    return jsonify({
+        "user": dict(user),
+        "items": [dict(row) for row in rows],
+    })
+
+
+@app.route("/api/users/<int:user_id>/devices/unbind", methods=["POST"])
+@login_required
+@admin_required
+def unbind_user_device(user_id: int):
+    data = request.get_json(silent=True) or {}
+    machine_id = str(data.get("machine_id") or "").strip()
+    if not machine_id:
+        return jsonify({"error": "machine_id 不能为空"}), 400
+    db = get_db()
+    user = db.execute("SELECT id FROM users WHERE id = ?", (user_id,)).fetchone()
+    if not user:
+        return jsonify({"error": "未找到该用户"}), 404
+    result = db.execute(
+        """
+        UPDATE user_devices
+        SET revoked_at = ?
+        WHERE user_id = ? AND machine_id = ? AND (revoked_at IS NULL OR revoked_at = '')
+        """,
+        (
+            datetime.datetime.now().isoformat(timespec="seconds"),
+            user_id,
+            machine_id,
+        ),
+    )
+    db.commit()
+    if result.rowcount == 0:
+        return jsonify({"error": "未找到可解绑的设备记录"}), 404
+    return jsonify({"message": "设备解绑成功"})
 
 
 @app.route("/api/licenses", methods=["GET"])

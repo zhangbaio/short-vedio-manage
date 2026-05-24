@@ -1109,7 +1109,9 @@ async function loadUsers() {
       tr.innerHTML = `
         <td>${escapeHtml(user.username)}</td>
         <td>${user.role === "admin" ? "管理员" : "普通用户"}</td>
+        <td>${user.active_devices || 0}/${user.max_devices || 1}</td>
         <td>
+          <button class="btn btn-sm btn-outline-primary me-1" data-action="unbind-user-device" data-id="${user.id}" data-username="${escapeHtml(user.username)}" ${(user.active_devices || 0) <= 0 ? "disabled" : ""}>解绑设备</button>
           <button class="btn btn-sm btn-outline-danger" data-action="delete-user" data-id="${user.id}" data-username="${escapeHtml(user.username)}" ${user.username === window.currentUser.username ? "disabled" : ""}>删除</button>
         </td>
       `;
@@ -1374,6 +1376,31 @@ async function handleUserTableClick(event) {
   if (!target.dataset.action) return;
   const id = Number(target.dataset.id);
   const username = target.dataset.username;
+  if (target.dataset.action === "unbind-user-device") {
+    try {
+      const data = await requestJSON(`/api/users/${id}/devices`);
+      if (!data) return;
+      const activeDevices = (data.devices || data.items || []).filter((item) => !item.revoked_at);
+      if (!activeDevices.length) {
+        showToast("该账号当前没有已绑定设备", "info");
+        await loadUsers();
+        return;
+      }
+      const device = activeDevices[0];
+      const deviceLabel = device.device_name || device.machine_id || "当前设备";
+      if (!confirm(`确定解绑用户 ${username} 的设备 ${deviceLabel} 吗？`)) return;
+      await requestJSON(`/api/users/${id}/devices/unbind`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ machine_id: device.machine_id }),
+      });
+      showToast("设备解绑成功", "success");
+      await loadUsers();
+    } catch (error) {
+      showToast(error.message, "danger");
+    }
+    return;
+  }
   if (target.dataset.action === "delete-user") {
     if (!confirm(`确定删除用户 ${username} 吗？`)) return;
     try {
