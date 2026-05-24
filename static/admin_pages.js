@@ -5,6 +5,7 @@ let passwordTargetUserId = null;
 let editingUserId = null;
 let usersCache = [];
 let currentDevicesUserId = null;
+let userEditorModal = null;
 
 document.addEventListener("DOMContentLoaded", () => {
   cacheDefaultFeedbackMessages();
@@ -15,8 +16,8 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 
 function initUsersPage() {
+  userEditorModal = new bootstrap.Modal(document.getElementById("userEditorModal"));
   document.getElementById("addUserBtn")?.addEventListener("click", showUserEditor);
-  document.getElementById("cancelUserEditBtn")?.addEventListener("click", hideUserEditor);
   document.getElementById("createUserBtn")?.addEventListener("click", saveUser);
   document.getElementById("cancelPasswordEditBtn")?.addEventListener("click", hidePasswordEditor);
   document.getElementById("generatePasswordBtn")?.addEventListener("click", fillGeneratedPassword);
@@ -25,6 +26,7 @@ function initUsersPage() {
   document.getElementById("userTableBody")?.addEventListener("click", handleUserTableClick);
   document.getElementById("cancelDevicesBtn")?.addEventListener("click", hideDevicesPanel);
   document.getElementById("userDevicesTableBody")?.addEventListener("click", handleUserDevicesTableClick);
+  document.getElementById("userEditorModal")?.addEventListener("hidden.bs.modal", resetUserForm);
   loadUsers();
 }
 
@@ -108,16 +110,15 @@ function showUserEditor(user = null) {
   document.getElementById("userRoleInput").value = user?.role || "user";
   document.getElementById("userStatusInput").value = user?.status || "active";
   document.getElementById("userEditionInput").value = user?.edition || "pro";
-  document.getElementById("userMaxDevicesInput").value = String(user?.max_devices || 3);
+  document.getElementById("userMaxDevicesInput").value = String(user?.max_devices || 1);
   document.getElementById("userExpiresAtInput").value = (user?.expires_at || "").slice(0, 10);
-  const panel = document.getElementById("userEditorPanel");
-  panel.hidden = false;
+  userEditorModal?.show();
   document.getElementById("userNameInput")?.focus();
 }
 
 function hideUserEditor() {
   resetUserForm();
-  document.getElementById("userEditorPanel").hidden = true;
+  userEditorModal?.hide();
 }
 
 function showPasswordEditor(userId, username) {
@@ -168,7 +169,7 @@ async function saveUser() {
     role: document.getElementById("userRoleInput").value,
     status: document.getElementById("userStatusInput").value,
     edition: document.getElementById("userEditionInput").value,
-    max_devices: Number.parseInt(maxDevicesInput.value || "3", 10),
+    max_devices: Number.parseInt(maxDevicesInput.value || "1", 10),
     expires_at: document.getElementById("userExpiresAtInput").value.trim(),
   };
   let isValid = true;
@@ -206,7 +207,7 @@ async function saveUser() {
     });
     showToast(editingUserId ? "用户已更新" : "新增用户成功", "success");
     resetUserForm();
-    hideUserEditor();
+    userEditorModal?.hide();
     await loadUsers();
   } catch (error) {
     showToast(error.message, "danger");
@@ -275,7 +276,7 @@ function resetUserForm() {
   document.getElementById("userRoleInput").value = "user";
   document.getElementById("userStatusInput").value = "active";
   document.getElementById("userEditionInput").value = "pro";
-  document.getElementById("userMaxDevicesInput").value = "3";
+  document.getElementById("userMaxDevicesInput").value = "1";
   document.getElementById("userExpiresAtInput").value = "";
   clearFormValidation(document.getElementById("userEditorPanel"));
 }

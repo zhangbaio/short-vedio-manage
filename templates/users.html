@@ -37,64 +37,6 @@
                 </div>
               </div>
 
-              <div class="inline-editor" id="userEditorPanel" hidden>
-                <div class="inline-editor-header">
-                  <h3 class="h6 mb-0" id="userEditorTitle">新增用户</h3>
-                  <button type="button" class="btn btn-sm btn-outline-secondary" id="cancelUserEditBtn">取消</button>
-                </div>
-                <div class="row g-3 align-items-end">
-                  <div class="col-lg-3">
-                    <label class="form-label" for="userNameInput">用户名</label>
-                    <input type="text" class="form-control" id="userNameInput" autocomplete="off" />
-                    <div class="invalid-feedback">用户名不能为空，2-30位字母数字下划线</div>
-                  </div>
-                  <div class="col-lg-3">
-                    <label class="form-label" for="userEmailInput">邮箱</label>
-                    <input type="email" class="form-control" id="userEmailInput" autocomplete="off" />
-                    <div class="invalid-feedback">邮箱格式不正确</div>
-                  </div>
-                  <div class="col-lg-3">
-                    <label class="form-label" for="userPasswordInput">密码</label>
-                    <input type="password" class="form-control" id="userPasswordInput" autocomplete="new-password" />
-                    <div class="invalid-feedback">新增用户密码至少6位</div>
-                  </div>
-                  <div class="col-lg-3">
-                    <label class="form-label" for="userRoleInput">角色</label>
-                    <select class="form-select" id="userRoleInput">
-                      <option value="user">普通用户</option>
-                      <option value="admin">管理员</option>
-                    </select>
-                  </div>
-                  <div class="col-lg-3">
-                    <label class="form-label" for="userStatusInput">账号状态</label>
-                    <select class="form-select" id="userStatusInput">
-                      <option value="active">启用</option>
-                      <option value="disabled">停用</option>
-                    </select>
-                  </div>
-                  <div class="col-lg-3">
-                    <label class="form-label" for="userEditionInput">版本</label>
-                    <select class="form-select" id="userEditionInput">
-                      <option value="basic">Basic</option>
-                      <option value="pro">Pro</option>
-                      <option value="enterprise">Enterprise</option>
-                    </select>
-                  </div>
-                  <div class="col-lg-3">
-                    <label class="form-label" for="userMaxDevicesInput">设备数</label>
-                    <input type="number" class="form-control" id="userMaxDevicesInput" min="1" max="100" value="3" />
-                    <div class="invalid-feedback">设备数必须大于0</div>
-                  </div>
-                  <div class="col-lg-3">
-                    <label class="form-label" for="userExpiresAtInput">到期时间</label>
-                    <input type="date" class="form-control" id="userExpiresAtInput" />
-                  </div>
-                  <div class="col-lg-3 ms-auto">
-                    <button class="btn btn-primary w-100" id="createUserBtn">保存</button>
-                  </div>
-                </div>
-              </div>
-
               <div class="inline-editor" id="userPasswordPanel" hidden>
                 <div class="inline-editor-header">
                   <div>
@@ -169,6 +111,73 @@
             </div>
           </div>
         </main>
+      </div>
+    </div>
+
+    <div class="modal fade" id="userEditorModal" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h2 class="modal-title h5 mb-0" id="userEditorTitle">新增用户</h2>
+            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div>
+          <div class="modal-body">
+            <div id="userEditorPanel">
+              <div class="row g-3 align-items-end">
+                <div class="col-lg-6">
+                  <label class="form-label" for="userNameInput">用户名</label>
+                  <input type="text" class="form-control" id="userNameInput" autocomplete="off" />
+                  <div class="invalid-feedback">用户名不能为空，2-30位字母数字下划线</div>
+                </div>
+                <div class="col-lg-6">
+                  <label class="form-label" for="userEmailInput">邮箱</label>
+                  <input type="email" class="form-control" id="userEmailInput" autocomplete="off" />
+                  <div class="invalid-feedback">邮箱格式不正确</div>
+                </div>
+                <div class="col-lg-6">
+                  <label class="form-label" for="userPasswordInput">密码</label>
+                  <input type="password" class="form-control" id="userPasswordInput" autocomplete="new-password" />
+                  <div class="invalid-feedback">新增用户密码至少6位</div>
+                </div>
+                <div class="col-lg-6">
+                  <label class="form-label" for="userRoleInput">角色</label>
+                  <select class="form-select" id="userRoleInput">
+                    <option value="user">普通用户</option>
+                    <option value="admin">管理员</option>
+                  </select>
+                </div>
+                <div class="col-lg-4">
+                  <label class="form-label" for="userStatusInput">账号状态</label>
+                  <select class="form-select" id="userStatusInput">
+                    <option value="active">启用</option>
+                    <option value="disabled">停用</option>
+                  </select>
+                </div>
+                <div class="col-lg-4">
+                  <label class="form-label" for="userEditionInput">版本</label>
+                  <select class="form-select" id="userEditionInput">
+                    <option value="basic">Basic</option>
+                    <option value="pro">Pro</option>
+                    <option value="enterprise">Enterprise</option>
+                  </select>
+                </div>
+                <div class="col-lg-4">
+                  <label class="form-label" for="userMaxDevicesInput">设备数</label>
+                  <input type="number" class="form-control" id="userMaxDevicesInput" min="1" max="100" value="1" />
+                  <div class="invalid-feedback">设备数必须大于0</div>
+                </div>
+                <div class="col-lg-6">
+                  <label class="form-label" for="userExpiresAtInput">到期时间</label>
+                  <input type="date" class="form-control" id="userExpiresAtInput" />
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">取消</button>
+            <button class="btn btn-primary" id="createUserBtn">保存</button>
+          </div>
+        </div>
       </div>
     </div>
 
