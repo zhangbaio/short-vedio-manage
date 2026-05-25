@@ -1869,6 +1869,7 @@ def validate_account_auth_payload(data: dict, *, require_registration: bool = Fa
         "app_name": str(data.get("app_name") or "").strip(),
         "app_version": str(data.get("app_version") or "").strip(),
         "token": str(data.get("token") or "").strip(),
+        "force_login": parse_json_bool(data.get("force_login"), default=True),
     }
     if require_registration:
         if not USERNAME_RE.match(payload["username"]):
@@ -1885,6 +1886,21 @@ def validate_account_auth_payload(data: dict, *, require_registration: bool = Fa
     return payload, None
 
 
+def parse_json_bool(value: object, *, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    text = str(value).strip().lower()
+    if not text:
+        return default
+    if text in {"1", "true", "yes", "y", "on"}:
+        return True
+    if text in {"0", "false", "no", "n", "off"}:
+        return False
+    return default
+
+
 def build_account_auth_response(
     user_row: sqlite3.Row,
     *,
@@ -1892,6 +1908,7 @@ def build_account_auth_response(
     token: str,
     logged_in_at: str | None = None,
     last_verified_at: str | None = None,
+    replaced_device_count: int = 0,
 ) -> dict:
     now_iso = datetime.datetime.now().isoformat(timespec="seconds")
     offline_grace_until = (
@@ -1912,6 +1929,7 @@ def build_account_auth_response(
         "edition": user_row["edition"],
         "licensee": username,
         "max_devices": int(user_row["max_devices"] or ACCOUNT_DEFAULT_MAX_DEVICES),
+        "replaced_device_count": int(replaced_device_count or 0),
     }
 
 
@@ -1931,6 +1949,7 @@ def activate_account_for_machine(
     device_name: str,
     app_name: str,
     app_version: str,
+    force_login: bool = True,
 ) -> dict:
     ok, error = ensure_account_can_login(user_row)
     if not ok:
@@ -1945,15 +1964,48 @@ def activate_account_for_machine(
         (user_row["id"], machine_id),
     ).fetchone()
 
-    if not device_row:
-        active_count = current_active_user_device_count(db, user_row["id"])
-        max_devices = int(user_row["max_devices"] or ACCOUNT_DEFAULT_MAX_DEVICES)
-        if active_count >= max_devices:
-            raise ValueError("账号已达到最大登录设备数")
-
     token = issue_account_token(user_row=user_row, machine_id=machine_id)
     token_hash = hash_token(token)
     now_iso = datetime.datetime.now().isoformat(timespec="seconds")
+    replaced_device_count = 0
+
+    active_current_row = db.execute(
+        """
+        SELECT id
+        FROM user_devices
+        WHERE user_id = ? AND machine_id = ? AND (revoked_at IS NULL OR revoked_at = '')
+        """,
+        (user_row["id"], machine_id),
+    ).fetchone()
+    if active_current_row is None:
+        active_count = current_active_user_device_count(db, user_row["id"])
+        max_devices = max(1, int(user_row["max_devices"] or ACCOUNT_DEFAULT_MAX_DEVICES))
+        overflow_count = active_count - max_devices + 1
+        if overflow_count > 0:
+            if not force_login:
+                raise ValueError("账号已在其他电脑登录")
+            old_rows = db.execute(
+                """
+                SELECT id
+                FROM user_devices
+                WHERE user_id = ?
+                  AND machine_id != ?
+                  AND (revoked_at IS NULL OR revoked_at = '')
+                ORDER BY COALESCE(last_verified_at, logged_in_at, '') ASC, id ASC
+                LIMIT ?
+                """,
+                (user_row["id"], machine_id, overflow_count),
+            ).fetchall()
+            for old_row in old_rows:
+                db.execute(
+                    """
+                    UPDATE user_devices
+                    SET revoked_at = ?
+                    WHERE id = ? AND (revoked_at IS NULL OR revoked_at = '')
+                    """,
+                    (now_iso, old_row["id"]),
+                )
+            replaced_device_count = len(old_rows)
 
     if device_row:
         db.execute(
@@ -2007,6 +2059,7 @@ def activate_account_for_machine(
             else now_iso
         ),
         last_verified_at=now_iso,
+        replaced_device_count=replaced_device_count,
     )
 
 
@@ -2409,6 +2462,7 @@ def client_register_account():
             device_name=payload["device_name"],
             app_name=payload["app_name"],
             app_version=payload["app_version"],
+            force_login=payload["force_login"],
         )
     except ValueError as exc:
         return jsonify({"ok": False, "message": str(exc)}), 400
@@ -2438,10 +2492,67 @@ def client_login_account():
             device_name=payload["device_name"],
             app_name=payload["app_name"],
             app_version=payload["app_version"],
+            force_login=payload["force_login"],
         )
     except ValueError as exc:
         return jsonify({"ok": False, "message": str(exc)}), 400
     return jsonify({"ok": True, "data": result})
+
+
+@app.route("/client-api/account/logout", methods=["POST"])
+@app.route("/account/logout", methods=["POST"])
+def client_logout_account():
+    data = request.get_json(silent=True) or {}
+    machine_id = str(data.get("machine_id") or "").strip()
+    token = str(data.get("token") or "").strip()
+    account = str(data.get("account") or data.get("username") or data.get("email") or "").strip()
+    if not machine_id:
+        return jsonify({"ok": False, "message": "机器码不能为空"}), 400
+    if not token:
+        return jsonify({"ok": False, "message": "登录凭证不能为空"}), 400
+
+    try:
+        token_payload = verify_account_token(token)
+    except ValueError as exc:
+        return jsonify({"ok": False, "message": str(exc)}), 400
+    if token_payload.get("machine_id") != machine_id:
+        return jsonify({"ok": False, "message": "登录凭证与当前机器不匹配"}), 400
+
+    db = get_db()
+    user_row = db.execute(
+        "SELECT * FROM users WHERE id = ?",
+        (token_payload.get("user_id"),),
+    ).fetchone()
+    if not user_row:
+        return jsonify({"ok": False, "message": "账号不存在"}), 404
+    if account and account not in {user_row["username"], user_row["email"] or ""}:
+        return jsonify({"ok": False, "message": "登录凭证与当前账号不匹配"}), 400
+
+    result = db.execute(
+        """
+        UPDATE user_devices
+        SET revoked_at = ?
+        WHERE user_id = ?
+          AND machine_id = ?
+          AND token_hash = ?
+          AND (revoked_at IS NULL OR revoked_at = '')
+        """,
+        (now_iso(), user_row["id"], machine_id, hash_token(token)),
+    )
+    db.execute(
+        "UPDATE users SET updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+        (user_row["id"],),
+    )
+    db.commit()
+    if result.rowcount == 0:
+        return jsonify({"ok": False, "message": "当前机器未登录或登录凭证已失效"}), 400
+    return jsonify(
+        {
+            "ok": True,
+            "message": "退出登录成功",
+            "data": {"username": user_row["username"], "machine_id": machine_id},
+        }
+    )
 
 
 @app.route("/client-api/account/verify", methods=["POST"])
