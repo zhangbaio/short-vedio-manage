@@ -1656,6 +1656,35 @@ def authenticate_remote_client(db: sqlite3.Connection, client_id: str, client_to
     return row
 
 
+def create_remote_client_record(
+    db: sqlite3.Connection,
+    *,
+    owner_user_id: int,
+    client_name: str,
+) -> tuple[sqlite3.Row, str]:
+    client_id = generate_remote_client_id()
+    client_token = generate_remote_client_token()
+    now = now_iso()
+    db.execute(
+        """
+        INSERT INTO remote_clients (
+            client_id, client_name, client_token_hash, owner_user_id, status, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, 'offline', ?, ?)
+        """,
+        (
+            client_id,
+            str(client_name or "").strip() or "默认设备",
+            hash_remote_client_token(client_token),
+            int(owner_user_id),
+            now,
+            now,
+        ),
+    )
+    db.commit()
+    row = get_remote_client_by_public_id(db, client_id)
+    return row, client_token
+
+
 def require_remote_client() -> tuple[sqlite3.Connection, sqlite3.Row] | tuple[sqlite3.Connection, None]:
     db = get_db()
     data = request.get_json(silent=True) or {}
@@ -2608,6 +2637,68 @@ def client_verify_account():
     except ValueError as exc:
         return jsonify({"ok": False, "message": str(exc)}), 400
     return jsonify({"ok": True, "data": result})
+
+
+@app.route("/client-api/account/remote-client", methods=["POST"])
+def client_create_remote_client_from_account():
+    data = request.get_json(silent=True) or {}
+    payload, error = validate_account_auth_payload(data)
+    if error:
+        return jsonify({"ok": False, "message": error}), 400
+    if not payload["token"]:
+        return jsonify({"ok": False, "message": "登录凭证不能为空"}), 400
+
+    try:
+        token_payload = verify_account_token(payload["token"])
+    except ValueError as exc:
+        return jsonify({"ok": False, "message": str(exc)}), 400
+    if token_payload.get("machine_id") != payload["machine_id"]:
+        return jsonify({"ok": False, "message": "登录凭证与当前机器不匹配"}), 400
+
+    db = get_db()
+    user_row = db.execute(
+        "SELECT * FROM users WHERE id = ?",
+        (token_payload.get("user_id"),),
+    ).fetchone()
+    if not user_row:
+        return jsonify({"ok": False, "message": "账号不存在"}), 404
+    if payload["account"] and payload["account"] not in {user_row["username"], user_row["email"] or ""}:
+        return jsonify({"ok": False, "message": "登录凭证与当前账号不匹配"}), 400
+    ok, account_error = ensure_account_can_login(user_row)
+    if not ok:
+        return jsonify({"ok": False, "message": account_error}), 400
+
+    device_row = db.execute(
+        """
+        SELECT *
+        FROM user_devices
+        WHERE user_id = ? AND machine_id = ?
+        """,
+        (user_row["id"], payload["machine_id"]),
+    ).fetchone()
+    if not device_row:
+        return jsonify({"ok": False, "message": "当前机器未登录或登录凭证已失效"}), 400
+    if str(device_row["revoked_at"] or "").strip():
+        return jsonify({"ok": False, "message": "当前机器登录已退出，请重新登录"}), 400
+    if device_row["token_hash"] != hash_token(payload["token"]):
+        return jsonify({"ok": False, "message": "登录凭证已失效，请重新登录"}), 400
+
+    client_name = str(data.get("client_name") or "").strip() or "默认设备"
+    row, client_token = create_remote_client_record(
+        db,
+        owner_user_id=int(user_row["id"]),
+        client_name=client_name,
+    )
+    return jsonify(
+        {
+            "ok": True,
+            "data": {
+                "item": serialize_remote_client(row),
+                "client_token": client_token,
+                "user_role": user_row["role"] or "user",
+            },
+        }
+    ), 201
 
 
 @app.route("/client-api/licenses/activate", methods=["POST"])
@@ -3806,26 +3897,11 @@ def create_remote_client():
     data = request.get_json(silent=True) or {}
     client_name = str(data.get("client_name") or "").strip() or "默认设备"
     db = get_db()
-    client_id = generate_remote_client_id()
-    client_token = generate_remote_client_token()
-    now = now_iso()
-    db.execute(
-        """
-        INSERT INTO remote_clients (
-            client_id, client_name, client_token_hash, owner_user_id, status, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, 'offline', ?, ?)
-        """,
-        (
-            client_id,
-            client_name,
-            hash_remote_client_token(client_token),
-            int(session["user_id"]),
-            now,
-            now,
-        ),
+    row, client_token = create_remote_client_record(
+        db,
+        owner_user_id=int(session["user_id"]),
+        client_name=client_name,
     )
-    db.commit()
-    row = get_remote_client_by_public_id(db, client_id)
     return jsonify(
         {
             "item": serialize_remote_client(row),
