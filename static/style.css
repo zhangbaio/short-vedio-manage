@@ -675,17 +675,21 @@ body {
 }
 
 .sortable-col {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: inherit;
+  font: inherit;
   cursor: pointer;
   user-select: none;
   white-space: nowrap;
 }
 
 .sortable-col:hover {
-  background-color: #e9ecef;
+  color: #0d6efd;
 }
 
 .sortable-col.sort-active {
-  background-color: #dbeafe;
   color: #1d4ed8;
 }
 

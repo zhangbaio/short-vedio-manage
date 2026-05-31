@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>小程序短剧管理 - 短剧管理系统</title>
+    <link
+      href="https://cdn.bootcdn.net/ajax/libs/bootstrap/5.3.2/css/bootstrap.min.css"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+  </head>
+  <body class="app-body">
+    {% set active_page = 'miniprogram_dramas' %}
+    <div class="app-shell">
+      {% include "partials/sidebar.html" %}
+      <div class="app-main">
+        <header class="app-topbar">
+          <div>
+            <h1 class="app-page-title">小程序短剧管理</h1>
+            <p class="app-page-subtitle">按平台查看上传记录，普通用户仅能查看自己的记录</p>
+          </div>
+          <div class="app-userbar">
+            <span>{{ session.username }}</span>
+            <span class="badge text-bg-primary">{{ session.role }}</span>
+            <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('logout') }}">退出</a>
+          </div>
+        </header>
+
+        <main class="app-content">
+          <div class="card mb-4">
+            <div class="card-body">
+              <div class="row g-3">
+                <div class="col-md-3">
+                  <label class="form-label" for="searchInput">搜索剧名</label>
+                  <input id="searchInput" class="form-control" placeholder="原剧名 / 新剧名" />
+                </div>
+                <div class="col-md-2">
+                  <label class="form-label" for="companySelect">公司</label>
+                  <select id="companySelect" class="form-select">
+                    <option value="">全部</option>
+                  </select>
+                </div>
+                <div class="col-md-2">
+                  <label class="form-label" for="reviewSelect">审核通过</label>
+                  <select id="reviewSelect" class="form-select">
+                    <option value="">全部</option>
+                    <option value="是">是</option>
+                    <option value="否">否</option>
+                  </select>
+                </div>
+                <div class="col-md-2">
+                  <label class="form-label" for="statusInput">上传状态</label>
+                  <input id="statusInput" class="form-control" placeholder="成功 / 失败" />
+                </div>
+                <div class="col-md-2">
+                  <label class="form-label" for="uploaderInput">上传者</label>
+                  <input id="uploaderInput" class="form-control" placeholder="按上传者筛选" />
+                </div>
+                <div class="col-md-2" id="ownerFilterWrap" hidden>
+                  <label class="form-label" for="ownerSelect">所属用户</label>
+                  <select id="ownerSelect" class="form-select">
+                    <option value="">全部用户</option>
+                  </select>
+                </div>
+                <div class="col-md-2">
+                  <label class="form-label" for="dateFrom">开始日期</label>
+                  <input id="dateFrom" class="form-control" type="date" />
+                </div>
+                <div class="col-md-2">
+                  <label class="form-label" for="dateTo">结束日期</label>
+                  <input id="dateTo" class="form-control" type="date" />
+                </div>
+                <div class="col-md-3 d-flex align-items-end gap-2">
+                  <button id="queryBtn" class="btn btn-primary" type="button">查询</button>
+                  <button id="resetBtn" class="btn btn-outline-secondary" type="button">重置</button>
+                  <button id="exportBtn" class="btn btn-outline-success" type="button">导出Excel</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="table-responsive desktop-table mobile-switchable mb-3">
+            <table class="table table-hover align-middle">
+              <thead class="table-light">
+                <tr>
+                  <th>#</th>
+                  <th><button class="sortable-col" type="button" data-sort="record_time">记录时间 <span class="sort-icon">↕</span></button></th>
+                  <th><button class="sortable-col" type="button" data-sort="owner_username">用户 <span class="sort-icon">↕</span></button></th>
+                  <th><button class="sortable-col" type="button" data-sort="original_name">原剧名 <span class="sort-icon">↕</span></button></th>
+                  <th><button class="sortable-col" type="button" data-sort="new_name">新剧名 <span class="sort-icon">↕</span></button></th>
+                  <th><button class="sortable-col" type="button" data-sort="episodes">集数 <span class="sort-icon">↕</span></button></th>
+                  <th>上传进度</th>
+                  <th><button class="sortable-col" type="button" data-sort="uploaded">上传状态 <span class="sort-icon">↕</span></button></th>
+                  <th><button class="sortable-col" type="button" data-sort="uploader">上传者 <span class="sort-icon">↕</span></button></th>
+                  <th><button class="sortable-col" type="button" data-sort="company">公司 <span class="sort-icon">↕</span></button></th>
+                </tr>
+              </thead>
+              <tbody id="dramaTableBody"></tbody>
+            </table>
+          </div>
+          <div class="mobile-card-list mb-3" id="dramaMobileList"></div>
+
+          <div class="d-flex flex-wrap align-items-center justify-content-between">
+            <span id="pageInfo">第1页</span>
+            <div class="d-flex align-items-center gap-2">
+              <label class="form-label m-0" for="pageSizeSelect">每页</label>
+              <select id="pageSizeSelect" class="form-select" style="width: 90px">
+                <option value="20">20</option>
+                <option value="50">50</option>
+                <option value="100">100</option>
+              </select>
+              <div class="btn-group" role="group">
+                <button class="btn btn-outline-secondary" id="firstPageBtn" type="button">首页</button>
+                <button class="btn btn-outline-secondary" id="prevPageBtn" type="button">上一页</button>
+                <button class="btn btn-outline-secondary" id="nextPageBtn" type="button">下一页</button>
+                <button class="btn btn-outline-secondary" id="lastPageBtn" type="button">末页</button>
+              </div>
+            </div>
+          </div>
+        </main>
+      </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='miniprogram_dramas.js') }}"></script>
+  </body>
+</html>

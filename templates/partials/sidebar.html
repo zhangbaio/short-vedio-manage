@@ -1,5 +1,5 @@
 <aside class="app-sidebar">
-  <a class="app-brand" href="{{ url_for('index') }}" aria-label="视频号短剧管理系统">
+  <a class="app-brand" href="{{ url_for('video_channel_dramas_page') }}" aria-label="短剧管理系统">
     <span class="app-brand-mark">短</span>
     <span class="app-brand-text">
       <strong>短剧管理</strong>
@@ -8,9 +8,17 @@
   </a>
 
   <nav class="app-nav" aria-label="主导航">
-    <a class="app-nav-link {% if active_page == 'dramas' %}active{% endif %}" href="{{ url_for('index') }}">
-      <span class="app-nav-icon">剧</span>
-      <span>短剧管理</span>
+    <a class="app-nav-link {% if active_page == 'video_channel_dramas' %}active{% endif %}" href="{{ url_for('video_channel_dramas_page') }}">
+      <span class="app-nav-icon">视</span>
+      <span>视频号短剧管理</span>
+    </a>
+    <a class="app-nav-link {% if active_page == 'miniprogram_dramas' %}active{% endif %}" href="{{ url_for('miniprogram_dramas_page') }}">
+      <span class="app-nav-icon">微</span>
+      <span>小程序短剧管理</span>
+    </a>
+    <a class="app-nav-link {% if active_page == 'kuaishou_dramas' %}active{% endif %}" href="{{ url_for('kuaishou_dramas_page') }}">
+      <span class="app-nav-icon">快</span>
+      <span>快手短剧管理</span>
     </a>
     <a class="app-nav-link {% if active_page == 'monitor' %}active{% endif %}" href="{{ url_for('monitor_dashboard') }}">
       <span class="app-nav-icon">图</span>

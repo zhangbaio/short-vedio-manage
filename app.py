@@ -2595,7 +2595,25 @@ def logout():
 @app.route("/")
 @login_required
 def index():
-    return render_template("index.html")
+    return redirect(url_for("video_channel_dramas_page"))
+
+
+@app.route("/dramas/video-channel")
+@login_required
+def video_channel_dramas_page():
+    return render_template("video_channel_dramas.html")
+
+
+@app.route("/dramas/miniprogram")
+@login_required
+def miniprogram_dramas_page():
+    return render_template("miniprogram_dramas.html")
+
+
+@app.route("/dramas/kuaishou")
+@login_required
+def kuaishou_dramas_page():
+    return render_template("kuaishou_dramas.html")
 
 
 @app.route("/monitor")
@@ -3707,9 +3725,24 @@ def list_drama_upload_records(drama_id: int):
 @login_required
 def list_companies():
     db = get_db()
-    rows = db.execute(
-        "SELECT DISTINCT company FROM dramas WHERE company IS NOT NULL AND company <> '' ORDER BY company ASC"
-    ).fetchall()
+    role = str(session.get("role") or "user").strip().lower()
+    if role == "admin":
+        rows = db.execute(
+            "SELECT DISTINCT company FROM dramas WHERE company IS NOT NULL AND company <> '' ORDER BY company ASC"
+        ).fetchall()
+    else:
+        rows = db.execute(
+            """
+            SELECT DISTINCT d.company
+            FROM upload_records ur
+            JOIN dramas d ON d.id = ur.drama_id
+            WHERE ur.owner_user_id = ?
+              AND d.company IS NOT NULL
+              AND d.company <> ''
+            ORDER BY d.company ASC
+            """,
+            (int(session["user_id"]),),
+        ).fetchall()
     return jsonify([row["company"] for row in rows])
 
 
