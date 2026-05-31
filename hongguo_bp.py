@@ -299,7 +299,10 @@ def rank():
     board = request.args.get("board", "recommend")
     if board not in H.RANK_BOARDS:
         return jsonify({"detail": f"board必须是 {list(H.RANK_BOARDS)}"}), 400
-    limit = int(request.args.get("limit", 30))
+    try:
+        limit = max(1, min(200, int(request.args.get("limit", 100))))
+    except ValueError:
+        limit = 100
     return jsonify({"board": board, "name": H.RANK_NAMES.get(board), "items": H.rank(board, limit)})
 
 
