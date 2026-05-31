@@ -83,7 +83,7 @@ function renderSub(){
   else if(view==='rank'){sub.innerHTML=`<select id="hgb" class="form-select" style="max-width:200px;display:inline-block"><option value="recommend">推荐榜</option><option value="hot">热播榜</option><option value="new">新剧榜</option></select> <button class="btn btn-primary" onclick="doRank()">刷新</button>`;doRank();}
   else if(view==='latest'){
     const adminBox = IS_ADMIN ? `<span style="margin-left:auto"></span>
-      监控间隔<input id="hgniv" type="number" min="5" class="form-control" style="width:90px;display:inline-block" title="分钟"> 分钟
+      监控间隔<input id="hgniv" type="number" min="1" class="form-control" style="width:90px;display:inline-block" title="分钟"> 分钟
       <button class="btn btn-outline-primary btn-sm" onclick="saveNewCfg()">保存</button>
       <label class="ms-2"><input type="checkbox" id="hgnen"> 启用</label>
       <button class="btn btn-warning btn-sm ms-2" onclick="checkNewNow()">立即抓取</button>` : '';

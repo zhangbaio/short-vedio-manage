@@ -82,9 +82,9 @@ def _db():
         PRIMARY KEY(genre, series_id))""")
     c.execute("CREATE INDEX IF NOT EXISTS idx_new_seen ON hg_new_seen(genre, in_window, first_seen)")
     c.execute("""CREATE TABLE IF NOT EXISTS hg_new_cfg(
-        id INTEGER PRIMARY KEY CHECK(id=1), interval_min INTEGER DEFAULT 360,
+        id INTEGER PRIMARY KEY CHECK(id=1), interval_min INTEGER DEFAULT 3,
         enabled INTEGER DEFAULT 1, last_check TEXT, last_status TEXT)""")
-    c.execute("INSERT OR IGNORE INTO hg_new_cfg(id,interval_min,enabled,last_check,last_status) VALUES(1,360,1,'','')")
+    c.execute("INSERT OR IGNORE INTO hg_new_cfg(id,interval_min,enabled,last_check,last_status) VALUES(1,3,1,'','')")
     return c
 
 
@@ -361,7 +361,7 @@ def new_cfg_get():
     c = _db()
     try:
         r = c.execute("SELECT interval_min, enabled, last_check, last_status FROM hg_new_cfg WHERE id=1").fetchone()
-        return dict(r) if r else {"interval_min": 360, "enabled": 1, "last_check": "", "last_status": ""}
+        return dict(r) if r else {"interval_min": 3, "enabled": 1, "last_check": "", "last_status": ""}
     finally:
         c.close()
 
@@ -370,7 +370,7 @@ def new_cfg_set(interval_min=None, enabled=None):
     c = _db()
     try:
         if interval_min is not None:
-            c.execute("UPDATE hg_new_cfg SET interval_min=? WHERE id=1", (max(5, int(interval_min)),))
+            c.execute("UPDATE hg_new_cfg SET interval_min=? WHERE id=1", (max(1, int(interval_min)),))
         if enabled is not None:
             c.execute("UPDATE hg_new_cfg SET enabled=? WHERE id=1", (1 if enabled else 0,))
         c.commit()
@@ -488,7 +488,7 @@ def _due(cfg, now_dt):
         return True
     try:
         dt = datetime.datetime.strptime(last, "%Y-%m-%d %H:%M:%S")
-        return (now_dt - dt).total_seconds() >= max(5, int(cfg.get("interval_min") or 120)) * 60
+        return (now_dt - dt).total_seconds() >= max(1, int(cfg.get("interval_min") or 120)) * 60
     except Exception:
         return True
 
