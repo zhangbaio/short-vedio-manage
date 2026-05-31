@@ -29,6 +29,9 @@
     .hg-list-intro{max-width:420px;color:var(--app-muted);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
     .hg-list-meta{color:var(--app-muted);font-size:12px}
     .hg-list-table .badge{font-weight:650}
+    .hg-category-tags{display:flex;flex-wrap:wrap;gap:4px;min-width:96px}
+    .hg-category-tags .badge{font-weight:600;border:1px solid var(--app-border);background:var(--app-surface-soft);color:var(--app-page-title)}
+    .hg-play-count{white-space:nowrap;color:var(--app-muted);font-size:12px}
     .hg-change-table .badge{min-width:42px}
     .hg-change-rank{white-space:nowrap}
     .hg-change-title{max-width:520px;word-break:break-word}
@@ -213,7 +216,14 @@ async function checkNow(){
 }
 function fmtPlay(v){const n=Number(v||0);if(!n)return '';return n>=10000?(n/10000).toFixed(n>=100000?0:1).replace(/\.0$/,'')+'万播放':n+'播放'}
 function shortDate(v){return (v||'').replace('T',' ').slice(0,16)||'—'}
-function categoryText(v){if(Array.isArray(v))return v.join(' / ');return String(v||'').replace(/[\[\]'"]/g,'').replace(/,/g,' / ')||'—'}
+function categoryList(v){
+  if(Array.isArray(v))return v.filter(Boolean);
+  return String(v||'').replace(/[\[\]'"]/g,'').split(/[、,，/|]/).map(x=>x.trim()).filter(Boolean);
+}
+function categoryTags(v){
+  const cats=[...new Set(categoryList(v))];
+  return cats.length?`<div class="hg-category-tags">${cats.map(x=>`<span class="badge">${esc(x)}</span>`).join('')}</div>`:'—';
+}
 function itemCover(it){return it.cover?'/img?url='+encodeURIComponent(it.cover):''}
 function itemStatus(it,kind){
   if(kind==='rank')return `<span class="badge text-bg-primary">第${Number(it.rank||0)||'—'}名</span>`;
@@ -224,7 +234,7 @@ function browseTable(list,kind){
   grid.className='';
   if(!list||!list.length){grid.innerHTML=`<div class="mobile-empty-state">暂无${kind==='rank'?'榜单':'搜索'}记录</div>`;return}
   const rows=list.map(it=>{
-    const cv=itemCover(it), sid=jsString(it.series_id), hot=it.hot||fmtPlay(it.play_cnt);
+    const cv=itemCover(it), sid=jsString(it.series_id), play=fmtPlay(it.play_cnt);
     return `<tr>
       <td>${cv?`<img class="hg-list-cover" loading="lazy" src="${cv}" onerror="this.style.opacity=.2">`:'—'}</td>
       <td>
@@ -232,15 +242,16 @@ function browseTable(list,kind){
         <div class="hg-list-intro" title="${esc(it.intro)}">${esc(it.intro||'暂无简介')}</div>
       </td>
       <td>${itemStatus(it,kind)}</td>
-      <td class="hg-list-meta">${esc(categoryText(it.category||it.copyright))}</td>
+      <td>${categoryTags(it.category||it.copyright)}</td>
       <td>${Number(it.episode_cnt||0)||'—'}集</td>
-      <td class="hg-list-meta">${it.score?`★ ${esc(it.score)}`:'—'}${hot?`<br>${esc(hot)}`:''}</td>
+      <td class="hg-list-meta">${it.score?`★ ${esc(it.score)}`:'—'}</td>
+      <td class="hg-play-count">${esc(play||it.hot||'—')}</td>
       <td class="hg-list-meta">${esc(it.copyright||'—')}</td>
       <td><button class="btn btn-sm btn-outline-primary" onclick="openSeries('${sid}')">详情</button></td>
     </tr>`;
   }).join('');
   grid.innerHTML=`<div class="table-responsive"><table class="table table-hover align-middle mb-0 hg-list-table">
-    <thead><tr><th>封面</th><th>剧名</th><th>${kind==='rank'?'排名':'状态'}</th><th>分类/来源</th><th>集数</th><th>热度</th><th>版权</th><th>操作</th></tr></thead>
+    <thead><tr><th>封面</th><th>剧名</th><th>${kind==='rank'?'排名':'状态'}</th><th>分类</th><th>集数</th><th>评分</th><th>播放量</th><th>版权</th><th>操作</th></tr></thead>
     <tbody>${rows}</tbody></table></div>`;
 }
 function latestTable(list){
@@ -251,7 +262,7 @@ function latestTable(list){
     const status=itemStatus(it,'latest');
     const title=esc(it.title||'未命名短剧');
     const sid=jsString(it.series_id);
-    const hot=it.hot||fmtPlay(it.play_cnt);
+    const play=fmtPlay(it.play_cnt);
     return `<tr>
       <td>${cv?`<img class="hg-list-cover" loading="lazy" src="${cv}" onerror="this.style.opacity=.2">`:'—'}</td>
       <td>
@@ -260,16 +271,17 @@ function latestTable(list){
       </td>
       <td>${status}</td>
       <td>${GENRE_NAMES[it.genre]||document.getElementById('hgg')?.selectedOptions[0]?.textContent||'—'}</td>
-      <td class="hg-list-meta">${esc(categoryText(it.category))}</td>
+      <td>${categoryTags(it.category)}</td>
       <td>${Number(it.episode_cnt||0)||'—'}集</td>
-      <td class="hg-list-meta">${it.score?`★ ${esc(it.score)}`:'—'}${hot?`<br>${esc(hot)}`:''}</td>
+      <td class="hg-list-meta">${it.score?`★ ${esc(it.score)}`:'—'}</td>
+      <td class="hg-play-count">${esc(play||'—')}</td>
       <td class="hg-list-meta">${shortDate(it.first_seen)}</td>
       <td class="hg-list-meta">${shortDate(it.last_seen)}</td>
       <td><button class="btn btn-sm btn-outline-primary" onclick="openSeries('${sid}')">详情</button></td>
     </tr>`;
   }).join('');
   grid.innerHTML=`<div class="table-responsive"><table class="table table-hover align-middle mb-0 hg-list-table">
-    <thead><tr><th>封面</th><th>剧名</th><th>状态</th><th>体裁</th><th>分类</th><th>集数</th><th>热度</th><th>首次发现</th><th>最近抓取</th><th>操作</th></tr></thead>
+    <thead><tr><th>封面</th><th>剧名</th><th>状态</th><th>体裁</th><th>分类</th><th>集数</th><th>评分</th><th>播放量</th><th>首次发现</th><th>最近抓取</th><th>操作</th></tr></thead>
     <tbody>${rows}</tbody></table></div>`;
 }
 function cards(list){grid.className='hg-grid';grid.innerHTML='';if(!list||!list.length){grid.innerHTML='无结果';return}list.forEach(it=>{const d=document.createElement('div');d.className='hg-card';const cv=it.cover?'/img?url='+encodeURIComponent(it.cover):'';const hot=it.hot||fmtPlay(it.play_cnt);d.innerHTML=`<img loading="lazy" src="${cv}" onerror="this.style.opacity=.2"><div class="b"><div class="t">${esc(it.title)}${it.today?'<span class="hg-badge">今日</span>':''}</div><div class="m">${it.episode_cnt||0}集 ${it.score?'★'+esc(it.score):''} ${esc(hot)}</div></div>`;d.onclick=()=>openSeries(it.series_id);grid.appendChild(d)})}

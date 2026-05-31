@@ -462,13 +462,19 @@ def latest(genre="short_play", only_today=True, max_items=120, stop_ids=None):
             is_today = "今日上新" in subs
             if is_today:
                 page_today += 1
-            cat = next((s for s in subs if s and s != "今日上新" and not re.match(r"^[\d.]+万", s)), "")
+            cats = []
+            for s in subs:
+                if (not s or s == "今日上新" or re.match(r"^[\d.]+万", s)
+                        or "播放" in s or re.match(r"^\d+集$", s)):
+                    continue
+                if s not in cats:
+                    cats.append(s)
             if want_today and not is_today:
                 continue  # 短剧今日模式: 跳过非今日(仍扫完本页)
             out.append({"series_id": sid, "title": it.get("title", ""),
                         "episode_cnt": it.get("episode_cnt", 0), "score": it.get("score", ""),
                         "play_cnt": it.get("play_cnt", 0), "cover": it.get("cover", ""),
-                        "category": cat, "today": is_today,
+                        "category": " / ".join(cats), "today": is_today,
                         "premiere": (it.get("tag_info") or {}).get("text", ""),
                         "intro": (it.get("video_desc") or "")[:50]})
             if len(out) >= max_items:
