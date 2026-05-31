@@ -1,6 +1,6 @@
 (() => {
   const PLATFORM = "kuaishou";
-  const EMPTY_COLSPAN = 13;
+  const EMPTY_COLSPAN = 16;
   const state = {
     page: 1,
     pageSize: 20,
@@ -172,7 +172,10 @@
         <td>${statusBadge(item.upload_status)}</td>
         <td>${escapeHtml(item.series_id || item.mini_series_id || "-")}</td>
         <td>${escapeHtml(item.audit_status || "-")}</td>
+        <td class="text-truncate" style="max-width: 260px">${escapeHtml(item.audit_reject_detail || item.audit_reject_reason || "-")}</td>
+        <td>${statusTextBadge(item.online_status)}</td>
         <td>${escapeHtml(item.selling_status || "-")}</td>
+        <td>${statusTextBadge(item.distribution_status)}</td>
         <td>${escapeHtml(item.uploader_display || item.account_profile_name || item.drama_uploader || "-")}</td>
         <td>${escapeHtml(item.company || "-")}</td>
       `;
@@ -191,8 +194,9 @@
         <div class="mobile-record-grid">
           <div><span>用户</span><strong>${escapeHtml(item.owner_username || "-")}</strong></div>
           <div><span>快手ID</span><strong>${escapeHtml(item.series_id || item.mini_series_id || "-")}</strong></div>
-          <div><span>进度</span><strong>${escapeHtml(progressText(item))}</strong></div>
-          <div><span>售卖</span><strong>${escapeHtml(item.selling_status || "-")}</strong></div>
+          <div><span>上架</span><strong>${escapeHtml(item.online_status || "-")}</strong></div>
+          <div><span>分销</span><strong>${escapeHtml(item.distribution_status || "-")}</strong></div>
+          <div><span>审核原因</span><strong>${escapeHtml(item.audit_reject_detail || item.audit_reject_reason || "-")}</strong></div>
         </div>
       `;
       mobileList.appendChild(card);
@@ -229,7 +233,7 @@
   }
 
   function downloadCsv(filename, rows) {
-    const header = ["记录时间", "用户", "原剧名", "新剧名", "集数", "上传进度", "上传状态", "快手剧集ID", "审核状态", "售卖状态", "上传者", "公司"];
+    const header = ["记录时间", "用户", "原剧名", "新剧名", "集数", "上传进度", "上传状态", "快手剧集ID", "审核状态", "审核未通过原因", "上架状态", "售卖状态", "分销状态", "上传者", "公司"];
     const body = rows.map((item) => [
       item.record_time || item.date || "",
       item.owner_username || "",
@@ -240,7 +244,10 @@
       item.upload_status || "",
       item.series_id || item.mini_series_id || "",
       item.audit_status || "",
+      item.audit_reject_detail || item.audit_reject_reason || "",
+      item.online_status || "",
       item.selling_status || "",
+      item.distribution_status || "",
       item.uploader_display || item.account_profile_name || item.drama_uploader || "",
       item.company || "",
     ]);
@@ -268,6 +275,18 @@
       : /成功|完成|已上传|success|done/i.test(text)
         ? "text-bg-success"
         : "text-bg-secondary";
+    return `<span class="badge ${cls}">${escapeHtml(text)}</span>`;
+  }
+
+  function statusTextBadge(status) {
+    const text = String(status || "-").trim() || "-";
+    const cls = /失败|错误|未通过|rejected|failed|error|deleted/i.test(text)
+      ? "text-bg-danger"
+      : /成功|已上架|已分销|online|manual_online|success|distributed|done|skipped_existing/i.test(text)
+        ? "text-bg-success"
+        : /待|审核中|pending|retry|skipped/i.test(text)
+          ? "text-bg-warning"
+          : "text-bg-secondary";
     return `<span class="badge ${cls}">${escapeHtml(text)}</span>`;
   }
 

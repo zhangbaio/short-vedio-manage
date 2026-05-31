@@ -463,6 +463,13 @@ def init_db() -> None:
                 mini_series_id TEXT,
                 audit_status TEXT,
                 selling_status TEXT,
+                audit_reject_reason TEXT,
+                audit_reject_detail TEXT,
+                online_status TEXT,
+                online_at TEXT,
+                distribution_status TEXT,
+                distribution_at TEXT,
+                distribution_detail TEXT,
                 submitted_at TEXT,
                 raw_json TEXT,
                 created_at TEXT,
@@ -485,6 +492,9 @@ def init_db() -> None:
                 external_series_id TEXT,
                 audit_status TEXT,
                 selling_status TEXT,
+                audit_reject_reason TEXT,
+                online_status TEXT,
+                distribution_status TEXT,
                 updated_at TEXT,
                 FOREIGN KEY (drama_id) REFERENCES dramas(id) ON DELETE CASCADE,
                 FOREIGN KEY (last_record_id) REFERENCES upload_records(id) ON DELETE SET NULL,
@@ -511,6 +521,16 @@ def init_db() -> None:
             "ALTER TABLE users ADD COLUMN edition TEXT NOT NULL DEFAULT 'pro'",
             "ALTER TABLE users ADD COLUMN expires_at TEXT DEFAULT NULL",
             "ALTER TABLE users ADD COLUMN updated_at TEXT DEFAULT NULL",
+            "ALTER TABLE upload_records ADD COLUMN audit_reject_reason TEXT DEFAULT NULL",
+            "ALTER TABLE upload_records ADD COLUMN audit_reject_detail TEXT DEFAULT NULL",
+            "ALTER TABLE upload_records ADD COLUMN online_status TEXT DEFAULT NULL",
+            "ALTER TABLE upload_records ADD COLUMN online_at TEXT DEFAULT NULL",
+            "ALTER TABLE upload_records ADD COLUMN distribution_status TEXT DEFAULT NULL",
+            "ALTER TABLE upload_records ADD COLUMN distribution_at TEXT DEFAULT NULL",
+            "ALTER TABLE upload_records ADD COLUMN distribution_detail TEXT DEFAULT NULL",
+            "ALTER TABLE drama_platform_status ADD COLUMN audit_reject_reason TEXT DEFAULT NULL",
+            "ALTER TABLE drama_platform_status ADD COLUMN online_status TEXT DEFAULT NULL",
+            "ALTER TABLE drama_platform_status ADD COLUMN distribution_status TEXT DEFAULT NULL",
         ]:
             try:
                 db.execute(col_def)
@@ -1920,10 +1940,17 @@ def sanitize_upload_record_payload(data: dict[str, Any]) -> tuple[dict[str, Any]
         "mini_series_id": _upload_record_text(merged, "mini_series_id", limit=100),
         "audit_status": _upload_record_text(merged, "audit_status", "audit_status_text", limit=100),
         "selling_status": _upload_record_text(merged, "selling_status", "selling_status_text", limit=100),
+        "audit_reject_reason": _upload_record_text(merged, "audit_reject_reason", "reject_reason", "audit_reason", limit=1000),
+        "audit_reject_detail": _upload_record_text(merged, "audit_reject_detail", "reject_reason_detail", "audit_reason_detail", limit=2000),
+        "online_status": _upload_record_text(merged, "online_status", "listing_status", limit=100),
+        "online_at": _upload_record_text(merged, "online_at", "listing_at", limit=50),
+        "distribution_status": _upload_record_text(merged, "distribution_status", limit=100),
+        "distribution_at": _upload_record_text(merged, "distribution_at", limit=50),
+        "distribution_detail": _upload_record_text(merged, "distribution_detail", "distribution_error", limit=2000),
         "submitted_at": _upload_record_text(merged, "submitted_at", limit=50),
         "raw_json": json.dumps(raw or data, ensure_ascii=False, sort_keys=True),
     }
-    payload["sync_key"] = _upload_record_key(payload, raw or data)
+    payload["sync_key"] = _upload_record_text(merged, "sync_key", limit=128) or _upload_record_key(payload, raw or data)
     if not payload["record_time"]:
         payload["record_time"] = now_iso()
     if not payload["date"]:
@@ -1996,8 +2023,9 @@ def refresh_drama_platform_status(db: sqlite3.Connection, row: sqlite3.Row) -> N
         INSERT INTO drama_platform_status (
             drama_id, platform, platform_label, latest_status, uploaded_video_count,
             video_file_count, last_record_id, external_series_id, audit_status,
-            selling_status, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            selling_status, audit_reject_reason, online_status, distribution_status,
+            updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(drama_id, platform) DO UPDATE SET
             platform_label = excluded.platform_label,
             latest_status = excluded.latest_status,
@@ -2007,6 +2035,9 @@ def refresh_drama_platform_status(db: sqlite3.Connection, row: sqlite3.Row) -> N
             external_series_id = excluded.external_series_id,
             audit_status = excluded.audit_status,
             selling_status = excluded.selling_status,
+            audit_reject_reason = excluded.audit_reject_reason,
+            online_status = excluded.online_status,
+            distribution_status = excluded.distribution_status,
             updated_at = excluded.updated_at
         """,
         (
@@ -2020,6 +2051,9 @@ def refresh_drama_platform_status(db: sqlite3.Connection, row: sqlite3.Row) -> N
             row["series_id"] or row["mini_series_id"],
             row["audit_status"],
             row["selling_status"],
+            row["audit_reject_reason"],
+            row["online_status"],
+            row["distribution_status"],
             now,
         ),
     )
@@ -3665,6 +3699,13 @@ def list_platform_dramas():
             ur.mini_series_id,
             ur.audit_status,
             ur.selling_status,
+            ur.audit_reject_reason,
+            ur.audit_reject_detail,
+            ur.online_status,
+            ur.online_at,
+            ur.distribution_status,
+            ur.distribution_at,
+            ur.distribution_detail,
             ur.submitted_at,
             ur.created_at,
             ur.updated_at
