@@ -33,9 +33,13 @@ from itsdangerous import BadSignature, BadTimeSignature, SignatureExpired, URLSa
 from werkzeug.security import check_password_hash, generate_password_hash
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+STATIC_DIR = os.path.join(BASE_DIR, "static")
 DATA_DIR = os.path.join(BASE_DIR, "data")
 DATABASE = os.path.join(DATA_DIR, "dramas.db")
 REMOTE_UPLOAD_DIR = os.path.join(DATA_DIR, "remote_uploads")
+ICON_DIR = os.path.join(STATIC_DIR, "icons")
+FAVICON_PATH = os.path.join(ICON_DIR, "app-icon.ico")
+APPLE_TOUCH_ICON_PATH = os.path.join(ICON_DIR, "app-icon.png")
 
 ALLOWED_FLAGS = {"是", "否"}
 SORTABLE_FIELDS = {
@@ -199,6 +203,16 @@ app.config["LICENSE_SIGNING_KEY"] = os.environ.get(
     "LICENSE_SIGNING_KEY",
     app.config["SECRET_KEY"],
 )
+
+
+@app.route("/favicon.ico")
+def favicon():
+    return send_file(FAVICON_PATH, mimetype="image/vnd.microsoft.icon", max_age=86400)
+
+
+@app.route("/apple-touch-icon.png")
+def apple_touch_icon():
+    return send_file(APPLE_TOUCH_ICON_PATH, mimetype="image/png", max_age=86400)
 
 # 红果短剧链路(数据API + 密钥管理) Blueprint; 失败不影响主应用
 try:

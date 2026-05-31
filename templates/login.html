@@ -4,7 +4,11 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>登录 - 视频号短剧管理系统</title>
+  <link rel="icon" href="{{ url_for('static', filename='icons/app-icon.ico') }}?v=20260531" sizes="any" />
+  <link rel="icon" type="image/png" href="{{ url_for('static', filename='icons/app-icon.png') }}?v=20260531" />
+  <link rel="apple-touch-icon" href="{{ url_for('static', filename='icons/app-icon.png') }}?v=20260531" />
   <link href="https://cdn.bootcdn.net/ajax/libs/bootstrap/5.3.2/css/bootstrap.min.css" rel="stylesheet" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
   <style>
     * {
       box-sizing: border-box;
@@ -17,9 +21,10 @@
       align-items: center;
       justify-content: center;
       background:
-        linear-gradient(180deg, rgba(255, 255, 255, 0.72), rgba(247, 250, 252, 0.92)),
-        #edf2f7;
-      color: #0f172a;
+        radial-gradient(circle at 50% 18%, color-mix(in srgb, var(--app-primary) 9%, transparent), transparent 32%),
+        linear-gradient(180deg, color-mix(in srgb, var(--app-bg-top) 82%, #fff), var(--app-bg)),
+        var(--app-bg);
+      color: var(--app-text);
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB",
         "Microsoft YaHei", sans-serif;
     }
@@ -33,17 +38,25 @@
     .login-card {
       width: 100%;
       padding: 40px;
-      border: 1px solid #dbe3ee;
+      border: 1px solid var(--app-border);
       border-radius: 12px;
-      background: #fff;
-      box-shadow: 0 24px 60px rgba(15, 23, 42, 0.10);
+      background: var(--app-surface);
+      box-shadow: var(--app-shadow-lg);
     }
 
     .brand {
       display: flex;
       align-items: center;
+      justify-content: space-between;
       gap: 12px;
       margin-bottom: 32px;
+    }
+
+    .brand-main {
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      gap: 12px;
     }
 
     .brand-mark {
@@ -53,7 +66,8 @@
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      background: #1d4ed8;
+      background: var(--app-brand-bg);
+      box-shadow: var(--app-brand-shadow);
       color: #fff;
       font-size: 18px;
       font-weight: 800;
@@ -61,6 +75,7 @@
 
     .brand-title {
       margin: 0;
+      color: var(--app-page-title);
       font-size: 20px;
       font-weight: 760;
       letter-spacing: 0;
@@ -68,13 +83,13 @@
 
     .brand-subtitle {
       margin: 4px 0 0;
-      color: #64748b;
+      color: var(--app-muted);
       font-size: 13px;
     }
 
     .form-label {
       margin-bottom: 8px;
-      color: #334155;
+      color: var(--app-page-title);
       font-size: 14px;
       font-weight: 650;
     }
@@ -90,28 +105,29 @@
       width: 18px;
       height: 18px;
       transform: translateY(-50%);
-      color: #94a3b8;
+      color: var(--app-subtle);
       pointer-events: none;
     }
 
     .form-control {
       min-height: 46px;
       padding: 11px 14px 11px 44px;
-      border: 1px solid #cbd5e1;
+      border: 1px solid var(--app-border-strong);
       border-radius: 8px;
-      color: #0f172a;
+      background: var(--app-surface);
+      color: var(--app-text);
       font-size: 14px;
       box-shadow: none;
       transition: border-color 0.16s ease, box-shadow 0.16s ease;
     }
 
     .form-control::placeholder {
-      color: #94a3b8;
+      color: var(--app-subtle);
     }
 
     .form-control:focus {
-      border-color: #2563eb;
-      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.14);
+      border-color: var(--app-primary);
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--app-primary) 18%, transparent);
     }
 
     .btn-login {
@@ -120,7 +136,7 @@
       margin-top: 10px;
       border: 0;
       border-radius: 8px;
-      background: #2563eb;
+      background: var(--app-primary);
       color: #fff;
       font-size: 15px;
       font-weight: 700;
@@ -129,8 +145,8 @@
 
     .btn-login:hover,
     .btn-login:focus {
-      background: #1d4ed8;
-      box-shadow: 0 10px 24px rgba(37, 99, 235, 0.22);
+      background: var(--app-primary-strong);
+      box-shadow: 0 10px 24px color-mix(in srgb, var(--app-primary) 24%, transparent);
       transform: translateY(-1px);
     }
 
@@ -162,7 +178,7 @@
 
     .login-footer {
       margin: 18px 0 0;
-      color: #94a3b8;
+      color: var(--app-subtle);
       font-size: 12px;
       text-align: center;
     }
@@ -177,7 +193,12 @@
       }
 
       .brand {
+        align-items: flex-start;
         margin-bottom: 26px;
+      }
+
+      .brand-main {
+        align-items: flex-start;
       }
     }
   </style>
@@ -186,10 +207,12 @@
   <main class="login-shell">
     <section class="login-card" aria-label="登录">
       <div class="brand">
-        <div class="brand-mark">短</div>
-        <div>
-          <h1 class="brand-title">视频号短剧管理系统</h1>
-          <p class="brand-subtitle">请输入账号信息登录工作台</p>
+        <div class="brand-main">
+          <div class="brand-mark">短</div>
+          <div>
+            <h1 class="brand-title">视频号短剧管理系统</h1>
+            <p class="brand-subtitle">请输入账号信息登录工作台</p>
+          </div>
         </div>
       </div>
 
@@ -245,5 +268,6 @@
 
     <p class="login-footer">© 2026 视频号短剧管理系统</p>
   </main>
+  <script src="{{ url_for('static', filename='theme.js') }}"></script>
 </body>
 </html>

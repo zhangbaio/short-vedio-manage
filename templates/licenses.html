@@ -4,10 +4,14 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>授权码管理 - 视频号短剧管理系统</title>
+    <link rel="icon" href="{{ url_for('static', filename='icons/app-icon.ico') }}?v=20260531" sizes="any" />
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='icons/app-icon.png') }}?v=20260531" />
+    <link rel="apple-touch-icon" href="{{ url_for('static', filename='icons/app-icon.png') }}?v=20260531" />
     <link
       href="https://cdn.bootcdn.net/ajax/libs/bootstrap/5.3.2/css/bootstrap.min.css"
       rel="stylesheet"
     />
+    <link href="https://cdn.bootcdn.net/ajax/libs/bootstrap-icons/1.11.3/font/bootstrap-icons.min.css" rel="stylesheet" />
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
   </head>
   <body class="app-body">
@@ -21,6 +25,7 @@
             <p class="app-page-subtitle">创建授权码，查看设备绑定、启停和恢复状态</p>
           </div>
           <div class="app-userbar">
+            {% include "partials/theme_switch.html" %}
             <span class="app-user-chip">{{ session.username }} · {{ session.role }}</span>
             <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('logout') }}">退出</a>
           </div>
@@ -237,6 +242,7 @@
 
     <div class="toast-container position-fixed top-0 end-0 p-3" style="z-index: 9999" id="toastContainer"></div>
 
+    <script src="{{ url_for('static', filename='theme.js') }}"></script>
     <script
       src="https://cdn.bootcdn.net/ajax/libs/bootstrap/5.3.2/js/bootstrap.bundle.min.js"
       crossorigin="anonymous"

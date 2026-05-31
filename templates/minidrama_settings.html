@@ -4,7 +4,11 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>小程序配置 - 视频号短剧管理系统</title>
+    <link rel="icon" href="{{ url_for('static', filename='icons/app-icon.ico') }}?v=20260531" sizes="any" />
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='icons/app-icon.png') }}?v=20260531" />
+    <link rel="apple-touch-icon" href="{{ url_for('static', filename='icons/app-icon.png') }}?v=20260531" />
     <link href="https://cdn.bootcdn.net/ajax/libs/bootstrap/5.3.2/css/bootstrap.min.css" rel="stylesheet" />
+    <link href="https://cdn.bootcdn.net/ajax/libs/bootstrap-icons/1.11.3/font/bootstrap-icons.min.css" rel="stylesheet" />
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
   </head>
   <body class="app-body">
@@ -18,6 +22,7 @@
             <p class="app-page-subtitle">维护多个小程序 AppID 与 AppSecret</p>
           </div>
           <div class="app-userbar">
+            {% include "partials/theme_switch.html" %}
             <span class="app-user-chip">{{ session.username }} · {{ session.role }}</span>
             <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('logout') }}">退出</a>
           </div>
@@ -101,6 +106,7 @@
       window.adminPage = "minidrama";
     </script>
     <div class="toast-container position-fixed top-0 end-0 p-3" style="z-index:9999" id="toastContainer"></div>
+    <script src="{{ url_for('static', filename='theme.js') }}"></script>
     <script src="https://cdn.bootcdn.net/ajax/libs/bootstrap/5.3.2/js/bootstrap.bundle.min.js"></script>
     <script src="{{ url_for('static', filename='admin_pages.js') }}"></script>
   </body>

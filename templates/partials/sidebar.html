@@ -1,6 +1,6 @@
 <aside class="app-sidebar">
   <a class="app-brand" href="{{ url_for('video_channel_dramas_page') }}" aria-label="短剧管理系统">
-    <span class="app-brand-mark">短</span>
+    <span class="app-brand-mark"><i class="bi bi-camera-reels" aria-hidden="true"></i></span>
     <span class="app-brand-text">
       <strong>短剧管理</strong>
       <small>运营工作台</small>
@@ -9,32 +9,32 @@
 
   <nav class="app-nav" aria-label="主导航">
     <a class="app-nav-link {% if active_page == 'video_channel_dramas' %}active{% endif %}" href="{{ url_for('video_channel_dramas_page') }}">
-      <span class="app-nav-icon">视</span>
+      <span class="app-nav-icon"><i class="bi bi-play-btn" aria-hidden="true"></i></span>
       <span>视频号短剧管理</span>
     </a>
     <a class="app-nav-link {% if active_page == 'miniprogram_dramas' %}active{% endif %}" href="{{ url_for('miniprogram_dramas_page') }}">
-      <span class="app-nav-icon">微</span>
+      <span class="app-nav-icon"><i class="bi bi-phone" aria-hidden="true"></i></span>
       <span>小程序短剧管理</span>
     </a>
     <a class="app-nav-link {% if active_page == 'kuaishou_dramas' %}active{% endif %}" href="{{ url_for('kuaishou_dramas_page') }}">
-      <span class="app-nav-icon">快</span>
+      <span class="app-nav-icon"><i class="bi bi-lightning-charge" aria-hidden="true"></i></span>
       <span>快手短剧管理</span>
     </a>
     <a class="app-nav-link {% if active_page == 'monitor' %}active{% endif %}" href="{{ url_for('monitor_dashboard') }}">
-      <span class="app-nav-icon">图</span>
+      <span class="app-nav-icon"><i class="bi bi-graph-up-arrow" aria-hidden="true"></i></span>
       <span>数据监控</span>
     </a>
     <a class="app-nav-link {% if active_page == 'upload_records' %}active{% endif %}" href="{{ url_for('upload_records_page') }}">
-      <span class="app-nav-icon">传</span>
+      <span class="app-nav-icon"><i class="bi bi-cloud-arrow-up" aria-hidden="true"></i></span>
       <span>上传记录</span>
     </a>
     <a class="app-nav-link {% if active_page == 'hongguo' %}active{% endif %}" href="{{ url_for('hongguo.ui_page') }}">
-      <span class="app-nav-icon">果</span>
+      <span class="app-nav-icon"><i class="bi bi-collection-play" aria-hidden="true"></i></span>
       <span>红果短剧</span>
     </a>
     {% if session.role == 'admin' %}
     <a class="app-nav-link {% if active_page == 'licenses' %}active{% endif %}" href="{{ url_for('license_management') }}">
-      <span class="app-nav-icon">权</span>
+      <span class="app-nav-icon"><i class="bi bi-shield-check" aria-hidden="true"></i></span>
       <span>授权码管理</span>
     </a>
     {% endif %}
@@ -44,19 +44,19 @@
   <div class="app-sidebar-section">
     <div class="app-sidebar-title">快捷管理</div>
     <a class="app-nav-link {% if active_page == 'users' %}active{% endif %}" href="{{ url_for('user_management') }}">
-      <span class="app-nav-icon">人</span>
+      <span class="app-nav-icon"><i class="bi bi-people" aria-hidden="true"></i></span>
       <span>用户管理</span>
     </a>
     <a class="app-nav-link {% if active_page == 'minidrama_settings' %}active{% endif %}" href="{{ url_for('minidrama_settings_page') }}">
-      <span class="app-nav-icon">微</span>
+      <span class="app-nav-icon"><i class="bi bi-sliders" aria-hidden="true"></i></span>
       <span>小程序配置</span>
     </a>
     <a class="app-nav-link {% if active_page == 'kuaishou_settings' %}active{% endif %}" href="{{ url_for('kuaishou_settings_page') }}">
-      <span class="app-nav-icon">快</span>
+      <span class="app-nav-icon"><i class="bi bi-gear" aria-hidden="true"></i></span>
       <span>快手配置</span>
     </a>
     <a class="app-nav-link {% if active_page == 'remote' %}active{% endif %}" href="{{ url_for('remote_management') }}">
-      <span class="app-nav-icon">远</span>
+      <span class="app-nav-icon"><i class="bi bi-terminal" aria-hidden="true"></i></span>
       <span>远程控制</span>
       <span
         id="sidebarRemoteUnreadBadge"
@@ -65,7 +65,7 @@
       >0</span>
     </a>
     <a class="app-nav-link {% if active_page == 'hongguo_keys' %}active{% endif %}" href="{{ url_for('hongguo.keys_page') }}">
-      <span class="app-nav-icon">钥</span>
+      <span class="app-nav-icon"><i class="bi bi-key" aria-hidden="true"></i></span>
       <span>红果密钥</span>
     </a>
   </div>
