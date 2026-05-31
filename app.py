@@ -125,6 +125,23 @@ KUAISHOU_REFRESH_TOKEN_RENEW_MARGIN_SECONDS = 7 * 24 * 60 * 60
 KUAISHOU_TOKEN_REFRESH_LOCK_SECONDS = 60
 KUAISHOU_TOKEN_REFRESH_SCHEDULER_INTERVAL_SECONDS = _int_env('KUAISHOU_TOKEN_REFRESH_SCHEDULER_INTERVAL_SECONDS', 60 * 60)
 KUAISHOU_TOKEN_REFRESH_STARTUP_DELAY_SECONDS = _int_env('KUAISHOU_TOKEN_REFRESH_STARTUP_DELAY_SECONDS', 10)
+UPLOAD_RECORD_PLATFORMS = {"video_channel", "miniprogram", "kuaishou"}
+UPLOAD_RECORD_PLATFORM_LABELS = {
+    "video_channel": "微信视频号",
+    "miniprogram": "微信小程序",
+    "kuaishou": "快手",
+}
+PLATFORM_DRAMA_SORTABLE_FIELDS = {
+    "date": "COALESCE(ur.date, substr(ur.record_time, 1, 10), d.date, '')",
+    "record_time": "COALESCE(ur.record_time, ur.created_at, '')",
+    "original_name": "COALESCE(ur.original_name, d.original_name, '')",
+    "new_name": "COALESCE(ur.new_name, d.new_name, '')",
+    "episodes": "COALESCE(ur.episodes, d.episodes, 0)",
+    "uploaded": "COALESCE(ur.upload_status, '')",
+    "uploader": "COALESCE(ur.uploader_display, ur.owner_username, '')",
+    "company": "COALESCE(d.company, '')",
+    "owner_username": "COALESCE(ur.owner_username, '')",
+}
 
 HEADER_MAP = {
     "日期": "date",
@@ -414,6 +431,65 @@ def init_db() -> None:
                 updated_at TEXT,
                 updated_by INTEGER
             );
+
+            CREATE TABLE IF NOT EXISTS upload_records (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                owner_user_id INTEGER NOT NULL,
+                owner_username TEXT,
+                remote_client_id INTEGER,
+                drama_id INTEGER,
+                platform TEXT NOT NULL,
+                platform_label TEXT,
+                sync_key TEXT NOT NULL,
+                record_time TEXT,
+                date TEXT,
+                upload_status TEXT,
+                execution_mode TEXT,
+                step_label TEXT,
+                project_name TEXT,
+                project_path TEXT,
+                original_name TEXT,
+                new_name TEXT,
+                episodes INTEGER,
+                video_file_count INTEGER,
+                uploaded_video_count INTEGER,
+                uploader_display TEXT,
+                account_profile_id TEXT,
+                account_profile_name TEXT,
+                device_name TEXT,
+                failure_reason TEXT,
+                extra_info TEXT,
+                series_id TEXT,
+                mini_series_id TEXT,
+                audit_status TEXT,
+                selling_status TEXT,
+                submitted_at TEXT,
+                raw_json TEXT,
+                created_at TEXT,
+                updated_at TEXT,
+                FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE CASCADE,
+                FOREIGN KEY (remote_client_id) REFERENCES remote_clients(id) ON DELETE SET NULL,
+                FOREIGN KEY (drama_id) REFERENCES dramas(id) ON DELETE SET NULL,
+                UNIQUE(owner_user_id, platform, sync_key)
+            );
+
+            CREATE TABLE IF NOT EXISTS drama_platform_status (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                drama_id INTEGER NOT NULL,
+                platform TEXT NOT NULL,
+                platform_label TEXT,
+                latest_status TEXT,
+                uploaded_video_count INTEGER,
+                video_file_count INTEGER,
+                last_record_id INTEGER,
+                external_series_id TEXT,
+                audit_status TEXT,
+                selling_status TEXT,
+                updated_at TEXT,
+                FOREIGN KEY (drama_id) REFERENCES dramas(id) ON DELETE CASCADE,
+                FOREIGN KEY (last_record_id) REFERENCES upload_records(id) ON DELETE SET NULL,
+                UNIQUE(drama_id, platform)
+            );
             """
         )
         # Migrate: add source column if missing
@@ -491,6 +567,21 @@ def init_db() -> None:
         )
         db.execute(
             "CREATE INDEX IF NOT EXISTS idx_dramas_company ON dramas(company)"
+        )
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_upload_records_owner_user_id ON upload_records(owner_user_id)"
+        )
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_upload_records_platform ON upload_records(platform)"
+        )
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_upload_records_record_time ON upload_records(record_time)"
+        )
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_upload_records_drama_id ON upload_records(drama_id)"
+        )
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_drama_platform_status_drama_id ON drama_platform_status(drama_id)"
         )
         db.execute(
             """
@@ -1701,6 +1792,256 @@ def require_remote_client() -> tuple[sqlite3.Connection, sqlite3.Row] | tuple[sq
     return db, row
 
 
+def normalize_upload_record_platform(value: object) -> str:
+    normalized = str(value or "").strip().lower()
+    aliases = {
+        "weixin_video_channel": "video_channel",
+        "wechat_video_channel": "video_channel",
+        "weixin_channel": "video_channel",
+        "video": "video_channel",
+        "wechat_miniprogram": "miniprogram",
+        "weixin_miniprogram": "miniprogram",
+        "mini_program": "miniprogram",
+        "mini": "miniprogram",
+        "ks": "kuaishou",
+        "kwai": "kuaishou",
+    }
+    return aliases.get(normalized, normalized)
+
+
+def _upload_record_text(data: dict[str, Any], *keys: str, limit: int = 500) -> str:
+    for key in keys:
+        value = data.get(key)
+        text = str(value or "").strip()
+        if text:
+            return text[:limit]
+    return ""
+
+
+def _upload_record_int(data: dict[str, Any], *keys: str) -> int | None:
+    for key in keys:
+        value = data.get(key)
+        if value is None or value == "":
+            continue
+        parsed = to_int_or_none(value)
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def _upload_record_key(payload: dict[str, Any], raw: dict[str, Any]) -> str:
+    explicit = str(payload.get("sync_key") or "").strip()
+    if explicit:
+        return explicit[:128]
+    source = {
+        "platform": payload.get("platform"),
+        "record_time": payload.get("record_time"),
+        "project_path": payload.get("project_path"),
+        "original_name": payload.get("original_name"),
+        "new_name": payload.get("new_name"),
+        "upload_status": payload.get("upload_status"),
+        "step_label": payload.get("step_label"),
+        "series_id": payload.get("series_id"),
+        "mini_series_id": payload.get("mini_series_id"),
+        "raw": raw,
+    }
+    text = json.dumps(source, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _find_upload_record_drama_id(db: sqlite3.Connection, payload: dict[str, Any]) -> int | None:
+    drama_id = _upload_record_int(payload, "drama_id")
+    if drama_id:
+        row = db.execute("SELECT id FROM dramas WHERE id = ?", (drama_id,)).fetchone()
+        if row:
+            return int(row["id"])
+    original_name = str(payload.get("original_name") or "").strip()
+    new_name = str(payload.get("new_name") or "").strip()
+    if not original_name:
+        return None
+    if new_name:
+        row = db.execute(
+            "SELECT id FROM dramas WHERE original_name = ? AND new_name = ? ORDER BY id DESC LIMIT 1",
+            (original_name, new_name),
+        ).fetchone()
+        if row:
+            return int(row["id"])
+    row = db.execute(
+        "SELECT id FROM dramas WHERE original_name = ? ORDER BY id DESC LIMIT 1",
+        (original_name,),
+    ).fetchone()
+    return int(row["id"]) if row else None
+
+
+def _upload_record_successful(payload: dict[str, Any]) -> bool:
+    status = str(payload.get("upload_status") or "").strip().lower()
+    if any(token in status for token in ("成功", "完成", "已上传", "success", "done", "submitted")):
+        return True
+    if any(token in status for token in ("失败", "错误", "failed", "error")):
+        return False
+    uploaded_count = payload.get("uploaded_video_count")
+    video_count = payload.get("video_file_count")
+    try:
+        return int(uploaded_count or 0) > 0 and int(uploaded_count or 0) >= int(video_count or 0)
+    except (TypeError, ValueError):
+        return False
+
+
+def sanitize_upload_record_payload(data: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
+    raw = data.get("raw") if isinstance(data.get("raw"), dict) else {}
+    merged = {**raw, **data}
+    platform = normalize_upload_record_platform(merged.get("platform"))
+    if platform not in UPLOAD_RECORD_PLATFORMS:
+        return {}, "platform 仅支持 video_channel / miniprogram / kuaishou"
+
+    payload: dict[str, Any] = {
+        "platform": platform,
+        "platform_label": _upload_record_text(merged, "platform_label", "upload_platform", limit=50)
+        or UPLOAD_RECORD_PLATFORM_LABELS.get(platform, platform),
+        "record_time": _upload_record_text(merged, "record_time", "created_at", "time", limit=30),
+        "date": _upload_record_text(merged, "date", limit=20),
+        "upload_status": _upload_record_text(merged, "upload_status", "status", limit=100),
+        "execution_mode": _upload_record_text(merged, "execution_mode", "mode", limit=100),
+        "step_label": _upload_record_text(merged, "step_label", "step", limit=200),
+        "project_name": _upload_record_text(merged, "project_name", "title", limit=200),
+        "project_path": _upload_record_text(merged, "project_path", "path", limit=500),
+        "original_name": _upload_record_text(merged, "original_name", "original_title", limit=200),
+        "new_name": _upload_record_text(merged, "new_name", "new_title", limit=200),
+        "episodes": _upload_record_int(merged, "episodes", "episode_count"),
+        "video_file_count": _upload_record_int(merged, "video_file_count", "video_count"),
+        "uploaded_video_count": _upload_record_int(merged, "uploaded_video_count", "uploaded_count"),
+        "uploader_display": _upload_record_text(merged, "uploader_display", "uploader", "channel_nickname", limit=200),
+        "account_profile_id": _upload_record_text(merged, "account_profile_id", limit=100),
+        "account_profile_name": _upload_record_text(merged, "account_profile_name", "account_profile", limit=200),
+        "device_name": _upload_record_text(merged, "device_name", limit=200),
+        "failure_reason": _upload_record_text(merged, "failure_reason", "error_message", "error", limit=1000),
+        "extra_info": _upload_record_text(merged, "extra_info", "details", limit=2000),
+        "series_id": _upload_record_text(merged, "series_id", limit=100),
+        "mini_series_id": _upload_record_text(merged, "mini_series_id", limit=100),
+        "audit_status": _upload_record_text(merged, "audit_status", "audit_status_text", limit=100),
+        "selling_status": _upload_record_text(merged, "selling_status", "selling_status_text", limit=100),
+        "submitted_at": _upload_record_text(merged, "submitted_at", limit=50),
+        "raw_json": json.dumps(raw or data, ensure_ascii=False, sort_keys=True),
+    }
+    payload["sync_key"] = _upload_record_key(payload, raw or data)
+    if not payload["record_time"]:
+        payload["record_time"] = now_iso()
+    if not payload["date"]:
+        payload["date"] = str(payload["record_time"])[:10]
+    if not payload["original_name"] and not payload["new_name"] and not payload["project_name"]:
+        return {}, "记录缺少剧名或项目名称"
+    return payload, None
+
+
+def upsert_upload_record(
+    db: sqlite3.Connection,
+    *,
+    owner_user_id: int,
+    owner_username: str,
+    remote_client_id: int | None,
+    data: dict[str, Any],
+) -> tuple[dict[str, Any] | None, str | None, bool]:
+    payload, error = sanitize_upload_record_payload(data)
+    if error:
+        return None, error, False
+    payload["owner_user_id"] = int(owner_user_id)
+    payload["owner_username"] = str(owner_username or "").strip()
+    payload["remote_client_id"] = remote_client_id
+    payload["drama_id"] = _find_upload_record_drama_id(db, payload)
+
+    now = now_iso()
+    existing = db.execute(
+        "SELECT id FROM upload_records WHERE owner_user_id = ? AND platform = ? AND sync_key = ?",
+        (payload["owner_user_id"], payload["platform"], payload["sync_key"]),
+    ).fetchone()
+    payload["updated_at"] = now
+    if existing:
+        payload["id"] = int(existing["id"])
+        set_columns = [
+            key
+            for key in payload.keys()
+            if key not in {"id", "owner_user_id", "platform", "sync_key"}
+        ]
+        set_clause = ", ".join(f"{key} = :{key}" for key in set_columns)
+        db.execute(
+            f"UPDATE upload_records SET {set_clause} WHERE id = :id",
+            payload,
+        )
+        created = False
+        record_id = int(existing["id"])
+    else:
+        payload["created_at"] = now
+        columns = list(payload.keys())
+        placeholders = ", ".join(f":{key}" for key in columns)
+        db.execute(
+            f"INSERT INTO upload_records ({', '.join(columns)}) VALUES ({placeholders})",
+            payload,
+        )
+        record_id = int(db.execute("SELECT last_insert_rowid()").fetchone()[0])
+        created = True
+
+    row = db.execute("SELECT * FROM upload_records WHERE id = ?", (record_id,)).fetchone()
+    if row:
+        refresh_drama_platform_status(db, row)
+    return (serialize_upload_record(row) if row else None), None, created
+
+
+def refresh_drama_platform_status(db: sqlite3.Connection, row: sqlite3.Row) -> None:
+    drama_id = row["drama_id"]
+    if not drama_id:
+        return
+    now = now_iso()
+    db.execute(
+        """
+        INSERT INTO drama_platform_status (
+            drama_id, platform, platform_label, latest_status, uploaded_video_count,
+            video_file_count, last_record_id, external_series_id, audit_status,
+            selling_status, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(drama_id, platform) DO UPDATE SET
+            platform_label = excluded.platform_label,
+            latest_status = excluded.latest_status,
+            uploaded_video_count = excluded.uploaded_video_count,
+            video_file_count = excluded.video_file_count,
+            last_record_id = excluded.last_record_id,
+            external_series_id = excluded.external_series_id,
+            audit_status = excluded.audit_status,
+            selling_status = excluded.selling_status,
+            updated_at = excluded.updated_at
+        """,
+        (
+            int(drama_id),
+            row["platform"],
+            row["platform_label"],
+            row["upload_status"],
+            row["uploaded_video_count"],
+            row["video_file_count"],
+            int(row["id"]),
+            row["series_id"] or row["mini_series_id"],
+            row["audit_status"],
+            row["selling_status"],
+            now,
+        ),
+    )
+    if _upload_record_successful(row_to_dict(row)):
+        uploader = row["uploader_display"] or row["owner_username"]
+        db.execute(
+            "UPDATE dramas SET uploaded = '是', uploader = ? WHERE id = ?",
+            (uploader, int(drama_id)),
+        )
+
+
+def serialize_upload_record(row: sqlite3.Row | None) -> dict[str, Any]:
+    if row is None:
+        return {}
+    payload = row_to_dict(row)
+    payload["platform_label"] = payload.get("platform_label") or UPLOAD_RECORD_PLATFORM_LABELS.get(
+        str(payload.get("platform") or ""),
+        str(payload.get("platform") or ""),
+    )
+    return payload
+
+
 def build_remote_command_summary(command: str, payload: dict[str, Any]) -> str:
     if command == REMOTE_COMMAND_KUAISHOU_START_QUEUE:
         return "快手执行队列"
@@ -2262,6 +2603,12 @@ def index():
 @admin_required
 def monitor_dashboard():
     return render_template("monitor.html")
+
+
+@app.route("/upload-records")
+@login_required
+def upload_records_page():
+    return render_template("upload_records.html")
 
 
 @app.route("/licenses")
@@ -3052,6 +3399,308 @@ def set_upload_state(drama_id: int):
     )
     db.commit()
     return jsonify({"id": drama_id, "uploaded": uploaded_value, "uploader": uploader_value})
+
+
+@app.route("/client-api/upload-records/batch", methods=["POST"])
+def client_sync_upload_records():
+    db, client_row = require_remote_client()
+    if client_row is None:
+        return jsonify({"ok": False, "message": "client_id 或 client_token 无效"}), 401
+    data = request.get_json(silent=True) or {}
+    raw_records = data.get("records")
+    if not isinstance(raw_records, list):
+        return jsonify({"ok": False, "message": "records 必须是数组"}), 400
+    if len(raw_records) > 200:
+        return jsonify({"ok": False, "message": "单次最多同步 200 条上传记录"}), 400
+
+    owner_user_id = int(client_row["owner_user_id"])
+    user_row = db.execute(
+        "SELECT id, username FROM users WHERE id = ?",
+        (owner_user_id,),
+    ).fetchone()
+    if not user_row:
+        return jsonify({"ok": False, "message": "远程客户端归属用户不存在"}), 400
+
+    created_count = 0
+    updated_count = 0
+    failed: list[dict[str, Any]] = []
+    items: list[dict[str, Any]] = []
+    for index, raw_item in enumerate(raw_records, start=1):
+        if not isinstance(raw_item, dict):
+            failed.append({"index": index, "message": "记录必须是对象"})
+            continue
+        item, error, created = upsert_upload_record(
+            db,
+            owner_user_id=owner_user_id,
+            owner_username=str(user_row["username"] or ""),
+            remote_client_id=int(client_row["id"]),
+            data=raw_item,
+        )
+        if error:
+            failed.append({"index": index, "message": error})
+            continue
+        if created:
+            created_count += 1
+        else:
+            updated_count += 1
+        if item:
+            items.append(item)
+    db.commit()
+    return jsonify(
+        {
+            "ok": not failed,
+            "data": {
+                "created": created_count,
+                "updated": updated_count,
+                "failed": len(failed),
+                "failed_items": failed,
+                "items": items[:20],
+            },
+        }
+    )
+
+
+@app.route("/api/upload-records", methods=["GET"])
+@login_required
+def list_upload_records():
+    user_id = int(session["user_id"])
+    role = str(session.get("role") or "user").strip().lower()
+    page = max(1, int(request.args.get("page", 1) or 1))
+    page_size = min(100, max(1, int(request.args.get("page_size", 20) or 20)))
+
+    clauses = ["1=1"]
+    params: list[object] = []
+    if role != "admin":
+        clauses.append("ur.owner_user_id = ?")
+        params.append(user_id)
+    else:
+        requested_user_id = str(request.args.get("user_id") or "").strip()
+        if requested_user_id.isdigit():
+            clauses.append("ur.owner_user_id = ?")
+            params.append(int(requested_user_id))
+
+    platform = normalize_upload_record_platform(request.args.get("platform"))
+    if platform in UPLOAD_RECORD_PLATFORMS:
+        clauses.append("ur.platform = ?")
+        params.append(platform)
+    status = str(request.args.get("status") or "").strip()
+    if status:
+        clauses.append("ur.upload_status LIKE ?")
+        params.append(f"%{status}%")
+    search = str(request.args.get("search") or "").strip()
+    if search:
+        like = f"%{search}%"
+        clauses.append(
+            "(ur.original_name LIKE ? OR ur.new_name LIKE ? OR ur.project_name LIKE ? OR ur.uploader_display LIKE ?)"
+        )
+        params.extend([like, like, like, like])
+    date_from = str(request.args.get("date_from") or "").strip()
+    if date_from:
+        clauses.append("COALESCE(ur.date, substr(ur.record_time, 1, 10)) >= ?")
+        params.append(date_from)
+    date_to = str(request.args.get("date_to") or "").strip()
+    if date_to:
+        clauses.append("COALESCE(ur.date, substr(ur.record_time, 1, 10)) <= ?")
+        params.append(date_to)
+
+    where_sql = " AND ".join(clauses)
+    db = get_db()
+    total = db.execute(
+        f"SELECT COUNT(*) FROM upload_records ur WHERE {where_sql}",
+        params,
+    ).fetchone()[0]
+    offset = (page - 1) * page_size
+    rows = db.execute(
+        f"""
+        SELECT ur.*, d.company
+        FROM upload_records ur
+        LEFT JOIN dramas d ON d.id = ur.drama_id
+        WHERE {where_sql}
+        ORDER BY COALESCE(ur.record_time, ur.created_at) DESC, ur.id DESC
+        LIMIT ? OFFSET ?
+        """,
+        params + [page_size, offset],
+    ).fetchall()
+    return jsonify(
+        {
+            "items": [serialize_upload_record(row) for row in rows],
+            "page": page,
+            "page_size": page_size,
+            "total": total,
+            "pages": math.ceil(total / page_size) if total else 0,
+            "can_view_all_users": role == "admin",
+            "platforms": UPLOAD_RECORD_PLATFORM_LABELS,
+        }
+    )
+
+
+@app.route("/api/platform-dramas", methods=["GET"])
+@login_required
+def list_platform_dramas():
+    user_id = int(session["user_id"])
+    role = str(session.get("role") or "user").strip().lower()
+    platform = normalize_upload_record_platform(request.args.get("platform") or "video_channel")
+    if platform not in UPLOAD_RECORD_PLATFORMS:
+        return jsonify({"error": "platform 仅支持 video_channel / miniprogram / kuaishou"}), 400
+
+    page = max(1, int(request.args.get("page", 1) or 1))
+    page_size = min(100, max(1, int(request.args.get("page_size", 20) or 20)))
+    sort_by = str(request.args.get("sort_by") or "record_time").strip()
+    sort_dir = str(request.args.get("sort_dir") or "desc").strip().lower()
+    sort_sql = PLATFORM_DRAMA_SORTABLE_FIELDS.get(sort_by, PLATFORM_DRAMA_SORTABLE_FIELDS["record_time"])
+    if sort_dir not in {"asc", "desc"}:
+        sort_dir = "desc"
+
+    clauses = ["ur.platform = ?"]
+    params: list[object] = [platform]
+    if role != "admin":
+        clauses.append("ur.owner_user_id = ?")
+        params.append(user_id)
+    else:
+        requested_user_id = str(request.args.get("user_id") or "").strip()
+        if requested_user_id.isdigit():
+            clauses.append("ur.owner_user_id = ?")
+            params.append(int(requested_user_id))
+
+    search = str(request.args.get("search") or "").strip()
+    if search:
+        like = f"%{search}%"
+        clauses.append(
+            """
+            (
+                ur.original_name LIKE ? OR ur.new_name LIKE ? OR ur.project_name LIKE ?
+                OR d.original_name LIKE ? OR d.new_name LIKE ?
+            )
+            """
+        )
+        params.extend([like, like, like, like, like])
+    company = str(request.args.get("company") or "").strip()
+    if company:
+        clauses.append("d.company = ?")
+        params.append(company)
+    review_passed = normalize_flag(request.args.get("review_passed"))
+    if review_passed in ALLOWED_FLAGS:
+        clauses.append("d.review_passed = ?")
+        params.append(review_passed)
+    status = str(request.args.get("status") or request.args.get("uploaded") or "").strip()
+    if status:
+        clauses.append("ur.upload_status LIKE ?")
+        params.append(f"%{status}%")
+    uploader = str(request.args.get("uploader") or "").strip()
+    if uploader:
+        clauses.append("(ur.uploader_display LIKE ? OR ur.account_profile_name LIKE ? OR ur.owner_username LIKE ?)")
+        params.extend([f"%{uploader}%", f"%{uploader}%", f"%{uploader}%"])
+    date_from = str(request.args.get("date_from") or "").strip()
+    if date_from:
+        clauses.append("COALESCE(ur.date, substr(ur.record_time, 1, 10), d.date) >= ?")
+        params.append(date_from)
+    date_to = str(request.args.get("date_to") or "").strip()
+    if date_to:
+        clauses.append("COALESCE(ur.date, substr(ur.record_time, 1, 10), d.date) <= ?")
+        params.append(date_to)
+
+    where_sql = " AND ".join(clauses)
+    db = get_db()
+    total = db.execute(
+        f"SELECT COUNT(*) FROM upload_records ur LEFT JOIN dramas d ON d.id = ur.drama_id WHERE {where_sql}",
+        params,
+    ).fetchone()[0]
+    offset = (page - 1) * page_size
+    rows = db.execute(
+        f"""
+        SELECT
+            ur.id AS record_id,
+            ur.owner_user_id,
+            ur.owner_username,
+            ur.remote_client_id,
+            ur.drama_id,
+            ur.platform,
+            ur.platform_label,
+            ur.sync_key,
+            ur.record_time,
+            COALESCE(ur.date, substr(ur.record_time, 1, 10), d.date) AS date,
+            ur.upload_status,
+            ur.execution_mode,
+            ur.step_label,
+            ur.project_name,
+            ur.project_path,
+            COALESCE(ur.original_name, d.original_name) AS original_name,
+            COALESCE(ur.new_name, d.new_name) AS new_name,
+            COALESCE(ur.episodes, d.episodes) AS episodes,
+            d.duration,
+            d.review_passed,
+            d.uploaded,
+            d.materials,
+            d.promo_text,
+            d.description,
+            d.company,
+            d.uploader AS drama_uploader,
+            ur.video_file_count,
+            ur.uploaded_video_count,
+            ur.uploader_display,
+            ur.account_profile_id,
+            ur.account_profile_name,
+            ur.device_name,
+            ur.failure_reason,
+            ur.extra_info,
+            ur.series_id,
+            ur.mini_series_id,
+            ur.audit_status,
+            ur.selling_status,
+            ur.submitted_at,
+            ur.created_at,
+            ur.updated_at
+        FROM upload_records ur
+        LEFT JOIN dramas d ON d.id = ur.drama_id
+        WHERE {where_sql}
+        ORDER BY {sort_sql} {sort_dir.upper()}, ur.id DESC
+        LIMIT ? OFFSET ?
+        """,
+        params + [page_size, offset],
+    ).fetchall()
+    items = []
+    for row in rows:
+        item = row_to_dict(row)
+        item["id"] = item.get("drama_id") or 0
+        item["row_key"] = f"{item.get('platform')}-{item.get('record_id')}"
+        item["platform_label"] = item.get("platform_label") or UPLOAD_RECORD_PLATFORM_LABELS.get(platform, platform)
+        items.append(item)
+    return jsonify(
+        {
+            "items": items,
+            "page": page,
+            "page_size": page_size,
+            "total": total,
+            "pages": math.ceil(total / page_size) if total else 0,
+            "platform": platform,
+            "platform_label": UPLOAD_RECORD_PLATFORM_LABELS.get(platform, platform),
+            "can_view_all_users": role == "admin",
+        }
+    )
+
+
+@app.route("/api/dramas/<int:drama_id>/upload-records", methods=["GET"])
+@login_required
+def list_drama_upload_records(drama_id: int):
+    user_id = int(session["user_id"])
+    role = str(session.get("role") or "user").strip().lower()
+    clauses = ["ur.drama_id = ?"]
+    params: list[object] = [drama_id]
+    if role != "admin":
+        clauses.append("ur.owner_user_id = ?")
+        params.append(user_id)
+    db = get_db()
+    rows = db.execute(
+        f"""
+        SELECT ur.*
+        FROM upload_records ur
+        WHERE {' AND '.join(clauses)}
+        ORDER BY COALESCE(ur.record_time, ur.created_at) DESC, ur.id DESC
+        LIMIT 200
+        """,
+        params,
+    ).fetchall()
+    return jsonify({"items": [serialize_upload_record(row) for row in rows]})
 
 
 @app.route("/api/companies", methods=["GET"])

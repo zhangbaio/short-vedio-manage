@@ -16,6 +16,10 @@
       <span class="app-nav-icon">图</span>
       <span>数据监控</span>
     </a>
+    <a class="app-nav-link {% if active_page == 'upload_records' %}active{% endif %}" href="{{ url_for('upload_records_page') }}">
+      <span class="app-nav-icon">传</span>
+      <span>上传记录</span>
+    </a>
     <a class="app-nav-link {% if active_page == 'hongguo' %}active{% endif %}" href="{{ url_for('hongguo.ui_page') }}">
       <span class="app-nav-icon">果</span>
       <span>红果短剧</span>

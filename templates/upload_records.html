@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>上传记录 - 视频号短剧管理系统</title>
+    <link
+      href="https://cdn.bootcdn.net/ajax/libs/bootstrap/5.3.2/css/bootstrap.min.css"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+  </head>
+  <body class="app-body">
+    {% set active_page = 'upload_records' %}
+    <div class="app-shell">
+      {% include "partials/sidebar.html" %}
+      <div class="app-main">
+        <header class="app-topbar">
+          <div>
+            <h1 class="app-page-title">上传记录</h1>
+            <p class="app-page-subtitle">微信视频号、小程序、快手上传流水</p>
+          </div>
+          <div class="app-userbar">
+            <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('logout') }}">退出</a>
+          </div>
+        </header>
+
+        <main class="app-content">
+          <div class="card mb-4">
+            <div class="card-body">
+              <div class="row g-3">
+                <div class="col-md-2">
+                  <label class="form-label" for="platformSelect">平台</label>
+                  <select id="platformSelect" class="form-select">
+                    <option value="">全部</option>
+                    <option value="video_channel">微信视频号</option>
+                    <option value="miniprogram">微信小程序</option>
+                    <option value="kuaishou">快手</option>
+                  </select>
+                </div>
+                <div class="col-md-2" id="userFilterWrap" hidden>
+                  <label class="form-label" for="ownerSelect">用户</label>
+                  <select id="ownerSelect" class="form-select">
+                    <option value="">全部</option>
+                  </select>
+                </div>
+                <div class="col-md-2">
+                  <label class="form-label" for="statusInput">状态</label>
+                  <input id="statusInput" class="form-control" placeholder="成功 / 失败" />
+                </div>
+                <div class="col-md-3">
+                  <label class="form-label" for="searchInput">搜索</label>
+                  <input id="searchInput" class="form-control" placeholder="剧名 / 项目 / 上传者" />
+                </div>
+                <div class="col-md-1">
+                  <label class="form-label" for="dateFrom">开始</label>
+                  <input id="dateFrom" class="form-control" type="date" />
+                </div>
+                <div class="col-md-1">
+                  <label class="form-label" for="dateTo">结束</label>
+                  <input id="dateTo" class="form-control" type="date" />
+                </div>
+                <div class="col-md-1 d-flex align-items-end gap-2">
+                  <button id="queryBtn" class="btn btn-primary w-100" type="button">查询</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="table-responsive desktop-table mobile-switchable mb-3">
+            <table class="table table-hover align-middle">
+              <thead class="table-light">
+                <tr>
+                  <th>时间</th>
+                  <th>用户</th>
+                  <th>平台</th>
+                  <th>原剧名</th>
+                  <th>新剧名</th>
+                  <th>状态</th>
+                  <th>步骤</th>
+                  <th>上传进度</th>
+                  <th>上传者</th>
+                  <th>失败原因</th>
+                </tr>
+              </thead>
+              <tbody id="uploadRecordsTableBody"></tbody>
+            </table>
+          </div>
+          <div class="mobile-card-list mb-3" id="uploadRecordsMobileList"></div>
+
+          <div class="d-flex flex-wrap align-items-center justify-content-between">
+            <span id="pageInfo">第 1 页</span>
+            <div class="btn-group" role="group">
+              <button class="btn btn-outline-secondary" id="prevPageBtn" type="button">上一页</button>
+              <button class="btn btn-outline-secondary" id="nextPageBtn" type="button">下一页</button>
+            </div>
+          </div>
+        </main>
+      </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='upload_records.js') }}"></script>
+  </body>
+</html>

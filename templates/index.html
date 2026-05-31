@@ -17,8 +17,8 @@
       <div class="app-main">
         <header class="app-topbar">
           <div>
-            <h1 class="app-page-title">短剧管理</h1>
-            <p class="app-page-subtitle">筛选、导入、维护短剧信息与上传状态</p>
+            <h1 class="app-page-title" id="platformPageTitle">短剧管理</h1>
+            <p class="app-page-subtitle" id="platformPageSubtitle">按平台查看上传记录，普通用户仅能查看自己的记录</p>
           </div>
           <div class="app-userbar">
             <div class="dropdown">
@@ -49,6 +49,18 @@
       </div>
       {% endif %}
 
+      <ul class="nav nav-tabs mb-3" id="platformTabs">
+        <li class="nav-item">
+          <button class="nav-link" type="button" data-platform-tab="video_channel">视频号短剧管理</button>
+        </li>
+        <li class="nav-item">
+          <button class="nav-link" type="button" data-platform-tab="miniprogram">小程序短剧管理</button>
+        </li>
+        <li class="nav-item">
+          <button class="nav-link" type="button" data-platform-tab="kuaishou">快手短剧管理</button>
+        </li>
+      </ul>
+
       <div class="card mb-4">
         <div class="card-body">
           <div class="row g-3">
@@ -71,7 +83,7 @@
               </select>
             </div>
             <div class="col-md-2">
-              <label class="form-label">是否上传</label>
+              <label class="form-label">上传状态</label>
               <select id="uploadedSelect" class="form-select">
                 <option value="">全部</option>
                 <option value="是">是</option>
@@ -81,6 +93,12 @@
             <div class="col-md-2">
               <label class="form-label">上传者</label>
               <input type="text" id="uploaderSearchInput" class="form-control" placeholder="按上传者筛选" />
+            </div>
+            <div class="col-md-2" id="platformOwnerWrap" hidden>
+              <label class="form-label">所属用户</label>
+              <select id="platformOwnerSelect" class="form-select">
+                <option value="">全部用户</option>
+              </select>
             </div>
             <div class="col-md-1">
               <label class="form-label">开始日期</label>
@@ -101,22 +119,7 @@
 
       <div class="table-responsive desktop-table mobile-switchable mb-3">
         <table class="table table-hover align-middle drama-table">
-          <thead class="table-light">
-            <tr>
-              <th scope="col" class="col-check"><input type="checkbox" id="selectAll" /></th>
-              <th scope="col" class="col-index">#</th>
-              <th scope="col" data-sort="date" class="sortable-col col-date">日期 <span class="sort-icon">⇅</span></th>
-              <th scope="col" data-sort="original_name" class="sortable-col col-name">原剧名 <span class="sort-icon">⇅</span></th>
-              <th scope="col" data-sort="new_name" class="sortable-col col-name">新剧名 <span class="sort-icon">⇅</span></th>
-              <th scope="col" data-sort="episodes" class="sortable-col col-number">集数 <span class="sort-icon">⇅</span></th>
-              <th scope="col" data-sort="duration" class="sortable-col col-number">时长(分) <span class="sort-icon">⇅</span></th>
-              <th scope="col" data-sort="review_passed" class="sortable-col col-flag">审核通过 <span class="sort-icon">⇅</span></th>
-              <th scope="col" data-sort="uploaded" class="sortable-col col-flag">是否上传 <span class="sort-icon">⇅</span></th>
-              <th scope="col" data-sort="company" class="sortable-col col-company">公司 <span class="sort-icon">⇅</span></th>
-              <th scope="col" class="col-uploader">上传者</th>
-              <th scope="col" class="col-actions actions-col">操作</th>
-            </tr>
-          </thead>
+          <thead class="table-light" id="dramaTableHead"></thead>
           <tbody id="dramaTableBody"></tbody>
         </table>
       </div>

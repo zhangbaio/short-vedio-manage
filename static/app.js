@@ -5,7 +5,8 @@ const state = {
   pages: 0,
   currentItems: [],
   expandedRowIds: new Set(),
-  sortBy: "date",
+  platform: "video_channel",
+  sortBy: "record_time",
   sortDir: "desc",
   filters: {
     search: "",
@@ -15,7 +16,14 @@ const state = {
     uploader: "",
     date_from: "",
     date_to: "",
+    user_id: "",
   },
+};
+
+const PLATFORM_LABELS = {
+  video_channel: "视频号短剧管理",
+  miniprogram: "小程序短剧管理",
+  kuaishou: "快手短剧管理",
 };
 
 const selectedIds = new Set();
@@ -47,9 +55,11 @@ async function initPage() {
   clearStaleModalBackdrop();
   cacheDefaultFeedbackMessages();
   applyRoleVisibility();
+  initPlatformTabs();
   bindEvents();
   bindSidebarActions();
-  await Promise.all([fetchCompanies(), loadDramas()]);
+  renderPlatformTableHeader();
+  await Promise.all([fetchCompanies(), loadPlatformOwners(), loadDramas()]);
   updateSortIcons();
   startRemoteNotificationPolling();
   openSidebarActionFromHash();
@@ -73,9 +83,64 @@ function applyRoleVisibility() {
   if (window.currentUser?.role === "admin") {
     const adminActions = document.getElementById("adminActions");
     const adminRemoteActions = document.getElementById("adminRemoteActions");
+    const platformOwnerWrap = document.getElementById("platformOwnerWrap");
     if (adminActions) adminActions.hidden = false;
     if (adminRemoteActions) adminRemoteActions.hidden = false;
+    if (platformOwnerWrap) platformOwnerWrap.hidden = false;
   }
+}
+
+function initPlatformTabs() {
+  const params = new URLSearchParams(window.location.search);
+  const platform = normalizePlatform(params.get("platform") || "video_channel");
+  state.platform = platform;
+  document.querySelectorAll("[data-platform-tab]").forEach((tab) => {
+    tab.classList.toggle("active", tab.dataset.platformTab === platform);
+    tab.addEventListener("click", () => {
+      const nextPlatform = normalizePlatform(tab.dataset.platformTab);
+      if (nextPlatform === state.platform) return;
+      state.platform = nextPlatform;
+      state.page = 1;
+      state.sortBy = "record_time";
+      state.sortDir = "desc";
+      selectedIds.clear();
+      state.expandedRowIds.clear();
+      document.querySelectorAll("[data-platform-tab]").forEach((entry) => {
+        entry.classList.toggle("active", entry.dataset.platformTab === nextPlatform);
+      });
+      renderPlatformTableHeader();
+      updatePageTitle();
+      updateSortIcons();
+      const url = new URL(window.location.href);
+      url.searchParams.set("platform", nextPlatform);
+      history.replaceState(null, "", `${url.pathname}?${url.searchParams.toString()}`);
+      loadDramas();
+    });
+  });
+  updatePageTitle();
+  const uploadedSelect = document.getElementById("uploadedSelect");
+  if (uploadedSelect) {
+    uploadedSelect.innerHTML = `
+      <option value="">全部</option>
+      <option value="完成">完成</option>
+      <option value="成功">成功</option>
+      <option value="失败">失败</option>
+      <option value="处理中">处理中</option>
+    `;
+  }
+}
+
+function normalizePlatform(value) {
+  const normalized = String(value || "").trim();
+  return Object.prototype.hasOwnProperty.call(PLATFORM_LABELS, normalized) ? normalized : "video_channel";
+}
+
+function updatePageTitle() {
+  const title = PLATFORM_LABELS[state.platform] || "短剧管理";
+  const titleEl = document.getElementById("platformPageTitle");
+  const subtitleEl = document.getElementById("platformPageSubtitle");
+  if (titleEl) titleEl.textContent = title;
+  if (subtitleEl) subtitleEl.textContent = "按平台查看上传记录，普通用户仅能查看自己的记录";
 }
 
 function bindEvents() {
@@ -108,7 +173,7 @@ function bindEvents() {
   document.getElementById("saveDramaBtn").addEventListener("click", submitDramaForm);
   document.getElementById("dramaTableBody").addEventListener("click", handleTableClick);
   document.getElementById("dramaMobileList")?.addEventListener("click", handleTableClick);
-  document.getElementById("selectAll").addEventListener("change", toggleSelectAll);
+  document.getElementById("selectAll")?.addEventListener("change", toggleSelectAll);
   document.getElementById("batchDeleteBtn")?.addEventListener("click", () => openDeleteModal("batch"));
   document.getElementById("confirmDeleteBtn").addEventListener("click", confirmDelete);
   document.getElementById("importBtn")?.addEventListener("click", handleImport);
@@ -212,6 +277,7 @@ function updateFiltersFromInputs() {
   state.filters.uploader = document.getElementById("uploaderSearchInput").value.trim();
   state.filters.date_from = document.getElementById("dateFrom").value;
   state.filters.date_to = document.getElementById("dateTo").value;
+  state.filters.user_id = document.getElementById("platformOwnerSelect")?.value || "";
 }
 
 function resetFilters() {
@@ -222,6 +288,8 @@ function resetFilters() {
   document.getElementById("uploaderSearchInput").value = "";
   document.getElementById("dateFrom").value = "";
   document.getElementById("dateTo").value = "";
+  const ownerSelect = document.getElementById("platformOwnerSelect");
+  if (ownerSelect) ownerSelect.value = "";
   updateFiltersFromInputs();
 }
 
@@ -610,6 +678,7 @@ function changePage(target) {
 
 async function loadDramas() {
   const params = new URLSearchParams({
+    platform: state.platform,
     page: state.page,
     page_size: state.pageSize,
     sort_by: state.sortBy,
@@ -619,7 +688,7 @@ async function loadDramas() {
     if (value) params.set(key, value);
   });
   try {
-    const data = await requestJSON(`/api/dramas?${params.toString()}`);
+    const data = await requestJSON(`/api/platform-dramas?${params.toString()}`);
     if (!data) return;
     state.total = data.total;
     state.pages = data.pages || 1;
@@ -643,6 +712,38 @@ function updateSortIcons() {
       th.classList.remove("sort-active");
     }
   });
+}
+
+function renderPlatformTableHeader() {
+  const head = document.getElementById("dramaTableHead");
+  if (!head) return;
+  const kuaishouColumns = state.platform === "kuaishou"
+    ? `
+      <th scope="col" class="col-number">series_id</th>
+      <th scope="col" class="col-number">审核状态</th>
+      <th scope="col" class="col-number">销售状态</th>
+    `
+    : "";
+  const ownerColumn = window.currentUser?.role === "admin" ? '<th scope="col" data-sort="owner_username" class="sortable-col col-uploader">用户 <span class="sort-icon">↕</span></th>' : "";
+  head.innerHTML = `
+    <tr>
+      <th scope="col" class="col-check"><input type="checkbox" id="selectAll" /></th>
+      <th scope="col" class="col-index">#</th>
+      <th scope="col" data-sort="record_time" class="sortable-col col-date">记录时间 <span class="sort-icon">↕</span></th>
+      ${ownerColumn}
+      <th scope="col" data-sort="original_name" class="sortable-col col-name">原剧名 <span class="sort-icon">↕</span></th>
+      <th scope="col" data-sort="new_name" class="sortable-col col-name">新剧名 <span class="sort-icon">↕</span></th>
+      <th scope="col" data-sort="episodes" class="sortable-col col-number">集数 <span class="sort-icon">↕</span></th>
+      <th scope="col" class="col-number">上传进度</th>
+      <th scope="col" data-sort="uploaded" class="sortable-col col-flag">上传状态 <span class="sort-icon">↕</span></th>
+      <th scope="col" class="col-uploader">上传者</th>
+      <th scope="col" class="col-uploader">账号档案</th>
+      ${kuaishouColumns}
+      <th scope="col" class="col-company">失败原因</th>
+      <th scope="col" class="col-actions actions-col">操作</th>
+    </tr>
+  `;
+  document.getElementById("selectAll")?.addEventListener("change", toggleSelectAll);
 }
 
 function renderDramas(items, options = {}) {
@@ -772,6 +873,174 @@ function buildActions(item) {
   </div>`;
 }
 
+function renderDramas(items, options = {}) {
+  const { preserveSelection = false } = options;
+  const tbody = document.getElementById("dramaTableBody");
+  const mobileList = document.getElementById("dramaMobileList");
+  tbody.innerHTML = "";
+  if (mobileList) mobileList.innerHTML = "";
+  if (!preserveSelection) selectedIds.clear();
+
+  if (!items.length) {
+    tbody.innerHTML = '<tr><td colspan="14" class="text-center text-muted py-4">暂无对应平台上传记录</td></tr>';
+    mobileList?.insertAdjacentHTML("beforeend", '<div class="mobile-empty-state">暂无对应平台上传记录</div>');
+  }
+
+  items.forEach((item, index) => {
+    const rowNumber = (state.page - 1) * state.pageSize + index + 1;
+    const key = dramaRowKey(item);
+    const dramaId = Number(item.drama_id || item.id || 0);
+    const tr = document.createElement("tr");
+    tr.dataset.id = key;
+    const ownerCell = window.currentUser?.role === "admin" ? buildTextCell(item.owner_username || "-", "col-uploader") : "";
+    const kuaishouCells = state.platform === "kuaishou"
+      ? `
+        ${buildTextCell(item.series_id || item.mini_series_id || "-", "col-number")}
+        ${buildTextCell(item.audit_status || "-", "col-number")}
+        ${buildTextCell(item.selling_status || "-", "col-number")}
+      `
+      : "";
+    tr.innerHTML = `
+      <td><input type="checkbox" class="row-checkbox" data-id="${dramaId || ""}" ${dramaId ? "" : "disabled"} /></td>
+      <th scope="row">${rowNumber}</th>
+      ${buildTextCell(item.record_time || item.date || "-", "col-date")}
+      ${ownerCell}
+      ${buildTitleCell(item.original_name || "-", "col-name")}
+      ${buildTitleCell(item.new_name || "-", "col-name")}
+      <td class="text-center-cell col-number">${item.episodes ?? "-"}</td>
+      <td class="text-center-cell col-number">${escapeHtml(uploadProgressText(item))}</td>
+      <td class="text-center-cell col-flag">${buildUploadStatusBadge(item.upload_status)}</td>
+      ${buildTextCell(item.uploader_display || item.drama_uploader || "-", "col-uploader")}
+      ${buildTextCell(item.account_profile_name || "-", "col-uploader")}
+      ${kuaishouCells}
+      ${buildTextCell(item.failure_reason || "-", "col-company")}
+      <td class="actions-cell col-actions">${buildActions(item)}</td>
+    `;
+    const checkbox = tr.querySelector(".row-checkbox");
+    if (checkbox && dramaId && selectedIds.has(dramaId)) checkbox.checked = true;
+    tbody.appendChild(tr);
+    mobileList?.appendChild(buildDramaMobileCard(item, rowNumber));
+
+    if (state.expandedRowIds.has(key)) {
+      const detailRow = document.createElement("tr");
+      detailRow.className = "drama-detail-row";
+      detailRow.dataset.detailFor = key;
+      detailRow.innerHTML = `
+        <td colspan="14">
+          <div class="drama-detail-grid">
+            ${buildDetailItem("原剧名", item.original_name, true)}
+            ${buildDetailItem("新剧名", item.new_name, true)}
+            ${buildDetailItem("项目路径", item.project_path, true)}
+            ${buildDetailItem("执行步骤", item.step_label)}
+            ${buildDetailItem("执行模式", item.execution_mode)}
+            ${buildDetailItem("失败原因", item.failure_reason, true)}
+            ${buildDetailItem("扩展信息", item.extra_info, true)}
+          </div>
+        </td>
+      `;
+      tbody.appendChild(detailRow);
+    }
+  });
+
+  const visibleIds = items.map((item) => Number(item.drama_id || item.id || 0)).filter(Boolean);
+  const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.has(id));
+  const selectAll = document.getElementById("selectAll");
+  if (selectAll) selectAll.checked = allVisibleSelected;
+  updateBatchButton();
+}
+
+function buildDramaMobileCard(item, rowNumber) {
+  const key = dramaRowKey(item);
+  const dramaId = Number(item.drama_id || item.id || 0);
+  const card = document.createElement("article");
+  card.className = "mobile-record-card";
+  card.dataset.id = key;
+  const ownerLine = window.currentUser?.role === "admin"
+    ? `<div><span>用户</span><strong>${escapeHtml(item.owner_username || "-")}</strong></div>`
+    : "";
+  const kuaishouLine = state.platform === "kuaishou"
+    ? `<div><span>审核</span><strong>${escapeHtml(item.audit_status || "-")}</strong></div>
+       <div><span>销售</span><strong>${escapeHtml(item.selling_status || "-")}</strong></div>`
+    : "";
+  card.innerHTML = `
+    <div class="mobile-record-head">
+      <label class="mobile-select-line">
+        <input
+          type="checkbox"
+          class="form-check-input row-checkbox"
+          data-id="${dramaId || ""}"
+          ${dramaId ? "" : "disabled"}
+          ${dramaId && selectedIds.has(dramaId) ? "checked" : ""}
+        />
+        <span class="mobile-record-title">${escapeHtml(item.new_name || item.original_name || "-")}</span>
+      </label>
+      <span class="badge text-bg-light">#${rowNumber}</span>
+    </div>
+    <div class="mobile-record-subtitle">${escapeHtml(item.original_name || "-")}</div>
+    <div class="mobile-record-grid">
+      ${ownerLine}
+      <div><span>时间</span><strong>${escapeHtml(item.record_time || item.date || "-")}</strong></div>
+      <div><span>集数</span><strong>${item.episodes ?? "-"}</strong></div>
+      <div><span>进度</span><strong>${escapeHtml(uploadProgressText(item))}</strong></div>
+      <div><span>状态</span><strong>${buildUploadStatusBadge(item.upload_status)}</strong></div>
+      <div><span>上传者</span><strong>${escapeHtml(item.uploader_display || item.drama_uploader || "-")}</strong></div>
+      <div><span>账号</span><strong>${escapeHtml(item.account_profile_name || "-")}</strong></div>
+      ${kuaishouLine}
+    </div>
+    ${
+      state.expandedRowIds.has(key)
+        ? `<div class="drama-detail-grid mobile-drama-detail">
+            ${buildDetailItem("项目路径", item.project_path, true)}
+            ${buildDetailItem("执行步骤", item.step_label)}
+            ${buildDetailItem("失败原因", item.failure_reason, true)}
+          </div>`
+        : ""
+    }
+    <div class="mobile-record-actions">${buildActions(item)}</div>
+  `;
+  return card;
+}
+
+function dramaRowKey(item) {
+  return String(item.row_key || item.record_id || item.drama_id || item.id || "");
+}
+
+function uploadProgressText(item) {
+  const uploaded = Number(item.uploaded_video_count || 0);
+  const total = Number(item.video_file_count || 0);
+  if (total > 0) return `${uploaded}/${total}`;
+  if (uploaded > 0) return String(uploaded);
+  return "-";
+}
+
+function buildUploadStatusBadge(status) {
+  const text = String(status || "-");
+  const cls = /失败|错误|failed|error/i.test(text)
+    ? "bg-danger"
+    : /成功|完成|已上传|success|done|submitted/i.test(text)
+      ? "bg-success"
+      : "bg-secondary";
+  return `<span class="badge ${cls}">${escapeHtml(text)}</span>`;
+}
+
+function buildActions(item) {
+  const key = dramaRowKey(item);
+  const dramaId = Number(item.drama_id || item.id || 0);
+  const detailLabel = state.expandedRowIds.has(key) ? "收起详情" : "查看详情";
+  const detailBtn = `<button class="btn btn-sm btn-outline-secondary" data-action="toggle-details" data-key="${escapeHtml(key)}">${detailLabel}</button>`;
+  if (!dramaId) return `<div class="action-buttons">${detailBtn}</div>`;
+  const uploadBtn = `<button class="btn btn-sm btn-outline-success me-1" data-action="toggle-upload" data-id="${dramaId}">标记上传</button>`;
+  if (window.currentUser?.role !== "admin") {
+    return `<div class="action-buttons">${detailBtn}${uploadBtn}</div>`;
+  }
+  return `<div class="action-buttons">
+    ${detailBtn}
+    <button class="btn btn-sm btn-outline-primary" data-action="edit" data-id="${dramaId}">编辑</button>
+    <button class="btn btn-sm btn-outline-danger" data-action="delete" data-id="${dramaId}" data-name="${escapeHtml(item.new_name || item.original_name || "短剧")}">删除</button>
+    ${uploadBtn}
+  </div>`;
+}
+
 function truncateText(text, max = 30) {
   if (!text) return "-";
   const str = String(text);
@@ -838,6 +1107,24 @@ async function fetchCompanies() {
   }
 }
 
+async function loadPlatformOwners() {
+  const select = document.getElementById("platformOwnerSelect");
+  if (!select || window.currentUser?.role !== "admin") return;
+  try {
+    const users = await requestJSON("/api/users");
+    if (!Array.isArray(users)) return;
+    select.innerHTML = '<option value="">全部用户</option>';
+    users.forEach((user) => {
+      const option = document.createElement("option");
+      option.value = user.id;
+      option.textContent = user.username || `用户 ${user.id}`;
+      select.appendChild(option);
+    });
+  } catch (error) {
+    console.error(error);
+  }
+}
+
 function openCreateModal() {
   editingId = null;
   document.getElementById("dramaModalLabel").textContent = "新增短剧";
@@ -854,6 +1141,7 @@ function handleTableClick(event) {
   const { target } = event;
   if (target.matches(".row-checkbox")) {
     const id = Number(target.dataset.id);
+    if (!id) return;
     if (target.checked) {
       selectedIds.add(id);
     } else {
@@ -875,7 +1163,7 @@ function handleTableClick(event) {
     document.getElementById("deleteMessage").textContent = `确定删除《${deleteTargetName}》吗？`;
     deleteModal.show();
   } else if (action === "toggle-details") {
-    toggleDramaDetails(id);
+    toggleDramaDetails(target.dataset.key || String(id));
   } else if (action === "toggle-upload") {
     toggleUpload(id);
   }
@@ -1032,8 +1320,10 @@ async function submitDramaForm() {
 function toggleSelectAll(event) {
   const checked = event.target.checked;
   document.querySelectorAll(".row-checkbox").forEach((checkbox) => {
+    if (checkbox.disabled) return;
     checkbox.checked = checked;
     const id = Number(checkbox.dataset.id);
+    if (!id) return;
     if (checked) {
       selectedIds.add(id);
     } else {
