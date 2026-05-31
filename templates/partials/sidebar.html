@@ -16,6 +16,10 @@
       <span class="app-nav-icon">图</span>
       <span>数据监控</span>
     </a>
+    <a class="app-nav-link {% if active_page == 'hongguo' %}active{% endif %}" href="{{ url_for('hongguo.ui_page') }}">
+      <span class="app-nav-icon">果</span>
+      <span>红果短剧</span>
+    </a>
     {% if session.role == 'admin' %}
     <a class="app-nav-link {% if active_page == 'licenses' %}active{% endif %}" href="{{ url_for('license_management') }}">
       <span class="app-nav-icon">权</span>
@@ -47,6 +51,10 @@
         class="app-nav-badge"
         hidden
       >0</span>
+    </a>
+    <a class="app-nav-link {% if active_page == 'hongguo_keys' %}active{% endif %}" href="{{ url_for('hongguo.keys_page') }}">
+      <span class="app-nav-icon">钥</span>
+      <span>红果密钥</span>
     </a>
   </div>
   {% endif %}
