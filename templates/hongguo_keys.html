@@ -4,12 +4,17 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>红果API密钥 - 视频号短剧管理系统</title>
-  <link rel="icon" href="{{ url_for('static', filename='icons/app-icon.ico') }}?v=20260531" sizes="any" />
-  <link rel="icon" type="image/png" href="{{ url_for('static', filename='icons/app-icon.png') }}?v=20260531" />
-  <link rel="apple-touch-icon" href="{{ url_for('static', filename='icons/app-icon.png') }}?v=20260531" />
   <link href="https://cdn.bootcdn.net/ajax/libs/bootstrap/5.3.2/css/bootstrap.min.css" rel="stylesheet" />
-  <link href="https://cdn.bootcdn.net/ajax/libs/bootstrap-icons/1.11.3/font/bootstrap-icons.min.css" rel="stylesheet" />
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+  <style>
+    .usage-panel { background:#f8f9fa; border-radius:6px; padding:12px; }
+    .usage-panel table { margin-bottom:8px; }
+    .usage-panel td, .usage-panel th { padding:4px 8px; font-size:13px; }
+    .quota-input { width:90px; }
+    .badge-exhausted { background:#dc3545; }
+    .badge-unlimited { background:#6c757d; }
+    .badge-ok { background:#198754; }
+  </style>
 </head>
 <body class="app-body">
   {% set active_page = 'hongguo_keys' %}
@@ -19,10 +24,9 @@
       <header class="app-topbar">
         <div>
           <h1 class="app-page-title">红果 API 密钥</h1>
-          <p class="app-page-subtitle">仅管理员可生成/吊销。客户端「本地链路密钥」填此处生成的密钥。</p>
+          <p class="app-page-subtitle">仅管理员可生成/吊销/配额。客户端「本地链路密钥」填此处生成的密钥。</p>
         </div>
         <div class="app-userbar">
-          {% include "partials/theme_switch.html" %}
           <span class="app-user-chip">{{ session.username }} · {{ session.role }}</span>
           <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('logout') }}">退出</a>
         </div>
@@ -34,16 +38,20 @@
             <button class="btn btn-primary" onclick="gen()">＋ 生成新密钥</button>
             <span id="msg" class="text-success ms-2"></span>
           </div>
-          <div class="text-muted small mb-2">点密钥可复制完整值。吊销=立即失效(可再启用)；删除=永久移除。</div>
+          <div class="text-muted small mb-2">
+            点密钥可复制完整值。吊销=立即失效(可再启用)；删除=永久移除。
+            「用量/额度」可查看各接口调用量、配置额度(0=不限)、重置用量。
+          </div>
           <table class="table table-sm align-middle">
-            <thead><tr><th>密钥</th><th>备注</th><th>状态</th><th>创建</th><th>创建人</th><th>最近使用</th><th>操作</th></tr></thead>
+            <thead><tr>
+              <th>密钥</th><th>备注</th><th>状态</th><th>总调用量</th><th>创建</th><th>创建人</th><th>最近使用</th><th>操作</th>
+            </tr></thead>
             <tbody id="rows"></tbody>
           </table>
         </div></div>
       </main>
     </div>
   </div>
-<script src="{{ url_for('static', filename='theme.js') }}"></script>
 <script>
 const A=location.origin, msg=document.getElementById('msg');
 async function api(path,method){const r=await fetch(A+path,{method:method||'GET',credentials:'same-origin'});return r.json()}
@@ -51,18 +59,93 @@ function mask(k){return k.length>12?k.slice(0,6)+'****'+k.slice(-4):'****'}
 function esc(s){return (s||'').replace(/[<>&]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]))}
 async function cp(t){try{await navigator.clipboard.writeText(t)}catch(e){}}
 function show(t){msg.textContent=t}
+
 async function load(){
   const d=await api('/hg/keys/list');const rows=document.getElementById('rows');rows.innerHTML='';
-  (d.keys||[]).forEach(k=>{const tr=document.createElement('tr');
+  (d.keys||[]).forEach(k=>{
+    const tr=document.createElement('tr');
     const st=k.enabled?'<span class="text-success">●启用</span>':'<span class="text-muted">○已吊销</span>';
+    const quotaTag=k.has_quota?'<span class="badge bg-info text-dark ms-1">限额</span>':'';
     tr.innerHTML=`<td style="font-family:monospace;cursor:pointer" title="点击复制" onclick="cp('${k.key}')">${mask(k.key)}</td>
-      <td>${esc(k.note)}</td><td>${st}</td><td>${k.created||''}</td><td>${esc(k.created_by||'')}</td><td>${k.last_used||'-'}</td>
-      <td>${k.enabled?`<button class="btn btn-sm btn-outline-danger" onclick="rev('${k.key}',false)">吊销</button>`
-                    :`<button class="btn btn-sm btn-outline-success" onclick="rev('${k.key}',true)">启用</button>`}
-          <button class="btn btn-sm btn-outline-secondary" onclick="del('${k.key}')">删除</button></td>`;
-    rows.appendChild(tr)});
+      <td>${esc(k.note)}</td><td>${st}</td>
+      <td><b>${k.used_total||0}</b>${quotaTag}</td>
+      <td>${k.created||''}</td><td>${esc(k.created_by||'')}</td><td>${k.last_used||'-'}</td>
+      <td class="text-nowrap">
+        <button class="btn btn-sm btn-outline-primary" onclick="toggleUsage('${k.key}',this)">用量/额度</button>
+        ${k.enabled?`<button class="btn btn-sm btn-outline-danger" onclick="rev('${k.key}',false)">吊销</button>`
+                   :`<button class="btn btn-sm btn-outline-success" onclick="rev('${k.key}',true)">启用</button>`}
+        <button class="btn btn-sm btn-outline-secondary" onclick="del('${k.key}')">删除</button>
+      </td>`;
+    rows.appendChild(tr);
+    const sub=document.createElement('tr');sub.id='u_'+k.key;sub.style.display='none';
+    sub.innerHTML=`<td colspan="8"><div class="usage-panel" id="up_${k.key}">加载中…</div></td>`;
+    rows.appendChild(sub);
+  });
   show(`共 ${(d.keys||[]).length} 个密钥`);
 }
+
+async function toggleUsage(key,btn){
+  const sub=document.getElementById('u_'+key);
+  if(sub.style.display!=='none'){sub.style.display='none';return}
+  sub.style.display='';
+  await renderUsage(key);
+}
+
+async function renderUsage(key){
+  const box=document.getElementById('up_'+key);
+  const d=await api('/hg/keys/usage?key='+encodeURIComponent(key));
+  let body=(d.usage||[]).map(u=>{
+    let stat;
+    if(!u.quota) stat='<span class="badge badge-unlimited">不限</span>';
+    else if(u.used>=u.quota) stat='<span class="badge badge-exhausted">已用尽</span>';
+    else stat='<span class="badge badge-ok">'+(u.quota-u.used)+' 剩余</span>';
+    return `<tr>
+      <td>${u.label}</td>
+      <td><b>${u.used}</b></td>
+      <td>${u.quota||'—'}</td>
+      <td>${stat}</td>
+      <td>
+        <input type="number" min="0" class="form-control form-control-sm quota-input d-inline-block"
+               id="q_${key}_${u.endpoint}" value="${u.quota||0}" title="0=不限">
+        <button class="btn btn-sm btn-outline-primary" onclick="setQuota('${key}','${u.endpoint}')">设额度</button>
+        <button class="btn btn-sm btn-outline-warning" onclick="resetUsage('${key}','${u.endpoint}')">重置</button>
+      </td></tr>`;
+  }).join('');
+  box.innerHTML=`
+    <div class="d-flex gap-2 align-items-center mb-2 flex-wrap">
+      <b>接口用量 / 额度</b><span class="text-muted small">总调用量 ${d.used_total||0}</span>
+      <span class="flex-grow-1"></span>
+      统一额度<input type="number" min="0" class="form-control form-control-sm quota-input d-inline-block" id="qall_${key}" value="0">
+      <button class="btn btn-sm btn-primary" onclick="setQuotaAll('${key}')">应用到全部</button>
+      <button class="btn btn-sm btn-danger" onclick="resetAll('${key}')">全部重置</button>
+    </div>
+    <table class="table table-bordered table-sm align-middle bg-white">
+      <thead><tr><th>接口</th><th>调用量</th><th>额度</th><th>状态</th><th>操作</th></tr></thead>
+      <tbody>${body}</tbody>
+    </table>`;
+}
+
+async function setQuota(key,ep){
+  const v=document.getElementById('q_'+key+'_'+ep).value||0;
+  await api('/hg/keys/quota?key='+encodeURIComponent(key)+'&endpoint='+ep+'&quota='+v,'POST');
+  await renderUsage(key);load();
+}
+async function setQuotaAll(key){
+  const v=document.getElementById('qall_'+key).value||0;
+  if(!confirm('将所有接口额度统一设为 '+v+'(0=不限)?'))return;
+  await api('/hg/keys/quota?key='+encodeURIComponent(key)+'&endpoint=*&quota='+v,'POST');
+  await renderUsage(key);load();
+}
+async function resetUsage(key,ep){
+  await api('/hg/keys/usage/reset?key='+encodeURIComponent(key)+'&endpoint='+ep,'POST');
+  await renderUsage(key);load();
+}
+async function resetAll(key){
+  if(!confirm('确认重置该密钥所有接口的调用量为 0?(额度保留)'))return;
+  await api('/hg/keys/usage/reset?key='+encodeURIComponent(key)+'&endpoint=*','POST');
+  await renderUsage(key);load();
+}
+
 async function gen(){const note=document.getElementById('note').value.trim();const d=await api('/hg/keys/gen?note='+encodeURIComponent(note),'POST');await cp(d.key);show('已生成并复制: '+d.key);document.getElementById('note').value='';load()}
 async function rev(key,en){await api('/hg/keys/revoke?key='+key+'&enable='+en,'POST');load()}
 async function del(key){if(!confirm('确认永久删除?'))return;await api('/hg/keys/delete?key='+key,'POST');load()}

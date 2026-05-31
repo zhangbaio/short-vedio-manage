@@ -11,7 +11,7 @@
 """
 import os, sys, io, time, sqlite3, secrets, functools
 from flask import (Blueprint, request, jsonify, session, render_template,
-                   Response, abort, redirect, stream_with_context)
+                   Response, abort, redirect, stream_with_context, make_response)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "hongguo_core"))
@@ -37,12 +37,31 @@ hongguo_bp = Blueprint("hongguo", __name__)
 
 
 # ============ 密钥存储(dramas.db) ============
+# 受统计/额度管控的数据接口(endpoint 短名 -> 中文标签)。/img 免鉴权不计入。
+ENDPOINT_LABELS = {
+    "search": "搜索",
+    "rank": "榜单",
+    "latest": "最新上架",
+    "episodes": "剧集列表",
+    "play": "批量直链",
+    "video_url": "单集直链",
+    "stream": "在线播放",
+    "download": "下载任务",
+    "download_status": "下载状态",
+}
+
+
 def _db():
     c = sqlite3.connect(DATABASE)
     c.row_factory = sqlite3.Row
     c.execute("""CREATE TABLE IF NOT EXISTS hg_api_keys(
         key TEXT PRIMARY KEY, note TEXT, enabled INTEGER DEFAULT 1,
         created TEXT, last_used TEXT, created_by TEXT)""")
+    # 接口用量/额度: 按 密钥×接口 记累计调用量(used)与额度(quota, 0=不限)
+    c.execute("""CREATE TABLE IF NOT EXISTS hg_key_usage(
+        key TEXT NOT NULL, endpoint TEXT NOT NULL,
+        used INTEGER DEFAULT 0, quota INTEGER DEFAULT 0, updated TEXT,
+        PRIMARY KEY(key, endpoint))""")
     return c
 
 
@@ -62,10 +81,29 @@ def key_valid(key):
         c.close()
 
 
+def key_valid_exists(key):
+    """密钥是否存在(不论启用与否),用于额度/用量管理。"""
+    if not key:
+        return False
+    c = _db()
+    try:
+        return c.execute("SELECT 1 FROM hg_api_keys WHERE key=?", (key,)).fetchone() is not None
+    finally:
+        c.close()
+
+
 def key_list():
     c = _db()
     try:
-        return [dict(r) for r in c.execute("SELECT * FROM hg_api_keys ORDER BY created DESC")]
+        rows = [dict(r) for r in c.execute("SELECT * FROM hg_api_keys ORDER BY created DESC")]
+        # 附带每个密钥的总调用量与是否配过额度
+        agg = {r["key"]: (r["u"], r["q"]) for r in c.execute(
+            "SELECT key, COALESCE(SUM(used),0) u, COALESCE(SUM(quota),0) q FROM hg_key_usage GROUP BY key")}
+        for r in rows:
+            u, q = agg.get(r["key"], (0, 0))
+            r["used_total"] = u
+            r["has_quota"] = q > 0
+        return rows
     finally:
         c.close()
 
@@ -96,6 +134,94 @@ def key_delete(key):
     c = _db()
     try:
         c.execute("DELETE FROM hg_api_keys WHERE key=?", (key,))
+        c.execute("DELETE FROM hg_key_usage WHERE key=?", (key,))
+        c.commit()
+        return c.total_changes > 0
+    finally:
+        c.close()
+
+
+# ============ 接口用量/额度 ============
+def usage_precheck(key, ep):
+    """额度校验(只读, 不计数)。返回 (allowed, message)。
+    quota=0 表示不限; used>=quota 时拒绝。
+    """
+    if ep not in ENDPOINT_LABELS:
+        return True, ""  # 未纳入统计的接口直接放行
+    c = _db()
+    try:
+        r = c.execute("SELECT used, quota FROM hg_key_usage WHERE key=? AND endpoint=?",
+                      (key, ep)).fetchone()
+        used = r["used"] if r else 0
+        quota = r["quota"] if r else 0
+        if quota and used >= quota:
+            return False, f"接口「{ENDPOINT_LABELS[ep]}」额度已用尽({used}/{quota}),请联系管理员重置或加额度"
+        return True, ""
+    finally:
+        c.close()
+
+
+def usage_incr(key, ep):
+    """调用成功后计数 used+1(仅受管接口)。"""
+    if ep not in ENDPOINT_LABELS:
+        return
+    c = _db()
+    try:
+        now = time.strftime("%Y-%m-%d %H:%M:%S")
+        c.execute("""INSERT INTO hg_key_usage(key,endpoint,used,quota,updated) VALUES(?,?,1,0,?)
+                     ON CONFLICT(key,endpoint) DO UPDATE SET used=used+1, updated=excluded.updated""",
+                  (key, ep, now))
+        c.commit()
+    finally:
+        c.close()
+
+
+def usage_for_key(key):
+    """返回该密钥所有受管接口的 {endpoint,label,used,quota}(无记录的补 0)。"""
+    c = _db()
+    try:
+        have = {r["endpoint"]: r for r in c.execute(
+            "SELECT endpoint, used, quota, updated FROM hg_key_usage WHERE key=?", (key,))}
+        out = []
+        for ep, label in ENDPOINT_LABELS.items():
+            r = have.get(ep)
+            out.append({"endpoint": ep, "label": label,
+                        "used": (r["used"] if r else 0),
+                        "quota": (r["quota"] if r else 0),
+                        "updated": (r["updated"] if r else "")})
+        return out
+    finally:
+        c.close()
+
+
+def quota_set(key, ep, quota):
+    """设置某密钥某接口额度(ep='*' 表示全部接口统一设置)。quota<0 视为 0(不限)。"""
+    quota = max(0, int(quota))
+    eps = list(ENDPOINT_LABELS) if ep == "*" else ([ep] if ep in ENDPOINT_LABELS else [])
+    if not eps:
+        return False
+    c = _db()
+    try:
+        now = time.strftime("%Y-%m-%d %H:%M:%S")
+        for e in eps:
+            c.execute("""INSERT INTO hg_key_usage(key,endpoint,used,quota,updated) VALUES(?,?,0,?,?)
+                         ON CONFLICT(key,endpoint) DO UPDATE SET quota=excluded.quota, updated=excluded.updated""",
+                      (key, e, quota, now))
+        c.commit()
+        return True
+    finally:
+        c.close()
+
+
+def usage_reset(key, ep=None):
+    """重置调用量为 0(ep 为空或 '*' 重置该密钥全部接口),保留额度配置。"""
+    c = _db()
+    try:
+        now = time.strftime("%Y-%m-%d %H:%M:%S")
+        if ep and ep != "*":
+            c.execute("UPDATE hg_key_usage SET used=0, updated=? WHERE key=? AND endpoint=?", (now, key, ep))
+        else:
+            c.execute("UPDATE hg_key_usage SET used=0, updated=? WHERE key=?", (now, key))
         c.commit()
         return c.total_changes > 0
     finally:
@@ -104,15 +230,24 @@ def key_delete(key):
 
 # ============ 鉴权装饰器 ============
 def data_auth(view):
-    """数据接口: 平台登录会话 或 有效 api_key 之一即可。"""
+    """数据接口: 平台登录会话 或 有效 api_key 之一即可。
+    经 api_key 访问时按「密钥×接口」统计调用量并校验额度(平台登录会话不计不限)。
+    """
     @functools.wraps(view)
     def w(*a, **k):
         if session.get("user_id"):
             return view(*a, **k)
         key = request.headers.get("x-api-key") or request.args.get("api_key") or ""
-        if key_valid(key):
-            return view(*a, **k)
-        return jsonify({"detail": "缺少或无效的 api_key(请配置本地链路密钥)"}), 401
+        if not key_valid(key):
+            return jsonify({"detail": "缺少或无效的 api_key(请配置本地链路密钥)"}), 401
+        ep = (request.endpoint or "").split(".")[-1]
+        allowed, msg = usage_precheck(key, ep)
+        if not allowed:
+            return jsonify({"detail": msg, "quota_exceeded": True}), 429
+        resp = make_response(view(*a, **k))
+        if resp.status_code < 400:  # 仅调用成功才计入额度(上游失败不扣)
+            usage_incr(key, ep)
+        return resp
     return w
 
 
@@ -314,3 +449,41 @@ def keys_revoke():
 def keys_del():
     key = request.form.get("key") or request.args.get("key") or ""
     return jsonify({"ok": key_delete(key)})
+
+
+# ============ 接口用量/额度管理(仅管理员) ============
+@hongguo_bp.get("/hg/keys/usage")
+@admin_only
+def keys_usage():
+    """某密钥各接口的调用量与额度。"""
+    key = request.args.get("key") or ""
+    usage = usage_for_key(key)
+    return jsonify({"key": key,
+                    "usage": usage,
+                    "used_total": sum(u["used"] for u in usage)})
+
+
+@hongguo_bp.post("/hg/keys/quota")
+@admin_only
+def keys_quota():
+    """配置额度: key + endpoint(单接口或 '*' 全部统一) + quota(0=不限)。"""
+    key = request.form.get("key") or request.args.get("key") or ""
+    ep = request.form.get("endpoint") or request.args.get("endpoint") or ""
+    quota = request.form.get("quota") or request.args.get("quota") or "0"
+    try:
+        quota = int(quota)
+    except ValueError:
+        return jsonify({"ok": False, "error": "额度须为整数"}), 400
+    if not key or not key_valid_exists(key):
+        return jsonify({"ok": False, "error": "密钥不存在"}), 404
+    return jsonify({"ok": quota_set(key, ep, quota)})
+
+
+@hongguo_bp.post("/hg/keys/usage/reset")
+@admin_only
+def keys_usage_reset():
+    """重置调用量: key + endpoint(留空或 '*' 重置全部)。额度配置保留。"""
+    key = request.form.get("key") or request.args.get("key") or ""
+    ep = request.form.get("endpoint") or request.args.get("endpoint") or "*"
+    usage_reset(key, ep)
+    return jsonify({"ok": True})
