@@ -52,8 +52,10 @@ ENDPOINT_LABELS = {
 
 
 def _db():
-    c = sqlite3.connect(DATABASE)
+    c = sqlite3.connect(DATABASE, timeout=30, check_same_thread=False)
     c.row_factory = sqlite3.Row
+    c.execute("PRAGMA busy_timeout = 30000")
+    c.execute("PRAGMA journal_mode = WAL")
     c.execute("""CREATE TABLE IF NOT EXISTS hg_api_keys(
         key TEXT PRIMARY KEY, note TEXT, enabled INTEGER DEFAULT 1,
         created TEXT, last_used TEXT, created_by TEXT)""")
@@ -340,14 +342,22 @@ def rank_run_checks(boards=None):
     return {"checked_at": now, "summary": summary}
 
 
-def rank_changes(board=None, limit=100):
+def rank_changes(board=None, limit=100, change_type=None):
     c = _db()
     try:
+        clauses = []
+        params = []
         if board:
-            rows = c.execute("SELECT * FROM hg_rank_change WHERE board=? ORDER BY id DESC LIMIT ?",
-                             (board, limit)).fetchall()
-        else:
-            rows = c.execute("SELECT * FROM hg_rank_change ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+            clauses.append("board=?")
+            params.append(board)
+        if change_type:
+            clauses.append("change_type=?")
+            params.append(change_type)
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        rows = c.execute(
+            f"SELECT * FROM hg_rank_change{where} ORDER BY id DESC LIMIT ?",
+            (*params, limit),
+        ).fetchall()
         return [dict(r) for r in rows]
     finally:
         c.close()
@@ -424,9 +434,10 @@ def new_run_checks(genres=None):
 
 
 def _new_row_to_item(r, today):
-    return {"series_id": r["series_id"], "title": r["title"], "cover": r["cover"],
+    return {"genre": r["genre"], "series_id": r["series_id"], "title": r["title"], "cover": r["cover"],
             "episode_cnt": r["episode_cnt"], "score": r["score"], "play_cnt": r["play_cnt"],
             "category": r["category"], "intro": r["intro"], "first_seen": r["first_seen"],
+            "last_seen": r["last_seen"], "is_new": bool(r["is_new"]),
             "today": bool(r["is_new"] and (r["first_seen"] or "")[:10] == today)}
 
 
@@ -796,18 +807,21 @@ def keys_usage_reset():
 @hongguo_bp.get("/rank/changes")
 @data_auth
 def rank_changes_api():
-    """榜单变动记录(新进/上升/下降/掉榜)。可按 board 过滤, limit 默认100。"""
+    """榜单变动记录(新进/上升/下降/掉榜)。可按 board/change_type 过滤, limit 默认100。"""
     board = request.args.get("board") or None
     if board and board not in H.RANK_BOARDS:
         return jsonify({"detail": f"board必须是 {list(H.RANK_BOARDS)}"}), 400
+    change_type = request.args.get("change_type") or None
+    if change_type and change_type not in {"new", "up", "down", "drop"}:
+        return jsonify({"detail": "change_type必须是 new/up/down/drop"}), 400
     try:
         limit = max(1, min(500, int(request.args.get("limit", 100))))
     except ValueError:
         limit = 100
     cfg = rank_cfg_get()
-    return jsonify({"board": board, "interval_min": cfg["interval_min"],
+    return jsonify({"board": board, "change_type": change_type, "interval_min": cfg["interval_min"],
                     "enabled": bool(cfg["enabled"]), "last_check": cfg["last_check"],
-                    "changes": rank_changes(board, limit)})
+                    "changes": rank_changes(board, limit, change_type)})
 
 
 @hongguo_bp.get("/hg/rank/config")

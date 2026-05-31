@@ -1375,6 +1375,19 @@ body,
   border-color: var(--app-primary-strong);
 }
 
+.btn-outline-primary {
+  border-color: var(--app-primary);
+  color: var(--app-primary);
+  background: #ffffff;
+}
+
+.btn-outline-primary:hover,
+.btn-outline-primary:focus {
+  background: var(--app-primary);
+  border-color: var(--app-primary);
+  color: #ffffff;
+}
+
 .btn-outline-secondary {
   border-color: var(--app-border-strong);
   color: #475569;

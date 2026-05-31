@@ -4,16 +4,22 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>红果API密钥 - 视频号短剧管理系统</title>
+  <link rel="icon" href="{{ url_for('static', filename='icons/app-icon.ico') }}?v=20260531" sizes="any" />
+  <link rel="icon" type="image/png" href="{{ url_for('static', filename='icons/app-icon.png') }}?v=20260531" />
+  <link rel="apple-touch-icon" href="{{ url_for('static', filename='icons/app-icon.png') }}?v=20260531" />
   <link href="https://cdn.bootcdn.net/ajax/libs/bootstrap/5.3.2/css/bootstrap.min.css" rel="stylesheet" />
+  <link href="https://cdn.bootcdn.net/ajax/libs/bootstrap-icons/1.11.3/font/bootstrap-icons.min.css" rel="stylesheet" />
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
   <style>
-    .usage-panel { background:#f8f9fa; border-radius:6px; padding:12px; }
+    .usage-panel { background:var(--app-surface-soft); border:1px solid var(--app-border); border-radius:8px; padding:12px; }
     .usage-panel table { margin-bottom:8px; }
     .usage-panel td, .usage-panel th { padding:4px 8px; font-size:13px; }
     .quota-input { width:90px; }
-    .badge-exhausted { background:#dc3545; }
-    .badge-unlimited { background:#6c757d; }
-    .badge-ok { background:#198754; }
+    .badge-exhausted { background:#fee2e2; color:#991b1b; border:1px solid #fecaca; }
+    .badge-unlimited { background:#edf2f7; color:#475569; border:1px solid #d8e1eb; }
+    .badge-ok { background:#dff7eb; color:#086045; border:1px solid #b8ebd1; }
+    .hg-key-cell { color:var(--app-page-title); font-family:monospace; cursor:pointer; }
+    .hg-usage-table { background:var(--app-surface) !important; }
   </style>
 </head>
 <body class="app-body">
@@ -27,6 +33,7 @@
           <p class="app-page-subtitle">仅管理员可生成/吊销/配额。客户端「本地链路密钥」填此处生成的密钥。</p>
         </div>
         <div class="app-userbar">
+          {% include "partials/theme_switch.html" %}
           <span class="app-user-chip">{{ session.username }} · {{ session.role }}</span>
           <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('logout') }}">退出</a>
         </div>
@@ -66,7 +73,7 @@ async function load(){
     const tr=document.createElement('tr');
     const st=k.enabled?'<span class="text-success">●启用</span>':'<span class="text-muted">○已吊销</span>';
     const quotaTag=k.has_quota?'<span class="badge bg-info text-dark ms-1">限额</span>':'';
-    tr.innerHTML=`<td style="font-family:monospace;cursor:pointer" title="点击复制" onclick="cp('${k.key}')">${mask(k.key)}</td>
+    tr.innerHTML=`<td class="hg-key-cell" title="点击复制" onclick="cp('${k.key}')">${mask(k.key)}</td>
       <td>${esc(k.note)}</td><td>${st}</td>
       <td><b>${k.used_total||0}</b>${quotaTag}</td>
       <td>${k.created||''}</td><td>${esc(k.created_by||'')}</td><td>${k.last_used||'-'}</td>
@@ -119,7 +126,7 @@ async function renderUsage(key){
       <button class="btn btn-sm btn-primary" onclick="setQuotaAll('${key}')">应用到全部</button>
       <button class="btn btn-sm btn-danger" onclick="resetAll('${key}')">全部重置</button>
     </div>
-    <table class="table table-bordered table-sm align-middle bg-white">
+    <table class="table table-bordered table-sm align-middle hg-usage-table">
       <thead><tr><th>接口</th><th>调用量</th><th>额度</th><th>状态</th><th>操作</th></tr></thead>
       <tbody>${body}</tbody>
     </table>`;
@@ -151,5 +158,6 @@ async function rev(key,en){await api('/hg/keys/revoke?key='+key+'&enable='+en,'P
 async function del(key){if(!confirm('确认永久删除?'))return;await api('/hg/keys/delete?key='+key,'POST');load()}
 load();
 </script>
+<script src="{{ url_for('static', filename='theme.js') }}"></script>
 </body>
 </html>

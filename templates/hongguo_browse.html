@@ -22,10 +22,16 @@
     .hg-card .b{padding:12px 14px}
     .hg-card .t{font-size:16px;font-weight:700;color:var(--app-page-title);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
     .hg-card .m{font-size:13px;color:var(--app-muted);margin-top:5px}
-    .hg-ctable{width:100%;border-collapse:collapse;font-size:14px}
-    .hg-ctable th,.hg-ctable td{padding:7px 10px;border-bottom:1px solid var(--app-border);text-align:left}
-    .hg-ctable th{color:var(--app-muted);font-weight:650;font-size:13px}
-    .hg-ctable tbody tr:hover{background:var(--app-surface-soft)}
+    .hg-view-toggle .btn{display:inline-flex;align-items:center;gap:4px}
+    .hg-list-cover{width:48px;height:64px;object-fit:cover;border-radius:6px;border:1px solid var(--app-border);background:var(--app-surface-soft)}
+    .hg-list-title{font-weight:700;color:var(--app-page-title);cursor:pointer}
+    .hg-list-title:hover{color:var(--app-primary)}
+    .hg-list-intro{max-width:420px;color:var(--app-muted);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .hg-list-meta{color:var(--app-muted);font-size:12px}
+    .hg-list-table .badge{font-weight:650}
+    .hg-change-table .badge{min-width:42px}
+    .hg-change-rank{white-space:nowrap}
+    .hg-change-title{max-width:520px;word-break:break-word}
     .hg-badge{background:var(--app-primary);color:#fff;font-size:10px;padding:1px 5px;border-radius:999px;margin-left:4px}
     #hgModal{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;z-index:1050}
     #hgModal .box{background:var(--app-surface);border:1px solid var(--app-border);border-radius:10px;width:min(720px,92vw);max-height:88vh;overflow:auto;padding:20px;box-shadow:var(--app-shadow-lg)}
@@ -68,19 +74,45 @@
 
 <script src="{{ url_for('static', filename='theme.js') }}"></script>
 <script>
-const A=location.origin; let view='search', curId=null, curEps=[], lastUrl='';
+const A=location.origin; let view='search', curId=null, curEps=[], lastUrl='', searchItems=[], rankItems=[], latestItems=[];
 const IS_ADMIN = {{ 'true' if session.role == 'admin' else 'false' }};
 const BOARD_NAMES={recommend:'推荐榜',hot:'热播榜',new:'新剧榜'};
-const CHG={new:['新进','#198754'],up:['上升','#0d6efd'],down:['下降','#fd7e14'],drop:['掉榜','#6c757d']};
+const GENRE_NAMES={short_play:'短剧',comic_series:'漫剧',ai_series:'AI短剧'};
+const CHG={new:['新进','text-bg-success'],up:['上升','text-bg-primary'],down:['下降','text-bg-warning'],drop:['掉榜','text-bg-secondary']};
+let searchView = localStorage.getItem('hgSearchView') === 'list' ? 'list' : 'cover';
+let rankView = localStorage.getItem('hgRankView') === 'list' ? 'list' : 'cover';
+let latestView = localStorage.getItem('hgLatestView') === 'list' ? 'list' : 'cover';
 const sub=document.getElementById('hgSub'), grid=document.getElementById('hgGrid');
 const modal=document.getElementById('hgModal'), box=document.getElementById('hgBox');
 modal.onclick=e=>{if(e.target===modal)modal.style.display='none'};
 async function get(p,q){const u=new URL(A+p);Object.entries(q||{}).forEach(([k,v])=>u.searchParams.set(k,v));const r=await fetch(u,{credentials:'same-origin'});if(!r.ok)throw new Error((await r.json()).detail||r.status);return r.json()}
+function esc(s){return String(s||'').replace(/[<>&"]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]))}
+function jsString(s){return String(s||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/\r?\n/g,' ')}
+function viewToggleHtml(scope,label){
+  return `<div class="btn-group btn-group-sm hg-view-toggle" role="group" aria-label="${label}展示方式">
+    <button type="button" id="hg-${scope}-cover" class="btn btn-outline-secondary" onclick="setBrowseView('${scope}','cover')"><i class="bi bi-grid-3x3-gap"></i>封面</button>
+    <button type="button" id="hg-${scope}-list" class="btn btn-outline-secondary" onclick="setBrowseView('${scope}','list')"><i class="bi bi-list-ul"></i>列表</button>
+  </div>`;
+}
+function browseView(scope){return scope==='search'?searchView:(scope==='rank'?rankView:latestView)}
+function setBrowseView(scope,mode){
+  const next=mode==='list'?'list':'cover';
+  if(scope==='search'){searchView=next;localStorage.setItem('hgSearchView',next);renderSearchItems();}
+  else if(scope==='rank'){rankView=next;localStorage.setItem('hgRankView',next);renderRankItems();}
+  else{latestView=next;localStorage.setItem('hgLatestView',next);renderLatestItems();}
+}
+function updateViewButtons(scope){
+  const cover=document.getElementById(`hg-${scope}-cover`), list=document.getElementById(`hg-${scope}-list`);
+  if(!cover||!list)return;
+  const mode=browseView(scope);
+  cover.className='btn '+(mode==='cover'?'btn-primary':'btn-outline-secondary');
+  list.className='btn '+(mode==='list'?'btn-primary':'btn-outline-secondary');
+}
 document.querySelectorAll('.hg-tab').forEach(t=>t.onclick=()=>{document.querySelectorAll('.hg-tab').forEach(x=>x.classList.remove('on'));t.classList.add('on');view=t.dataset.v;renderSub()});
 function renderSub(){
   grid.innerHTML='';
-  if(view==='search'){sub.innerHTML=`<div class="input-group" style="max-width:420px"><input id="hgq" class="form-control" placeholder="输入剧名"><button class="btn btn-primary" onclick="doSearch()">搜索</button></div>`;document.getElementById('hgq').onkeydown=e=>e.key==='Enter'&&doSearch();}
-  else if(view==='rank'){sub.innerHTML=`<select id="hgb" class="form-select" style="max-width:200px;display:inline-block"><option value="recommend">推荐榜</option><option value="hot">热播榜</option><option value="new">新剧榜</option></select> <button class="btn btn-primary" onclick="doRank()">刷新</button>`;doRank();}
+  if(view==='search'){sub.innerHTML=`<div class="d-flex gap-2 align-items-center flex-wrap"><div class="input-group" style="max-width:420px"><input id="hgq" class="form-control" placeholder="输入剧名"><button class="btn btn-primary" onclick="doSearch()">搜索</button></div>${viewToggleHtml('search','搜索结果')}</div>`;updateViewButtons('search');document.getElementById('hgq').onkeydown=e=>e.key==='Enter'&&doSearch();}
+  else if(view==='rank'){sub.innerHTML=`<div class="d-flex gap-2 align-items-center flex-wrap"><select id="hgb" class="form-select" style="max-width:200px;display:inline-block" onchange="doRank()"><option value="recommend">推荐榜</option><option value="hot">热播榜</option><option value="new">新剧榜</option></select> <button class="btn btn-primary" onclick="doRank()">刷新</button>${viewToggleHtml('rank','榜单')}</div>`;updateViewButtons('rank');doRank();}
   else if(view==='latest'){
     const adminBox = IS_ADMIN ? `<span style="margin-left:auto"></span>
       监控间隔<input id="hgniv" type="number" min="1" class="form-control" style="width:90px;display:inline-block" title="分钟"> 分钟
@@ -92,8 +124,10 @@ function renderSub(){
         <option value="short_play">短剧</option><option value="comic_series">漫剧</option><option value="ai_series">AI短剧</option></select>
       <label><input type="checkbox" id="hgtoday" onchange="doLatest()"> 仅今日上新</label>
       <button class="btn btn-primary btn-sm" onclick="doLatest()">刷新</button>
+      ${viewToggleHtml('latest','上新')}
       <span id="hgninfo" class="text-muted small"></span>${adminBox}
     </div>`;
+    updateViewButtons('latest');
     doLatest();
   }
   else if(view==='changes'){
@@ -106,14 +140,17 @@ function renderSub(){
       <select id="hgcb" class="form-select" style="max-width:160px;display:inline-block" onchange="doChanges()">
         <option value="">全部榜单</option><option value="recommend">推荐榜</option><option value="hot">热播榜</option><option value="new">新剧榜</option>
       </select>
+      <select id="hgct" class="form-select" style="max-width:140px;display:inline-block" onchange="doChanges()">
+        <option value="">全部变动</option><option value="new">新进</option><option value="up">上升</option><option value="down">下降</option><option value="drop">掉榜</option>
+      </select>
       <button class="btn btn-primary btn-sm" onclick="doChanges()">刷新</button>
       <span id="hgcinfo" class="text-muted small"></span>${adminBox}
     </div><div id="hgcbody" class="mt-3"></div>`;
     doChanges();
   }
 }
-async function doSearch(){const v=document.getElementById('hgq').value.trim();if(!v)return;grid.innerHTML='搜索中...';try{cards((await get('/search',{q:v})).results)}catch(e){grid.innerHTML='错误: '+e.message}}
-async function doRank(){grid.innerHTML='加载中...';try{cards((await get('/rank',{board:document.getElementById('hgb').value,limit:100})).items)}catch(e){grid.innerHTML='错误: '+e.message}}
+async function doSearch(){const v=document.getElementById('hgq').value.trim();if(!v)return;grid.innerHTML='搜索中...';try{searchItems=(await get('/search',{q:v})).results||[];renderSearchItems()}catch(e){grid.innerHTML='错误: '+e.message}}
+async function doRank(){grid.innerHTML='加载中...';try{rankItems=(await get('/rank',{board:document.getElementById('hgb').value,limit:100})).items||[];renderRankItems()}catch(e){grid.innerHTML='错误: '+e.message}}
 async function doLatest(){
   grid.innerHTML='加载中...';
   const today=document.getElementById('hgtoday') && document.getElementById('hgtoday').checked;
@@ -122,8 +159,15 @@ async function doLatest(){
     const info=document.getElementById('hgninfo');
     if(info)info.textContent=`监控间隔 ${d.interval_min} 分钟 · ${d.enabled?'已启用':'已停用'} · 上次抓取 ${d.last_check||'—'} · 共 ${d.count} 条`;
     if(IS_ADMIN){const iv=document.getElementById('hgniv'),en=document.getElementById('hgnen');if(iv&&!iv.value)iv.value=d.interval_min;if(en)en.checked=!!d.enabled;}
-    cards(d.items);
+    latestItems=d.items||[];
+    renderLatestItems();
   }catch(e){grid.innerHTML='错误: '+e.message}
+}
+function renderSearchItems(){updateViewButtons('search');if(searchView==='list')browseTable(searchItems,'search');else cards(searchItems)}
+function renderRankItems(){updateViewButtons('rank');if(rankView==='list')browseTable(rankItems,'rank');else cards(rankItems)}
+function renderLatestItems(){
+  updateViewButtons('latest');
+  if(latestView==='list')latestTable(latestItems);else cards(latestItems);
 }
 async function saveNewCfg(){
   const iv=document.getElementById('hgniv').value, en=document.getElementById('hgnen').checked;
@@ -138,21 +182,23 @@ async function checkNewNow(){
 async function doChanges(){
   const body=document.getElementById('hgcbody'); if(!body)return; body.innerHTML='加载中...';
   const b=document.getElementById('hgcb').value;
+  const t=document.getElementById('hgct').value;
   try{
-    const d=await get('/rank/changes',b?{board:b,limit:300}:{limit:300});
+    const params={limit:300}; if(b)params.board=b; if(t)params.change_type=t;
+    const d=await get('/rank/changes',params);
     const info=document.getElementById('hgcinfo');
     info.textContent=`间隔 ${d.interval_min} 分钟 · ${d.enabled?'已启用':'已停用'} · 上次检查 ${d.last_check||'—'}`;
     if(IS_ADMIN){const iv=document.getElementById('hgiv'),en=document.getElementById('hgen');if(iv)iv.value=d.interval_min;if(en)en.checked=!!d.enabled;}
     const rows=(d.changes||[]).map(c=>{
-      const [lbl,col]=CHG[c.change_type]||[c.change_type,'#888'];
+      const [lbl,cls]=CHG[c.change_type]||[c.change_type,'text-bg-secondary'];
       let rk = c.change_type==='new' ? `→第${c.new_rank}` : c.change_type==='drop' ? `第${c.old_rank}→掉榜` : `第${c.old_rank}→第${c.new_rank}`;
       return `<tr><td class="text-muted small">${c.checked_at||''}</td>
         <td>${BOARD_NAMES[c.board]||c.board}</td>
-        <td><span style="color:#fff;background:${col};padding:1px 8px;border-radius:10px;font-size:12px">${lbl}</span></td>
-        <td>${(c.title||'').replace(/[<>&]/g,'')}</td><td class="small">${rk}</td></tr>`;
+        <td><span class="badge ${cls}">${lbl}</span></td>
+        <td class="hg-change-title">${esc(c.title)}</td><td class="small hg-change-rank">${esc(rk)}</td></tr>`;
     }).join('');
-    body.innerHTML = rows ? `<table class="hg-ctable"><thead><tr><th>时间</th><th>榜单</th><th>变动</th><th>剧名</th><th>名次</th></tr></thead><tbody>${rows}</tbody></table>`
-      : '<div class="text-muted">暂无变动记录（后台按间隔检查，首次检查仅建立基线，之后才有变动）。</div>';
+    body.innerHTML = rows ? `<div class="table-responsive"><table class="table table-hover align-middle mb-0 hg-change-table"><thead><tr><th>时间</th><th>榜单</th><th>变动</th><th>剧名</th><th>名次</th></tr></thead><tbody>${rows}</tbody></table></div>`
+      : '<div class="mobile-empty-state">暂无变动记录（后台按间隔检查，首次检查仅建立基线，之后才有变动）。</div>';
   }catch(e){body.innerHTML='错误: '+e.message}
 }
 async function saveRankCfg(){
@@ -165,7 +211,68 @@ async function checkNow(){
   await fetch(A+'/hg/rank/check',{method:'POST',credentials:'same-origin'});
   doChanges();
 }
-function cards(list){grid.innerHTML='';if(!list||!list.length){grid.innerHTML='无结果';return}list.forEach(it=>{const d=document.createElement('div');d.className='hg-card';const cv=it.cover?'/img?url='+encodeURIComponent(it.cover):'';const hot=it.hot||(it.play_cnt?(it.play_cnt/10000|0)+'万播放':'');d.innerHTML=`<img loading="lazy" src="${cv}" onerror="this.style.opacity=.2"><div class="b"><div class="t">${it.title||''}${it.today?'<span class="hg-badge">今日</span>':''}</div><div class="m">${it.episode_cnt||0}集 ${it.score?'★'+it.score:''} ${hot}</div></div>`;d.onclick=()=>openSeries(it.series_id);grid.appendChild(d)})}
+function fmtPlay(v){const n=Number(v||0);if(!n)return '';return n>=10000?(n/10000).toFixed(n>=100000?0:1).replace(/\.0$/,'')+'万播放':n+'播放'}
+function shortDate(v){return (v||'').replace('T',' ').slice(0,16)||'—'}
+function categoryText(v){if(Array.isArray(v))return v.join(' / ');return String(v||'').replace(/[\[\]'"]/g,'').replace(/,/g,' / ')||'—'}
+function itemCover(it){return it.cover?'/img?url='+encodeURIComponent(it.cover):''}
+function itemStatus(it,kind){
+  if(kind==='rank')return `<span class="badge text-bg-primary">第${Number(it.rank||0)||'—'}名</span>`;
+  if(kind==='latest')return it.today?'<span class="badge text-bg-danger">今日上新</span>':'<span class="badge text-bg-primary">7日内上新</span>';
+  return '<span class="badge text-bg-secondary">搜索结果</span>';
+}
+function browseTable(list,kind){
+  grid.className='';
+  if(!list||!list.length){grid.innerHTML=`<div class="mobile-empty-state">暂无${kind==='rank'?'榜单':'搜索'}记录</div>`;return}
+  const rows=list.map(it=>{
+    const cv=itemCover(it), sid=jsString(it.series_id), hot=it.hot||fmtPlay(it.play_cnt);
+    return `<tr>
+      <td>${cv?`<img class="hg-list-cover" loading="lazy" src="${cv}" onerror="this.style.opacity=.2">`:'—'}</td>
+      <td>
+        <div class="hg-list-title" onclick="openSeries('${sid}')">${esc(it.title||'未命名短剧')}</div>
+        <div class="hg-list-intro" title="${esc(it.intro)}">${esc(it.intro||'暂无简介')}</div>
+      </td>
+      <td>${itemStatus(it,kind)}</td>
+      <td class="hg-list-meta">${esc(categoryText(it.category||it.copyright))}</td>
+      <td>${Number(it.episode_cnt||0)||'—'}集</td>
+      <td class="hg-list-meta">${it.score?`★ ${esc(it.score)}`:'—'}${hot?`<br>${esc(hot)}`:''}</td>
+      <td class="hg-list-meta">${esc(it.copyright||'—')}</td>
+      <td><button class="btn btn-sm btn-outline-primary" onclick="openSeries('${sid}')">详情</button></td>
+    </tr>`;
+  }).join('');
+  grid.innerHTML=`<div class="table-responsive"><table class="table table-hover align-middle mb-0 hg-list-table">
+    <thead><tr><th>封面</th><th>剧名</th><th>${kind==='rank'?'排名':'状态'}</th><th>分类/来源</th><th>集数</th><th>热度</th><th>版权</th><th>操作</th></tr></thead>
+    <tbody>${rows}</tbody></table></div>`;
+}
+function latestTable(list){
+  grid.className='';
+  if(!list||!list.length){grid.innerHTML='<div class="mobile-empty-state">暂无上新记录</div>';return}
+  const rows=list.map(it=>{
+    const cv=itemCover(it);
+    const status=itemStatus(it,'latest');
+    const title=esc(it.title||'未命名短剧');
+    const sid=jsString(it.series_id);
+    const hot=it.hot||fmtPlay(it.play_cnt);
+    return `<tr>
+      <td>${cv?`<img class="hg-list-cover" loading="lazy" src="${cv}" onerror="this.style.opacity=.2">`:'—'}</td>
+      <td>
+        <div class="hg-list-title" onclick="openSeries('${sid}')">${title}</div>
+        <div class="hg-list-intro" title="${esc(it.intro)}">${esc(it.intro||'暂无简介')}</div>
+      </td>
+      <td>${status}</td>
+      <td>${GENRE_NAMES[it.genre]||document.getElementById('hgg')?.selectedOptions[0]?.textContent||'—'}</td>
+      <td class="hg-list-meta">${esc(categoryText(it.category))}</td>
+      <td>${Number(it.episode_cnt||0)||'—'}集</td>
+      <td class="hg-list-meta">${it.score?`★ ${esc(it.score)}`:'—'}${hot?`<br>${esc(hot)}`:''}</td>
+      <td class="hg-list-meta">${shortDate(it.first_seen)}</td>
+      <td class="hg-list-meta">${shortDate(it.last_seen)}</td>
+      <td><button class="btn btn-sm btn-outline-primary" onclick="openSeries('${sid}')">详情</button></td>
+    </tr>`;
+  }).join('');
+  grid.innerHTML=`<div class="table-responsive"><table class="table table-hover align-middle mb-0 hg-list-table">
+    <thead><tr><th>封面</th><th>剧名</th><th>状态</th><th>体裁</th><th>分类</th><th>集数</th><th>热度</th><th>首次发现</th><th>最近抓取</th><th>操作</th></tr></thead>
+    <tbody>${rows}</tbody></table></div>`;
+}
+function cards(list){grid.className='hg-grid';grid.innerHTML='';if(!list||!list.length){grid.innerHTML='无结果';return}list.forEach(it=>{const d=document.createElement('div');d.className='hg-card';const cv=it.cover?'/img?url='+encodeURIComponent(it.cover):'';const hot=it.hot||fmtPlay(it.play_cnt);d.innerHTML=`<img loading="lazy" src="${cv}" onerror="this.style.opacity=.2"><div class="b"><div class="t">${esc(it.title)}${it.today?'<span class="hg-badge">今日</span>':''}</div><div class="m">${it.episode_cnt||0}集 ${it.score?'★'+esc(it.score):''} ${esc(hot)}</div></div>`;d.onclick=()=>openSeries(it.series_id);grid.appendChild(d)})}
 async function openSeries(sid){curId=sid;modal.style.display='flex';box.innerHTML='加载中...';try{const r=await get('/episodes',{series_id:sid});curEps=r.episodes;const m=r.meta;box.innerHTML=`<div style="float:right;cursor:pointer;font-size:22px;color:#999" onclick="hgModal.style.display='none'">×</div><h4>${m.title}</h4><div class="text-muted small">${m.status} · ${m.episode_cnt}集 · ${(m.play_cnt/10000|0)}万播放 · ${(m.category||[]).join('/')}</div><p class="small text-muted">${(m.intro||'').slice(0,120)}</p><div class="mb-2">范围 <input id="hgr" value="all" style="width:90px"> <button class="btn btn-sm btn-primary" onclick="copyLinks()">📋复制直链(批量)</button> <button class="btn btn-sm btn-outline-secondary" onclick="doDownload()">下载到服务器</button></div><div id="hgp" class="small text-success"></div><div class="hg-eps">${curEps.map(e=>`<div class="hg-ep" onclick="playEp(${e.index})">${e.index}</div>`).join('')}</div>`}catch(e){box.innerHTML='错误: '+e.message}}
 async function playEp(i){const p=document.getElementById('hgp');p.textContent='获取第'+i+'集...';try{const r=await get('/play',{series_id:curId,ep:String(i)});const u=r.episodes[0]?.url;lastUrl=u||'';const dl=A+'/stream?series_id='+curId+'&ep='+i;p.innerHTML=`第${i}集: `+(u?`<a href="${u}" target="_blank">▶️播放</a> <a href="#" onclick="cp(lastUrl);return false">📋复制直链</a> `:'(无直链) ')+`<a href="${dl}">⬇️经服务器下载</a>`}catch(e){p.textContent='错误: '+e.message}}
 async function copyLinks(){const rng=document.getElementById('hgr').value.trim()||'all';const p=document.getElementById('hgp');p.textContent='获取直链...';try{const r=await get('/play',{series_id:curId,ep:rng});const ls=r.episodes.filter(e=>e.url).map(e=>e.url);await cp(ls.join('\n'));p.innerHTML=`<span class="text-success">已复制 ${ls.length} 条直链</span>,粘到IDM/迅雷批量下载`}catch(e){p.textContent='错误: '+e.message}}
