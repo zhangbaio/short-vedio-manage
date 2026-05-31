@@ -8,6 +8,11 @@ services:
       LICENSE_SIGNING_KEY: ${LICENSE_SIGNING_KEY:?LICENSE_SIGNING_KEY is required}
       WX_MINIDRAMA_APPID: ${WX_MINIDRAMA_APPID:-}
       WX_MINIDRAMA_APPSECRET: ${WX_MINIDRAMA_APPSECRET:-}
+      # 红果签名后端(本地 sign_server, 经 SSH 隧道映射到宿主机端口); 值在 .env 配置
+      SIGN_SERVER: ${SIGN_SERVER:-}
+    extra_hosts:
+      # 容器内经 host.docker.internal 访问宿主机(签名隧道监听在宿主机端口)
+      - "host.docker.internal:host-gateway"
     restart: unless-stopped
     ports:
       - "${APP_PORT:-8000}:8000"
