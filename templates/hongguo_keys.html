@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>红果API密钥 - 视频号短剧管理系统</title>
+  <link href="https://cdn.bootcdn.net/ajax/libs/bootstrap/5.3.2/css/bootstrap.min.css" rel="stylesheet" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+</head>
+<body class="app-body">
+  {% set active_page = 'hongguo_keys' %}
+  <div class="app-shell">
+    {% include "partials/sidebar.html" %}
+    <div class="app-main">
+      <header class="app-topbar">
+        <div>
+          <h1 class="app-page-title">红果 API 密钥</h1>
+          <p class="app-page-subtitle">仅管理员可生成/吊销。客户端「本地链路密钥」填此处生成的密钥。</p>
+        </div>
+        <div class="app-userbar">
+          <span class="app-user-chip">{{ session.username }} · {{ session.role }}</span>
+          <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('logout') }}">退出</a>
+        </div>
+      </header>
+      <main class="app-content app-content-fluid">
+        <div class="card"><div class="card-body">
+          <div class="d-flex gap-2 mb-3 align-items-center">
+            <input id="note" class="form-control" style="max-width:260px" placeholder="备注(如: weixin工具/张三)">
+            <button class="btn btn-primary" onclick="gen()">＋ 生成新密钥</button>
+            <span id="msg" class="text-success ms-2"></span>
+          </div>
+          <div class="text-muted small mb-2">点密钥可复制完整值。吊销=立即失效(可再启用)；删除=永久移除。</div>
+          <table class="table table-sm align-middle">
+            <thead><tr><th>密钥</th><th>备注</th><th>状态</th><th>创建</th><th>创建人</th><th>最近使用</th><th>操作</th></tr></thead>
+            <tbody id="rows"></tbody>
+          </table>
+        </div></div>
+      </main>
+    </div>
+  </div>
+<script>
+const A=location.origin, msg=document.getElementById('msg');
+async function api(path,method){const r=await fetch(A+path,{method:method||'GET',credentials:'same-origin'});return r.json()}
+function mask(k){return k.length>12?k.slice(0,6)+'****'+k.slice(-4):'****'}
+function esc(s){return (s||'').replace(/[<>&]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]))}
+async function cp(t){try{await navigator.clipboard.writeText(t)}catch(e){}}
+function show(t){msg.textContent=t}
+async function load(){
+  const d=await api('/hg/keys/list');const rows=document.getElementById('rows');rows.innerHTML='';
+  (d.keys||[]).forEach(k=>{const tr=document.createElement('tr');
+    const st=k.enabled?'<span class="text-success">●启用</span>':'<span class="text-muted">○已吊销</span>';
+    tr.innerHTML=`<td style="font-family:monospace;cursor:pointer" title="点击复制" onclick="cp('${k.key}')">${mask(k.key)}</td>
+      <td>${esc(k.note)}</td><td>${st}</td><td>${k.created||''}</td><td>${esc(k.created_by||'')}</td><td>${k.last_used||'-'}</td>
+      <td>${k.enabled?`<button class="btn btn-sm btn-outline-danger" onclick="rev('${k.key}',false)">吊销</button>`
+                    :`<button class="btn btn-sm btn-outline-success" onclick="rev('${k.key}',true)">启用</button>`}
+          <button class="btn btn-sm btn-outline-secondary" onclick="del('${k.key}')">删除</button></td>`;
+    rows.appendChild(tr)});
+  show(`共 ${(d.keys||[]).length} 个密钥`);
+}
+async function gen(){const note=document.getElementById('note').value.trim();const d=await api('/hg/keys/gen?note='+encodeURIComponent(note),'POST');await cp(d.key);show('已生成并复制: '+d.key);document.getElementById('note').value='';load()}
+async function rev(key,en){await api('/hg/keys/revoke?key='+key+'&enable='+en,'POST');load()}
+async function del(key){if(!confirm('确认永久删除?'))return;await api('/hg/keys/delete?key='+key,'POST');load()}
+load();
+</script>
+</body>
+</html>

@@ -183,6 +183,13 @@ app.config["LICENSE_SIGNING_KEY"] = os.environ.get(
     app.config["SECRET_KEY"],
 )
 
+# 红果短剧链路(数据API + 密钥管理) Blueprint; 失败不影响主应用
+try:
+    from hongguo_bp import hongguo_bp
+    app.register_blueprint(hongguo_bp)
+except Exception as _hg_exc:  # noqa: BLE001
+    print(f"[warn] 红果 Blueprint 未加载: {_hg_exc}")
+
 
 def ensure_data_dir() -> None:
     os.makedirs(DATA_DIR, exist_ok=True)

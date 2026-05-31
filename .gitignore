@@ -1,0 +1,8 @@
+# 红果链路敏感配置(不进仓库)
+hongguo_core/config.json
+hongguo_core/apikeys.json
+hongguo_core/__pycache__/
+# Python
+__pycache__/
+*.pyc
+*.pyo
