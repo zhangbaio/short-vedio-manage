@@ -74,6 +74,17 @@ def _db():
         id INTEGER PRIMARY KEY CHECK(id=1), interval_min INTEGER DEFAULT 120,
         enabled INTEGER DEFAULT 1, last_check TEXT, last_status TEXT)""")
     c.execute("INSERT OR IGNORE INTO hg_rank_cfg(id,interval_min,enabled,last_check,last_status) VALUES(1,120,1,'','')")
+    # 上新监控: 按 体裁×剧 存7天内上新剧集; is_new=1且first_seen为今日 => 今日上新
+    c.execute("""CREATE TABLE IF NOT EXISTS hg_new_seen(
+        genre TEXT NOT NULL, series_id TEXT NOT NULL, title TEXT, cover TEXT,
+        episode_cnt INTEGER, score TEXT, play_cnt INTEGER, category TEXT, intro TEXT,
+        first_seen TEXT, last_seen TEXT, in_window INTEGER DEFAULT 1, is_new INTEGER DEFAULT 0,
+        PRIMARY KEY(genre, series_id))""")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_new_seen ON hg_new_seen(genre, in_window, first_seen)")
+    c.execute("""CREATE TABLE IF NOT EXISTS hg_new_cfg(
+        id INTEGER PRIMARY KEY CHECK(id=1), interval_min INTEGER DEFAULT 360,
+        enabled INTEGER DEFAULT 1, last_check TEXT, last_status TEXT)""")
+    c.execute("INSERT OR IGNORE INTO hg_new_cfg(id,interval_min,enabled,last_check,last_status) VALUES(1,360,1,'','')")
     return c
 
 
@@ -342,51 +353,169 @@ def rank_changes(board=None, limit=100):
         c.close()
 
 
-# 后台定时检查线程(跨 gunicorn worker 安全: 原子认领同一次检查)
-_rank_thread_started = False
+# ============ 上新监控(7天内上新 + 今日上新派生) ============
+NEW_SNAPSHOT_LIMIT = 200  # 每体裁每次抓取的上新条数上限
 
 
-def _rank_scheduler_loop():
+def new_cfg_get():
+    c = _db()
+    try:
+        r = c.execute("SELECT interval_min, enabled, last_check, last_status FROM hg_new_cfg WHERE id=1").fetchone()
+        return dict(r) if r else {"interval_min": 360, "enabled": 1, "last_check": "", "last_status": ""}
+    finally:
+        c.close()
+
+
+def new_cfg_set(interval_min=None, enabled=None):
+    c = _db()
+    try:
+        if interval_min is not None:
+            c.execute("UPDATE hg_new_cfg SET interval_min=? WHERE id=1", (max(5, int(interval_min)),))
+        if enabled is not None:
+            c.execute("UPDATE hg_new_cfg SET enabled=? WHERE id=1", (1 if enabled else 0,))
+        c.commit()
+        return True
+    finally:
+        c.close()
+
+
+def _new_check_genre(genre, conn, now):
+    """抓取该体裁7天内上新, 与库对比: 全新剧入库(首跑为基线 is_new=0, 之后 is_new=1=今日上新);
+    已存在仅更新 last_seen/字段(不重复处理)。返回 {total,new,baseline}。"""
+    items = H.latest(genre, only_today=False, max_items=NEW_SNAPSHOT_LIMIT)
+    existing = {r["series_id"] for r in conn.execute("SELECT series_id FROM hg_new_seen WHERE genre=?", (genre,))}
+    baseline = not existing
+    conn.execute("UPDATE hg_new_seen SET in_window=0 WHERE genre=?", (genre,))  # 先全部移出窗口
+    new_cnt = 0
+    for it in items:
+        sid = str(it.get("series_id") or "")
+        if not sid:
+            continue
+        vals = (it.get("title", ""), it.get("cover", ""), it.get("episode_cnt", 0) or 0,
+                str(it.get("score", "")), it.get("play_cnt", 0) or 0, it.get("category", ""),
+                (it.get("intro") or ""))
+        if sid in existing:
+            conn.execute("""UPDATE hg_new_seen SET last_seen=?, in_window=1, title=?, cover=?,
+                episode_cnt=?, score=?, play_cnt=?, category=?, intro=? WHERE genre=? AND series_id=?""",
+                (now, *vals, genre, sid))
+        else:
+            is_new = 0 if baseline else 1
+            conn.execute("""INSERT INTO hg_new_seen(genre,series_id,title,cover,episode_cnt,score,play_cnt,
+                category,intro,first_seen,last_seen,in_window,is_new) VALUES(?,?,?,?,?,?,?,?,?,?,?,1,?)""",
+                (genre, sid, *vals, now, now, is_new))
+            existing.add(sid)
+            if is_new:
+                new_cnt += 1
+    return {"total": len(items), "new": new_cnt, "baseline": baseline}
+
+
+def new_run_checks(genres=None):
+    genres = genres or list(H.GENRES)
+    now = time.strftime("%Y-%m-%d %H:%M:%S")
+    summary = {}
+    c = _db()
+    try:
+        for g in genres:
+            try:
+                summary[g] = _new_check_genre(g, c, now)
+                c.commit()
+            except Exception as e:
+                summary[g] = {"error": str(e)[:200]}
+        c.execute("UPDATE hg_new_cfg SET last_check=?, last_status='ok' WHERE id=1", (now,))
+        c.commit()
+    finally:
+        c.close()
+    return {"checked_at": now, "summary": summary}
+
+
+def _new_row_to_item(r, today):
+    return {"series_id": r["series_id"], "title": r["title"], "cover": r["cover"],
+            "episode_cnt": r["episode_cnt"], "score": r["score"], "play_cnt": r["play_cnt"],
+            "category": r["category"], "intro": r["intro"], "first_seen": r["first_seen"],
+            "today": bool(r["is_new"] and (r["first_seen"] or "")[:10] == today)}
+
+
+def new_serve(genre, only_today=False, limit=120):
+    """优先查库: 已监控的直接返回; 该体裁从未监控过则现抓一次入库再返回。
+    only_today=True 返回今日新增(is_new且first_seen=今日); 否则返回当前7天窗口内全部。
+    """
+    today = time.strftime("%Y-%m-%d")
+    c = _db()
+    try:
+        has = c.execute("SELECT 1 FROM hg_new_seen WHERE genre=? LIMIT 1", (genre,)).fetchone()
+    finally:
+        c.close()
+    if not has:
+        new_run_checks([genre])  # 首次无库: 现抓一次(并建立基线)
+    c = _db()
+    try:
+        if only_today:
+            rows = c.execute("""SELECT * FROM hg_new_seen WHERE genre=? AND is_new=1
+                AND substr(first_seen,1,10)=? ORDER BY first_seen DESC LIMIT ?""",
+                (genre, today, limit)).fetchall()
+        else:
+            rows = c.execute("""SELECT * FROM hg_new_seen WHERE genre=? AND in_window=1
+                ORDER BY (is_new=1 AND substr(first_seen,1,10)=?) DESC, first_seen DESC LIMIT ?""",
+                (genre, today, limit)).fetchall()
+        return [_new_row_to_item(r, today) for r in rows]
+    finally:
+        c.close()
+
+
+# ============ 后台定时调度(榜单+上新, 跨 gunicorn worker 原子认领) ============
+_monitor_thread_started = False
+
+
+def _claim_check(table, last):
+    """原子认领一次检查: 仅当 last_check 仍为 last 时抢占成功(防多 worker 重复)。"""
+    c = _db()
+    try:
+        now = time.strftime("%Y-%m-%d %H:%M:%S")
+        cur = c.execute(f"UPDATE {table} SET last_check=? WHERE id=1 AND COALESCE(last_check,'')=?",
+                        (now, last))
+        c.commit()
+        return cur.rowcount == 1
+    finally:
+        c.close()
+
+
+def _due(cfg, now_dt):
+    import datetime
+    if not cfg.get("enabled"):
+        return False
+    last = cfg.get("last_check") or ""
+    if not last:
+        return True
+    try:
+        dt = datetime.datetime.strptime(last, "%Y-%m-%d %H:%M:%S")
+        return (now_dt - dt).total_seconds() >= max(5, int(cfg.get("interval_min") or 120)) * 60
+    except Exception:
+        return True
+
+
+def _monitor_loop():
     import datetime
     while True:
         try:
-            cfg = rank_cfg_get()
-            if cfg.get("enabled"):
-                interval = max(5, int(cfg.get("interval_min") or 120))
-                last = cfg.get("last_check") or ""
-                due = True
-                if last:
-                    try:
-                        dt = datetime.datetime.strptime(last, "%Y-%m-%d %H:%M:%S")
-                        due = (datetime.datetime.now() - dt).total_seconds() >= interval * 60
-                    except Exception:
-                        due = True
-                if due:
-                    # 原子认领: 仅当 last_check 仍为 last 时抢占, 避免多 worker 重复跑
-                    c = _db()
-                    try:
-                        now = time.strftime("%Y-%m-%d %H:%M:%S")
-                        cur = c.execute("UPDATE hg_rank_cfg SET last_check=? WHERE id=1 AND COALESCE(last_check,'')=?",
-                                        (now, last))
-                        c.commit()
-                        claimed = cur.rowcount == 1
-                    finally:
-                        c.close()
-                    if claimed:
-                        rank_run_checks()
+            now_dt = datetime.datetime.now()
+            rc = rank_cfg_get()
+            if _due(rc, now_dt) and _claim_check("hg_rank_cfg", rc.get("last_check") or ""):
+                rank_run_checks()
+            nc = new_cfg_get()
+            if _due(nc, now_dt) and _claim_check("hg_new_cfg", nc.get("last_check") or ""):
+                new_run_checks()
         except Exception:
             pass
         time.sleep(60)  # 每分钟唤醒判断是否到点
 
 
-def _start_rank_scheduler():
-    global _rank_thread_started
-    if _rank_thread_started:
+def _start_monitor():
+    global _monitor_thread_started
+    if _monitor_thread_started:
         return
-    _rank_thread_started = True
+    _monitor_thread_started = True
     import threading
-    t = threading.Thread(target=_rank_scheduler_loop, name="hg-rank-scheduler", daemon=True)
-    t.start()
+    threading.Thread(target=_monitor_loop, name="hg-monitor", daemon=True).start()
 
 
 # ============ 鉴权装饰器 ============
@@ -470,15 +599,24 @@ def rank():
 @hongguo_bp.get("/latest")
 @data_auth
 def latest():
+    """7天内上新(默认)/今日上新。优先查库(后台监控已入库的不再请求红果);
+    库中无该体裁数据时现抓一次并入库。今日上新=监控到的新增剧(is_new且首见为今日)。
+    """
     genre = request.args.get("genre", "short_play")
     if genre not in H.GENRES:
         return jsonify({"detail": f"genre必须是 {list(H.GENRES)}"}), 400
-    only_today = request.args.get("only_today", "true").lower() != "false"
-    limit = int(request.args.get("limit", 120))
-    items = H.latest(genre, only_today=only_today, max_items=limit)
-    mode = ("今日上新" if only_today else "最新上架") if genre == "short_play" else "7天内上新·最新上架"
+    only_today = request.args.get("only_today", "false").lower() == "true"
+    try:
+        limit = max(1, min(300, int(request.args.get("limit", 120))))
+    except ValueError:
+        limit = 120
+    items = new_serve(genre, only_today, limit)
+    cfg = new_cfg_get()
+    mode = "今日上新" if only_today else "7天内上新"
     return jsonify({"genre": genre, "name": H.GENRE_NAMES.get(genre), "mode": mode,
-                    "only_today": only_today, "count": len(items), "items": items})
+                    "only_today": only_today, "count": len(items), "items": items,
+                    "interval_min": cfg["interval_min"], "enabled": bool(cfg["enabled"]),
+                    "last_check": cfg["last_check"]})
 
 
 @hongguo_bp.get("/episodes")
@@ -709,8 +847,43 @@ def rank_check_now():
     return jsonify(rank_run_checks(boards))
 
 
-# 模块加载即启动后台定时检查线程(daemon, 跨worker原子认领)
+# ============ 上新监控管理接口(仅管理员) ============
+@hongguo_bp.get("/hg/new/config")
+@admin_only
+def new_config_get():
+    return jsonify(new_cfg_get())
+
+
+@hongguo_bp.post("/hg/new/config")
+@admin_only
+def new_config_set():
+    """配置上新监控间隔(分钟, 最小5)与开关。"""
+    iv = request.form.get("interval_min") or request.args.get("interval_min")
+    en = request.form.get("enabled") or request.args.get("enabled")
+    interval = None
+    enabled = None
+    if iv is not None:
+        try:
+            interval = int(iv)
+        except ValueError:
+            return jsonify({"ok": False, "error": "间隔须为整数(分钟)"}), 400
+    if en is not None:
+        enabled = en.lower() in ("1", "true", "on", "yes")
+    new_cfg_set(interval_min=interval, enabled=enabled)
+    return jsonify({"ok": True, "config": new_cfg_get()})
+
+
+@hongguo_bp.post("/hg/new/check")
+@admin_only
+def new_check_now():
+    """立即抓取一次上新(可指定 genre, 默认全部)并返回概要。"""
+    genre = request.form.get("genre") or request.args.get("genre")
+    genres = [genre] if genre in H.GENRES else None
+    return jsonify(new_run_checks(genres))
+
+
+# 模块加载即启动后台定时检查线程(daemon, 同时跑榜单+上新监控, 跨worker原子认领)
 try:
-    _start_rank_scheduler()
+    _start_monitor()
 except Exception as _e:  # noqa
-    print(f"[warn] 榜单定时检查线程启动失败: {_e}")
+    print(f"[warn] 监控定时线程启动失败: {_e}")

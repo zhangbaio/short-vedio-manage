@@ -42,7 +42,7 @@
       <header class="app-topbar">
         <div>
           <h1 class="app-page-title">红果短剧</h1>
-          <p class="app-page-subtitle">搜索 / 榜单 / 今日上新 / 下载（自建红果链路）</p>
+          <p class="app-page-subtitle">搜索 / 榜单 / 7天内上新 / 榜单变动 / 下载（自建红果链路）</p>
         </div>
         <div class="app-userbar">
           {% include "partials/theme_switch.html" %}
@@ -55,7 +55,7 @@
           <div class="hg-tabs">
             <div class="hg-tab on" data-v="search">搜索</div>
             <div class="hg-tab" data-v="rank">榜单</div>
-            <div class="hg-tab" data-v="latest">今日上新</div>
+            <div class="hg-tab" data-v="latest">7天内上新</div>
             <div class="hg-tab" data-v="changes">榜单变动</div>
           </div>
           <div id="hgSub" class="mb-3"></div>
@@ -81,7 +81,21 @@ function renderSub(){
   grid.innerHTML='';
   if(view==='search'){sub.innerHTML=`<div class="input-group" style="max-width:420px"><input id="hgq" class="form-control" placeholder="输入剧名"><button class="btn btn-primary" onclick="doSearch()">搜索</button></div>`;document.getElementById('hgq').onkeydown=e=>e.key==='Enter'&&doSearch();}
   else if(view==='rank'){sub.innerHTML=`<select id="hgb" class="form-select" style="max-width:200px;display:inline-block"><option value="recommend">推荐榜</option><option value="hot">热播榜</option><option value="new">新剧榜</option></select> <button class="btn btn-primary" onclick="doRank()">刷新</button>`;doRank();}
-  else if(view==='latest'){sub.innerHTML=`<select id="hgg" class="form-select" style="max-width:160px;display:inline-block"><option value="short_play">短剧</option><option value="comic_series">漫剧</option><option value="ai_series">AI短剧</option></select> <button class="btn btn-primary" onclick="doLatest()">刷新</button>`;doLatest();}
+  else if(view==='latest'){
+    const adminBox = IS_ADMIN ? `<span style="margin-left:auto"></span>
+      监控间隔<input id="hgniv" type="number" min="5" class="form-control" style="width:90px;display:inline-block" title="分钟"> 分钟
+      <button class="btn btn-outline-primary btn-sm" onclick="saveNewCfg()">保存</button>
+      <label class="ms-2"><input type="checkbox" id="hgnen"> 启用</label>
+      <button class="btn btn-warning btn-sm ms-2" onclick="checkNewNow()">立即抓取</button>` : '';
+    sub.innerHTML=`<div class="d-flex gap-2 align-items-center flex-wrap">
+      <select id="hgg" class="form-select" style="max-width:140px;display:inline-block" onchange="doLatest()">
+        <option value="short_play">短剧</option><option value="comic_series">漫剧</option><option value="ai_series">AI短剧</option></select>
+      <label><input type="checkbox" id="hgtoday" onchange="doLatest()"> 仅今日上新</label>
+      <button class="btn btn-primary btn-sm" onclick="doLatest()">刷新</button>
+      <span id="hgninfo" class="text-muted small"></span>${adminBox}
+    </div>`;
+    doLatest();
+  }
   else if(view==='changes'){
     const adminBox = IS_ADMIN ? `<span style="margin-left:auto"></span>
       检查间隔<input id="hgiv" type="number" min="5" class="form-control" style="width:90px;display:inline-block" title="分钟"> 分钟
@@ -100,7 +114,27 @@ function renderSub(){
 }
 async function doSearch(){const v=document.getElementById('hgq').value.trim();if(!v)return;grid.innerHTML='搜索中...';try{cards((await get('/search',{q:v})).results)}catch(e){grid.innerHTML='错误: '+e.message}}
 async function doRank(){grid.innerHTML='加载中...';try{cards((await get('/rank',{board:document.getElementById('hgb').value,limit:100})).items)}catch(e){grid.innerHTML='错误: '+e.message}}
-async function doLatest(){grid.innerHTML='加载中...';try{cards((await get('/latest',{genre:document.getElementById('hgg').value,limit:120})).items)}catch(e){grid.innerHTML='错误: '+e.message}}
+async function doLatest(){
+  grid.innerHTML='加载中...';
+  const today=document.getElementById('hgtoday') && document.getElementById('hgtoday').checked;
+  try{
+    const d=await get('/latest',{genre:document.getElementById('hgg').value,only_today:today?'true':'false',limit:200});
+    const info=document.getElementById('hgninfo');
+    if(info)info.textContent=`监控间隔 ${d.interval_min} 分钟 · ${d.enabled?'已启用':'已停用'} · 上次抓取 ${d.last_check||'—'} · 共 ${d.count} 条`;
+    if(IS_ADMIN){const iv=document.getElementById('hgniv'),en=document.getElementById('hgnen');if(iv&&!iv.value)iv.value=d.interval_min;if(en)en.checked=!!d.enabled;}
+    cards(d.items);
+  }catch(e){grid.innerHTML='错误: '+e.message}
+}
+async function saveNewCfg(){
+  const iv=document.getElementById('hgniv').value, en=document.getElementById('hgnen').checked;
+  await fetch(A+'/hg/new/config?interval_min='+encodeURIComponent(iv)+'&enabled='+en,{method:'POST',credentials:'same-origin'});
+  doLatest();
+}
+async function checkNewNow(){
+  grid.innerHTML='抓取中（约30-60s，正在拉取各体裁7天内上新）...';
+  await fetch(A+'/hg/new/check?genre='+document.getElementById('hgg').value,{method:'POST',credentials:'same-origin'});
+  doLatest();
+}
 async function doChanges(){
   const body=document.getElementById('hgcbody'); if(!body)return; body.innerHTML='加载中...';
   const b=document.getElementById('hgcb').value;
