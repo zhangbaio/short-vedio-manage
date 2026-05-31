@@ -62,6 +62,18 @@ def _db():
         key TEXT NOT NULL, endpoint TEXT NOT NULL,
         used INTEGER DEFAULT 0, quota INTEGER DEFAULT 0, updated TEXT,
         PRIMARY KEY(key, endpoint))""")
+    # 榜单变动监控: 当前快照状态 / 变动日志 / 配置
+    c.execute("""CREATE TABLE IF NOT EXISTS hg_rank_state(
+        board TEXT NOT NULL, series_id TEXT NOT NULL, rank INTEGER, title TEXT,
+        PRIMARY KEY(board, series_id))""")
+    c.execute("""CREATE TABLE IF NOT EXISTS hg_rank_change(
+        id INTEGER PRIMARY KEY AUTOINCREMENT, board TEXT, checked_at TEXT,
+        change_type TEXT, series_id TEXT, title TEXT, old_rank INTEGER, new_rank INTEGER)""")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_rank_change ON hg_rank_change(board, checked_at)")
+    c.execute("""CREATE TABLE IF NOT EXISTS hg_rank_cfg(
+        id INTEGER PRIMARY KEY CHECK(id=1), interval_min INTEGER DEFAULT 120,
+        enabled INTEGER DEFAULT 1, last_check TEXT, last_status TEXT)""")
+    c.execute("INSERT OR IGNORE INTO hg_rank_cfg(id,interval_min,enabled,last_check,last_status) VALUES(1,120,1,'','')")
     return c
 
 
@@ -226,6 +238,155 @@ def usage_reset(key, ep=None):
         return c.total_changes > 0
     finally:
         c.close()
+
+
+# ============ 榜单变动监控 ============
+RANK_SNAPSHOT_LIMIT = 100  # 每次快照取的榜单条数
+
+
+def rank_cfg_get():
+    c = _db()
+    try:
+        r = c.execute("SELECT interval_min, enabled, last_check, last_status FROM hg_rank_cfg WHERE id=1").fetchone()
+        return dict(r) if r else {"interval_min": 120, "enabled": 1, "last_check": "", "last_status": ""}
+    finally:
+        c.close()
+
+
+def rank_cfg_set(interval_min=None, enabled=None):
+    c = _db()
+    try:
+        if interval_min is not None:
+            c.execute("UPDATE hg_rank_cfg SET interval_min=? WHERE id=1", (max(5, int(interval_min)),))
+        if enabled is not None:
+            c.execute("UPDATE hg_rank_cfg SET enabled=? WHERE id=1", (1 if enabled else 0,))
+        c.commit()
+        return True
+    finally:
+        c.close()
+
+
+def _rank_check_board(board, conn, now):
+    """快照单个榜单并与上次状态对比, 记录变动。返回各类变动计数。"""
+    items = H.rank(board, limit=RANK_SNAPSHOT_LIMIT)
+    cur = {}  # series_id -> (rank, title)
+    for i, it in enumerate(items):
+        sid = str(it.get("series_id") or "")
+        if sid:
+            cur[sid] = (i + 1, it.get("title", ""))
+    prev = {r["series_id"]: (r["rank"], r["title"])
+            for r in conn.execute("SELECT series_id, rank, title FROM hg_rank_state WHERE board=?", (board,))}
+    counts = {"new": 0, "up": 0, "down": 0, "drop": 0}
+    is_baseline = not prev  # 首次无历史: 仅建立基线, 不刷一堆"新进"
+    if not is_baseline:
+        for sid, (rk, title) in cur.items():
+            if sid not in prev:
+                conn.execute("INSERT INTO hg_rank_change(board,checked_at,change_type,series_id,title,old_rank,new_rank) VALUES(?,?,?,?,?,?,?)",
+                             (board, now, "new", sid, title, None, rk))
+                counts["new"] += 1
+            else:
+                old_rk = prev[sid][0]
+                if rk < old_rk:
+                    conn.execute("INSERT INTO hg_rank_change(board,checked_at,change_type,series_id,title,old_rank,new_rank) VALUES(?,?,?,?,?,?,?)",
+                                 (board, now, "up", sid, title, old_rk, rk))
+                    counts["up"] += 1
+                elif rk > old_rk:
+                    conn.execute("INSERT INTO hg_rank_change(board,checked_at,change_type,series_id,title,old_rank,new_rank) VALUES(?,?,?,?,?,?,?)",
+                                 (board, now, "down", sid, title, old_rk, rk))
+                    counts["down"] += 1
+        for sid, (rk, title) in prev.items():
+            if sid not in cur:
+                conn.execute("INSERT INTO hg_rank_change(board,checked_at,change_type,series_id,title,old_rank,new_rank) VALUES(?,?,?,?,?,?,?)",
+                             (board, now, "drop", sid, title, rk, None))
+                counts["drop"] += 1
+    # 用当前快照替换状态
+    conn.execute("DELETE FROM hg_rank_state WHERE board=?", (board,))
+    conn.executemany("INSERT INTO hg_rank_state(board,series_id,rank,title) VALUES(?,?,?,?)",
+                     [(board, sid, rk, t) for sid, (rk, t) in cur.items()])
+    counts["total"] = len(cur)
+    counts["baseline"] = is_baseline
+    return counts
+
+
+def rank_run_checks(boards=None):
+    """对指定(默认全部)榜单执行一次检查; 写变动日志并更新状态/配置时间。"""
+    boards = boards or list(H.RANK_BOARDS)
+    now = time.strftime("%Y-%m-%d %H:%M:%S")
+    summary = {}
+    c = _db()
+    try:
+        for b in boards:
+            try:
+                summary[b] = _rank_check_board(b, c, now)
+                c.commit()
+            except Exception as e:  # 单榜失败不影响其它
+                summary[b] = {"error": str(e)[:200]}
+        c.execute("UPDATE hg_rank_cfg SET last_check=?, last_status=? WHERE id=1",
+                  (now, "ok"))
+        c.commit()
+    finally:
+        c.close()
+    return {"checked_at": now, "summary": summary}
+
+
+def rank_changes(board=None, limit=100):
+    c = _db()
+    try:
+        if board:
+            rows = c.execute("SELECT * FROM hg_rank_change WHERE board=? ORDER BY id DESC LIMIT ?",
+                             (board, limit)).fetchall()
+        else:
+            rows = c.execute("SELECT * FROM hg_rank_change ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        c.close()
+
+
+# 后台定时检查线程(跨 gunicorn worker 安全: 原子认领同一次检查)
+_rank_thread_started = False
+
+
+def _rank_scheduler_loop():
+    import datetime
+    while True:
+        try:
+            cfg = rank_cfg_get()
+            if cfg.get("enabled"):
+                interval = max(5, int(cfg.get("interval_min") or 120))
+                last = cfg.get("last_check") or ""
+                due = True
+                if last:
+                    try:
+                        dt = datetime.datetime.strptime(last, "%Y-%m-%d %H:%M:%S")
+                        due = (datetime.datetime.now() - dt).total_seconds() >= interval * 60
+                    except Exception:
+                        due = True
+                if due:
+                    # 原子认领: 仅当 last_check 仍为 last 时抢占, 避免多 worker 重复跑
+                    c = _db()
+                    try:
+                        now = time.strftime("%Y-%m-%d %H:%M:%S")
+                        cur = c.execute("UPDATE hg_rank_cfg SET last_check=? WHERE id=1 AND COALESCE(last_check,'')=?",
+                                        (now, last))
+                        c.commit()
+                        claimed = cur.rowcount == 1
+                    finally:
+                        c.close()
+                    if claimed:
+                        rank_run_checks()
+        except Exception:
+            pass
+        time.sleep(60)  # 每分钟唤醒判断是否到点
+
+
+def _start_rank_scheduler():
+    global _rank_thread_started
+    if _rank_thread_started:
+        return
+    _rank_thread_started = True
+    import threading
+    t = threading.Thread(target=_rank_scheduler_loop, name="hg-rank-scheduler", daemon=True)
+    t.start()
 
 
 # ============ 鉴权装饰器 ============
@@ -494,3 +655,62 @@ def keys_usage_reset():
     ep = request.form.get("endpoint") or request.args.get("endpoint") or "*"
     usage_reset(key, ep)
     return jsonify({"ok": True})
+
+
+# ============ 榜单变动监控接口 ============
+@hongguo_bp.get("/rank/changes")
+@data_auth
+def rank_changes_api():
+    """榜单变动记录(新进/上升/下降/掉榜)。可按 board 过滤, limit 默认100。"""
+    board = request.args.get("board") or None
+    if board and board not in H.RANK_BOARDS:
+        return jsonify({"detail": f"board必须是 {list(H.RANK_BOARDS)}"}), 400
+    try:
+        limit = max(1, min(500, int(request.args.get("limit", 100))))
+    except ValueError:
+        limit = 100
+    cfg = rank_cfg_get()
+    return jsonify({"board": board, "interval_min": cfg["interval_min"],
+                    "enabled": bool(cfg["enabled"]), "last_check": cfg["last_check"],
+                    "changes": rank_changes(board, limit)})
+
+
+@hongguo_bp.get("/hg/rank/config")
+@admin_only
+def rank_config_get():
+    return jsonify(rank_cfg_get())
+
+
+@hongguo_bp.post("/hg/rank/config")
+@admin_only
+def rank_config_set():
+    """配置检查间隔(分钟, 最小5)与开关。"""
+    iv = request.form.get("interval_min") or request.args.get("interval_min")
+    en = request.form.get("enabled") or request.args.get("enabled")
+    interval = None
+    enabled = None
+    if iv is not None:
+        try:
+            interval = int(iv)
+        except ValueError:
+            return jsonify({"ok": False, "error": "间隔须为整数(分钟)"}), 400
+    if en is not None:
+        enabled = en.lower() in ("1", "true", "on", "yes")
+    rank_cfg_set(interval_min=interval, enabled=enabled)
+    return jsonify({"ok": True, "config": rank_cfg_get()})
+
+
+@hongguo_bp.post("/hg/rank/check")
+@admin_only
+def rank_check_now():
+    """立即检查一次(可指定 board, 默认全部)并返回变动概要。"""
+    board = request.form.get("board") or request.args.get("board")
+    boards = [board] if board in H.RANK_BOARDS else None
+    return jsonify(rank_run_checks(boards))
+
+
+# 模块加载即启动后台定时检查线程(daemon, 跨worker原子认领)
+try:
+    _start_rank_scheduler()
+except Exception as _e:  # noqa
+    print(f"[warn] 榜单定时检查线程启动失败: {_e}")
