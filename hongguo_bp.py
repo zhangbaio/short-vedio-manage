@@ -286,7 +286,11 @@ def _range(ep, total):
 @data_auth
 def search():
     q = request.args.get("q", "")
-    return jsonify({"query": q, "results": H.search(q)})
+    try:
+        limit = max(1, min(120, int(request.args.get("limit", 40))))
+    except ValueError:
+        limit = 40
+    return jsonify({"query": q, "results": H.search(q, max_items=limit)})
 
 
 @hongguo_bp.get("/rank")
