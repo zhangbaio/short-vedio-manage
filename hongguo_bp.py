@@ -380,33 +380,28 @@ def new_cfg_set(interval_min=None, enabled=None):
 
 
 def _new_check_genre(genre, conn, now):
-    """抓取该体裁7天内上新, 与库对比: 全新剧入库(首跑为基线 is_new=0, 之后 is_new=1=今日上新);
-    已存在仅更新 last_seen/字段(不重复处理)。返回 {total,new,baseline}。"""
-    items = H.latest(genre, only_today=False, max_items=NEW_SNAPSHOT_LIMIT)
+    """增量抓取该体裁7天内上新。优化: 列表按上线时间倒序, 传 stop_ids=已监控集合,
+    一旦命中已存剧即停止翻页(省签名请求)。只插入全新剧并持久化(已监控的不再请求/不再处理)。
+    首跑为基线(抓满列表, is_new=0); 之后新增 is_new=1(=新上架)。返回 {fetched,new,baseline}。"""
     existing = {r["series_id"] for r in conn.execute("SELECT series_id FROM hg_new_seen WHERE genre=?", (genre,))}
     baseline = not existing
-    conn.execute("UPDATE hg_new_seen SET in_window=0 WHERE genre=?", (genre,))  # 先全部移出窗口
+    items = H.latest(genre, only_today=False, max_items=NEW_SNAPSHOT_LIMIT,
+                     stop_ids=(existing if existing else None))
     new_cnt = 0
-    for it in items:
+    for it in items:  # 增量模式下 items 仅为命中已监控剧之前的"全新"剧
         sid = str(it.get("series_id") or "")
-        if not sid:
-            continue
-        vals = (it.get("title", ""), it.get("cover", ""), it.get("episode_cnt", 0) or 0,
-                str(it.get("score", "")), it.get("play_cnt", 0) or 0, it.get("category", ""),
-                (it.get("intro") or ""))
-        if sid in existing:
-            conn.execute("""UPDATE hg_new_seen SET last_seen=?, in_window=1, title=?, cover=?,
-                episode_cnt=?, score=?, play_cnt=?, category=?, intro=? WHERE genre=? AND series_id=?""",
-                (now, *vals, genre, sid))
-        else:
-            is_new = 0 if baseline else 1
-            conn.execute("""INSERT INTO hg_new_seen(genre,series_id,title,cover,episode_cnt,score,play_cnt,
-                category,intro,first_seen,last_seen,in_window,is_new) VALUES(?,?,?,?,?,?,?,?,?,?,?,1,?)""",
-                (genre, sid, *vals, now, now, is_new))
-            existing.add(sid)
-            if is_new:
-                new_cnt += 1
-    return {"total": len(items), "new": new_cnt, "baseline": baseline}
+        if not sid or sid in existing:
+            continue  # 双保险(理论上已被 stop_ids 截断)
+        is_new = 0 if baseline else 1
+        conn.execute("""INSERT INTO hg_new_seen(genre,series_id,title,cover,episode_cnt,score,play_cnt,
+            category,intro,first_seen,last_seen,in_window,is_new) VALUES(?,?,?,?,?,?,?,?,?,?,?,1,?)""",
+            (genre, sid, it.get("title", ""), it.get("cover", ""), it.get("episode_cnt", 0) or 0,
+             str(it.get("score", "")), it.get("play_cnt", 0) or 0, it.get("category", ""),
+             (it.get("intro") or ""), now, now, is_new))
+        existing.add(sid)
+        if is_new:
+            new_cnt += 1
+    return {"fetched": len(items), "new": new_cnt, "baseline": baseline}
 
 
 def new_run_checks(genres=None):
@@ -437,9 +432,12 @@ def _new_row_to_item(r, today):
 
 def new_serve(genre, only_today=False, limit=120):
     """优先查库: 已监控的直接返回; 该体裁从未监控过则现抓一次入库再返回。
-    only_today=True 返回今日新增(is_new且first_seen=今日); 否则返回当前7天窗口内全部。
+    only_today=True 返回今日新增(is_new且first_seen=今日);
+    否则返回近7天内首次监控到的(按 first_seen 窗口, 增量模式下不再全量扫描)。
     """
+    import datetime
     today = time.strftime("%Y-%m-%d")
+    cutoff = (datetime.date.today() - datetime.timedelta(days=7)).strftime("%Y-%m-%d")
     c = _db()
     try:
         has = c.execute("SELECT 1 FROM hg_new_seen WHERE genre=? LIMIT 1", (genre,)).fetchone()
@@ -454,9 +452,8 @@ def new_serve(genre, only_today=False, limit=120):
                 AND substr(first_seen,1,10)=? ORDER BY first_seen DESC LIMIT ?""",
                 (genre, today, limit)).fetchall()
         else:
-            rows = c.execute("""SELECT * FROM hg_new_seen WHERE genre=? AND in_window=1
-                ORDER BY (is_new=1 AND substr(first_seen,1,10)=?) DESC, first_seen DESC LIMIT ?""",
-                (genre, today, limit)).fetchall()
+            rows = c.execute("""SELECT * FROM hg_new_seen WHERE genre=? AND substr(first_seen,1,10)>=?
+                ORDER BY first_seen DESC LIMIT ?""", (genre, cutoff, limit)).fetchall()
         return [_new_row_to_item(r, today) for r in rows]
     finally:
         c.close()
