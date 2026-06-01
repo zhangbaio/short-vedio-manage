@@ -442,20 +442,14 @@ def _new_row_to_item(r, today):
 
 
 def new_serve(genre, only_today=False, limit=120):
-    """优先查库: 已监控的直接返回; 该体裁从未监控过则现抓一次入库再返回。
+    """纯读服务端持久化数据(后台定时监控负责抓取入库, 客户端/页面只读, 不在请求内触发抓取)。
     only_today=True 返回今日新增(is_new且first_seen=今日);
-    否则返回近7天内首次监控到的(按 first_seen 窗口, 增量模式下不再全量扫描)。
+    否则返回近7天内首次监控到的(按 first_seen 窗口)。
+    若库从未建立(该体裁无任何监控数据)则返回空, 由定时监控或管理员"立即抓取"填充。
     """
     import datetime
     today = time.strftime("%Y-%m-%d")
     cutoff = (datetime.date.today() - datetime.timedelta(days=7)).strftime("%Y-%m-%d")
-    c = _db()
-    try:
-        has = c.execute("SELECT 1 FROM hg_new_seen WHERE genre=? LIMIT 1", (genre,)).fetchone()
-    finally:
-        c.close()
-    if not has:
-        new_run_checks([genre])  # 首次无库: 现抓一次(并建立基线)
     c = _db()
     try:
         if only_today:
