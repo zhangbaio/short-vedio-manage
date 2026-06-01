@@ -3,7 +3,11 @@ services:
     build: .
     volumes:
       - ${APP_DATA_DIR:-./data}:/app/data
+      # 用宿主机时区(本机为 Asia/Shanghai/CST), 使容器内 time.strftime 输出本地时间
+      - /etc/localtime:/etc/localtime:ro
     environment:
+      # 时区: 让所有时间戳(上新首次发现/榜单变动/抓取时间等)使用东八区
+      TZ: ${TZ:-Asia/Shanghai}
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required}
       LICENSE_SIGNING_KEY: ${LICENSE_SIGNING_KEY:?LICENSE_SIGNING_KEY is required}
       WX_MINIDRAMA_APPID: ${WX_MINIDRAMA_APPID:-}
