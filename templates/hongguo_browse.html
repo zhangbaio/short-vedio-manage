@@ -275,13 +275,14 @@ function latestTable(list){
       <td>${Number(it.episode_cnt||0)||'—'}集</td>
       <td class="hg-list-meta">${it.score?`★ ${esc(it.score)}`:'—'}</td>
       <td class="hg-play-count">${esc(play||'—')}</td>
+      <td class="hg-list-meta">${esc(it.author||it.copyright||'—')}</td>
       <td class="hg-list-meta">${shortDate(it.first_seen)}</td>
       <td class="hg-list-meta">${shortDate(it.last_seen)}</td>
       <td><button class="btn btn-sm btn-outline-primary" onclick="openSeries('${sid}')">详情</button></td>
     </tr>`;
   }).join('');
   grid.innerHTML=`<div class="table-responsive"><table class="table table-hover align-middle mb-0 hg-list-table">
-    <thead><tr><th>封面</th><th>剧名</th><th>状态</th><th>体裁</th><th>分类</th><th>集数</th><th>评分</th><th>播放量</th><th>首次发现</th><th>最近抓取</th><th>操作</th></tr></thead>
+    <thead><tr><th>封面</th><th>剧名</th><th>状态</th><th>体裁</th><th>分类</th><th>集数</th><th>评分</th><th>播放量</th><th>作者</th><th>首次发现</th><th>最近抓取</th><th>操作</th></tr></thead>
     <tbody>${rows}</tbody></table></div>`;
 }
 function cards(list){grid.className='hg-grid';grid.innerHTML='';if(!list||!list.length){grid.innerHTML='无结果';return}list.forEach(it=>{const d=document.createElement('div');d.className='hg-card';const cv=it.cover?'/img?url='+encodeURIComponent(it.cover):'';const hot=it.hot||fmtPlay(it.play_cnt);d.innerHTML=`<img loading="lazy" src="${cv}" onerror="this.style.opacity=.2"><div class="b"><div class="t">${esc(it.title)}${it.today?'<span class="hg-badge">今日</span>':''}</div><div class="m">${it.episode_cnt||0}集 ${it.score?'★'+esc(it.score):''} ${esc(hot)}</div></div>`;d.onclick=()=>openSeries(it.series_id);grid.appendChild(d)})}
