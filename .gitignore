@@ -2,6 +2,15 @@
 hongguo_core/config.json
 hongguo_core/apikeys.json
 hongguo_core/__pycache__/
+
+# 运行时数据(绝不进仓库: 否则部署会用默认账号库覆盖线上真实数据!)
+data/dramas.db
+data/*.db
+data/*.sqlite*
+data/remote_uploads/
+.env
+# 保留空目录占位
+!data/.gitkeep
 # Python
 __pycache__/
 *.pyc
