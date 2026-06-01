@@ -80,8 +80,10 @@ def _db():
     c.execute("""CREATE TABLE IF NOT EXISTS hg_new_seen(
         genre TEXT NOT NULL, series_id TEXT NOT NULL, title TEXT, cover TEXT,
         episode_cnt INTEGER, score TEXT, play_cnt INTEGER, category TEXT, intro TEXT,
-        first_seen TEXT, last_seen TEXT, in_window INTEGER DEFAULT 1, is_new INTEGER DEFAULT 0,
+        author TEXT, first_seen TEXT, last_seen TEXT, in_window INTEGER DEFAULT 1, is_new INTEGER DEFAULT 0,
         PRIMARY KEY(genre, series_id))""")
+    if "author" not in {r[1] for r in c.execute("PRAGMA table_info(hg_new_seen)")}:
+        c.execute("ALTER TABLE hg_new_seen ADD COLUMN author TEXT")  # 存量表迁移
     c.execute("CREATE INDEX IF NOT EXISTS idx_new_seen ON hg_new_seen(genre, in_window, first_seen)")
     c.execute("""CREATE TABLE IF NOT EXISTS hg_new_cfg(
         id INTEGER PRIMARY KEY CHECK(id=1), interval_min INTEGER DEFAULT 3,
@@ -404,10 +406,10 @@ def _new_check_genre(genre, conn, now):
             continue  # 双保险(理论上已被 stop_ids 截断)
         is_new = 0 if baseline else 1
         conn.execute("""INSERT INTO hg_new_seen(genre,series_id,title,cover,episode_cnt,score,play_cnt,
-            category,intro,first_seen,last_seen,in_window,is_new) VALUES(?,?,?,?,?,?,?,?,?,?,?,1,?)""",
+            category,intro,author,first_seen,last_seen,in_window,is_new) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,1,?)""",
             (genre, sid, it.get("title", ""), it.get("cover", ""), it.get("episode_cnt", 0) or 0,
              str(it.get("score", "")), it.get("play_cnt", 0) or 0, it.get("category", ""),
-             (it.get("intro") or ""), now, now, is_new))
+             (it.get("intro") or ""), (it.get("copyright") or ""), now, now, is_new))
         existing.add(sid)
         if is_new:
             new_cnt += 1
@@ -434,10 +436,12 @@ def new_run_checks(genres=None):
 
 
 def _new_row_to_item(r, today):
+    author = (r["author"] if "author" in r.keys() else "") or ""
     return {"genre": r["genre"], "series_id": r["series_id"], "title": r["title"], "cover": r["cover"],
             "episode_cnt": r["episode_cnt"], "score": r["score"], "play_cnt": r["play_cnt"],
             "category": r["category"], "intro": r["intro"], "first_seen": r["first_seen"],
             "last_seen": r["last_seen"], "is_new": bool(r["is_new"]),
+            "author": author, "copyright": author,  # 作者/出品方(hglocal map_search_item 用 copyright/author)
             "today": bool(r["is_new"] and (r["first_seen"] or "")[:10] == today)}
 
 
