@@ -1,9 +1,16 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
+  {% set is_tt_users = user_page_variant|default('users') == 'tt_users' %}
+  {% set active_page = 'tt_users' if is_tt_users else 'users' %}
+  {% set page_title = 'TT用户管理' if is_tt_users else '用户管理' %}
+  {% set page_subtitle = '单独维护 TikTok 短剧助手登录授权用户' if is_tt_users else '创建后台用户并维护角色权限' %}
+  {% set list_title = 'TT用户列表' if is_tt_users else '用户列表' %}
+  {% set list_subtitle = '管理 TikTok 短剧助手登录账号和设备授权' if is_tt_users else '管理后台登录账号和角色权限' %}
+  {% set add_button_text = '新增TT用户' if is_tt_users else '新增用户' %}
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>用户管理 - 视频号短剧管理系统</title>
+    <title>{{ page_title }} - 视频号短剧管理系统</title>
     <link rel="icon" href="{{ url_for('static', filename='icons/app-icon.ico') }}?v=20260531" sizes="any" />
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='icons/app-icon.png') }}?v=20260531" />
     <link rel="apple-touch-icon" href="{{ url_for('static', filename='icons/app-icon.png') }}?v=20260531" />
@@ -12,14 +19,13 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
   </head>
   <body class="app-body">
-    {% set active_page = 'users' %}
     <div class="app-shell">
       {% include "partials/sidebar.html" %}
       <div class="app-main">
         <header class="app-topbar">
           <div>
-            <h1 class="app-page-title">用户管理</h1>
-            <p class="app-page-subtitle">创建后台用户并维护角色权限</p>
+            <h1 class="app-page-title">{{ page_title }}</h1>
+            <p class="app-page-subtitle">{{ page_subtitle }}</p>
           </div>
           <div class="app-userbar">
             {% include "partials/theme_switch.html" %}
@@ -33,11 +39,11 @@
             <div class="card-body">
               <div class="list-page-toolbar">
                 <div>
-                  <h2 class="h5 mb-1">用户列表</h2>
-                  <div class="text-muted small">管理后台登录账号和角色权限</div>
+                  <h2 class="h5 mb-1">{{ list_title }}</h2>
+                  <div class="text-muted small">{{ list_subtitle }}</div>
                 </div>
                 <div class="d-flex gap-2">
-                  <button class="btn btn-primary" id="addUserBtn">新增用户</button>
+                  <button class="btn btn-primary" id="addUserBtn">{{ add_button_text }}</button>
                   <button class="btn btn-outline-secondary" id="refreshUsersBtn">刷新</button>
                 </div>
               </div>
@@ -103,7 +109,7 @@
                     <tr>
                       <th>用户名</th>
                       <th>邮箱</th>
-                      <th>角色</th>
+                      <th>{{ '类型' if is_tt_users else '角色' }}</th>
                       <th>授权</th>
                       <th>设备</th>
                       <th>到期时间</th>
@@ -146,7 +152,7 @@
                   <input type="password" class="form-control" id="userPasswordInput" autocomplete="new-password" />
                   <div class="invalid-feedback">新增用户密码至少6位</div>
                 </div>
-                <div class="col-lg-6">
+                <div class="col-lg-6{% if is_tt_users %} d-none{% endif %}">
                   <label class="form-label" for="userRoleInput">角色</label>
                   <select class="form-select" id="userRoleInput">
                     <option value="user">普通用户</option>
@@ -193,7 +199,20 @@
         username: {{ session.username|tojson }},
         role: {{ session.role|tojson }}
       };
-      window.adminPage = "users";
+      window.adminPage = {{ ('tt_users' if is_tt_users else 'users')|tojson }};
+      window.userPageConfig = {
+        apiBase: {{ ('/api/tt-users' if is_tt_users else '/api/users')|tojson }},
+        emptyText: {{ ('暂无TT用户' if is_tt_users else '暂无用户')|tojson }},
+        entityLabel: {{ ('TT用户' if is_tt_users else '用户')|tojson }},
+        roleText: {{ ('TT授权用户' if is_tt_users else '')|tojson }},
+        addTitle: {{ ('新增TT用户' if is_tt_users else '新增用户')|tojson }},
+        editTitle: {{ ('编辑TT授权用户' if is_tt_users else '编辑用户授权')|tojson }},
+        createSuccess: {{ ('新增TT用户成功' if is_tt_users else '新增用户成功')|tojson }},
+        updateSuccess: {{ ('TT用户已更新' if is_tt_users else '用户已更新')|tojson }},
+        deleteSuccess: {{ ('TT用户删除成功' if is_tt_users else '用户删除成功')|tojson }},
+        deleteConfirmSuffix: {{ ('删除后该 TT 授权账号的客户端登录设备也会失效。' if is_tt_users else '删除后该账号的桌面端登录设备也会失效。')|tojson }},
+        noDevicesText: {{ ('暂无TT登录设备' if is_tt_users else '暂无登录设备')|tojson }}
+      };
     </script>
     <div class="toast-container position-fixed top-0 end-0 p-3" style="z-index:9999" id="toastContainer"></div>
     <script src="{{ url_for('static', filename='theme.js') }}"></script>

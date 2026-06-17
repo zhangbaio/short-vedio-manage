@@ -84,6 +84,7 @@ LICENSE_LIST_DEFAULT_SORT_DIR = "desc"
 LICENSE_TOKEN_SALT = "desktop-license"
 LICENSE_TOKEN_MAX_AGE_SECONDS = 60 * 60 * 24 * 30
 ACCOUNT_TOKEN_SALT = "desktop-account"
+TT_ACCOUNT_TOKEN_SALT = "tiktok-account"
 ACCOUNT_TOKEN_MAX_AGE_SECONDS = _int_env("ACCOUNT_TOKEN_MAX_AGE_SECONDS", 60 * 60 * 24)
 ACCOUNT_OFFLINE_GRACE_HOURS = _int_env("ACCOUNT_OFFLINE_GRACE_HOURS", 72)
 ACCOUNT_DEFAULT_MAX_DEVICES = 1
@@ -267,6 +268,20 @@ def init_db() -> None:
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
 
+            CREATE TABLE IF NOT EXISTS tt_users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT UNIQUE NOT NULL,
+                email TEXT,
+                password_hash TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'active',
+                max_devices INTEGER NOT NULL DEFAULT 1,
+                edition TEXT NOT NULL DEFAULT 'pro',
+                expires_at TEXT,
+                notes TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
             CREATE TABLE IF NOT EXISTS dramas (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 date TEXT,
@@ -325,6 +340,21 @@ def init_db() -> None:
                 revoked_at TEXT,
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
                 UNIQUE(user_id, machine_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS tt_user_devices (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tt_user_id INTEGER NOT NULL,
+                machine_id TEXT NOT NULL,
+                device_name TEXT,
+                app_name TEXT,
+                app_version TEXT,
+                token_hash TEXT NOT NULL,
+                logged_in_at TEXT,
+                last_verified_at TEXT,
+                revoked_at TEXT,
+                FOREIGN KEY (tt_user_id) REFERENCES tt_users(id) ON DELETE CASCADE,
+                UNIQUE(tt_user_id, machine_id)
             );
 
             CREATE TABLE IF NOT EXISTS remote_clients (
@@ -570,6 +600,15 @@ def init_db() -> None:
             "CREATE INDEX IF NOT EXISTS idx_user_devices_machine_id ON user_devices(machine_id)"
         )
         db.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_tt_users_email_unique ON tt_users(lower(email)) WHERE email IS NOT NULL AND email != ''"
+        )
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_tt_user_devices_user_id ON tt_user_devices(tt_user_id)"
+        )
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_tt_user_devices_machine_id ON tt_user_devices(machine_id)"
+        )
+        db.execute(
             "CREATE INDEX IF NOT EXISTS idx_remote_clients_owner_user_id ON remote_clients(owner_user_id)"
         )
         db.execute(
@@ -747,6 +786,32 @@ def verify_account_token(token: str) -> dict:
         raise ValueError("账号登录凭证无效或已过期")
 
 
+def issue_tt_account_token(*, user_row: sqlite3.Row, machine_id: str) -> str:
+    serializer = get_license_serializer()
+    payload = {
+        "tt_user_id": user_row["id"],
+        "username": user_row["username"],
+        "email": user_row["email"] or "",
+        "machine_id": machine_id,
+        "edition": user_row["edition"],
+        "expires_at": user_row["expires_at"] or "",
+        "issued_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+    }
+    return serializer.dumps(payload, salt=TT_ACCOUNT_TOKEN_SALT)
+
+
+def verify_tt_account_token(token: str) -> dict:
+    serializer = get_license_serializer()
+    try:
+        return serializer.loads(
+            token,
+            salt=TT_ACCOUNT_TOKEN_SALT,
+            max_age=ACCOUNT_TOKEN_MAX_AGE_SECONDS,
+        )
+    except (BadSignature, BadTimeSignature, SignatureExpired):
+        raise ValueError("TT账号登录凭证无效或已过期")
+
+
 def parse_iso_datetime(value: str | None) -> datetime.datetime | None:
     text = str(value or "").strip()
     if not text:
@@ -779,6 +844,20 @@ def get_user_by_account(db: sqlite3.Connection, account: str) -> sqlite3.Row | N
         """
         SELECT *
         FROM users
+        WHERE username = ? OR lower(COALESCE(email, '')) = lower(?)
+        """,
+        (value, value),
+    ).fetchone()
+
+
+def get_tt_user_by_account(db: sqlite3.Connection, account: str) -> sqlite3.Row | None:
+    value = str(account or "").strip()
+    if not value:
+        return None
+    return db.execute(
+        """
+        SELECT *
+        FROM tt_users
         WHERE username = ? OR lower(COALESCE(email, '')) = lower(?)
         """,
         (value, value),
@@ -832,6 +911,18 @@ def current_active_user_device_count(db: sqlite3.Connection, user_id: int) -> in
         WHERE user_id = ? AND (revoked_at IS NULL OR revoked_at = '')
         """,
         (user_id,),
+    ).fetchone()
+    return int(row["cnt"] if row else 0)
+
+
+def current_active_tt_user_device_count(db: sqlite3.Connection, tt_user_id: int) -> int:
+    row = db.execute(
+        """
+        SELECT COUNT(*) AS cnt
+        FROM tt_user_devices
+        WHERE tt_user_id = ? AND (revoked_at IS NULL OR revoked_at = '')
+        """,
+        (tt_user_id,),
     ).fetchone()
     return int(row["cnt"] if row else 0)
 
@@ -2488,6 +2579,169 @@ def activate_account_for_machine(
     )
 
 
+def build_tt_account_auth_response(
+    user_row: sqlite3.Row,
+    *,
+    machine_id: str,
+    token: str,
+    logged_in_at: str | None = None,
+    last_verified_at: str | None = None,
+    replaced_device_count: int = 0,
+) -> dict:
+    now_value = datetime.datetime.now()
+    now_iso_value = now_value.isoformat(timespec="seconds")
+    offline_grace_until = (
+        now_value + datetime.timedelta(hours=ACCOUNT_OFFLINE_GRACE_HOURS)
+    ).isoformat(timespec="seconds")
+    username = str(user_row["username"] or "")
+    return {
+        "username": username,
+        "account_username": username,
+        "email": user_row["email"] or "",
+        "license_key_masked": username,
+        "machine_id": machine_id,
+        "token": token,
+        "activated_at": logged_in_at or last_verified_at or now_iso_value,
+        "last_verified_at": last_verified_at or now_iso_value,
+        "offline_grace_until": offline_grace_until,
+        "expires_at": user_row["expires_at"] or "",
+        "edition": user_row["edition"],
+        "licensee": username,
+        "max_devices": int(user_row["max_devices"] or ACCOUNT_DEFAULT_MAX_DEVICES),
+        "replaced_device_count": int(replaced_device_count or 0),
+    }
+
+
+def ensure_tt_account_can_login(user_row: sqlite3.Row) -> tuple[bool, str]:
+    if str(user_row["status"] or "active") != "active":
+        return False, "TT账号已停用"
+    if is_user_account_expired(user_row):
+        return False, "TT账号已过期"
+    return True, ""
+
+
+def activate_tt_account_for_machine(
+    db: sqlite3.Connection,
+    *,
+    user_row: sqlite3.Row,
+    machine_id: str,
+    device_name: str,
+    app_name: str,
+    app_version: str,
+    force_login: bool = True,
+) -> dict:
+    ok, error = ensure_tt_account_can_login(user_row)
+    if not ok:
+        raise ValueError(error)
+
+    device_row = db.execute(
+        """
+        SELECT *
+        FROM tt_user_devices
+        WHERE tt_user_id = ? AND machine_id = ?
+        """,
+        (user_row["id"], machine_id),
+    ).fetchone()
+
+    token = issue_tt_account_token(user_row=user_row, machine_id=machine_id)
+    token_hash = hash_token(token)
+    now_value = now_iso()
+    replaced_device_count = 0
+
+    active_current_row = db.execute(
+        """
+        SELECT id
+        FROM tt_user_devices
+        WHERE tt_user_id = ? AND machine_id = ? AND (revoked_at IS NULL OR revoked_at = '')
+        """,
+        (user_row["id"], machine_id),
+    ).fetchone()
+    if active_current_row is None:
+        active_count = current_active_tt_user_device_count(db, user_row["id"])
+        max_devices = max(1, int(user_row["max_devices"] or ACCOUNT_DEFAULT_MAX_DEVICES))
+        overflow_count = active_count - max_devices + 1
+        if overflow_count > 0:
+            if not force_login:
+                raise ValueError("TT账号已在其他电脑登录")
+            old_rows = db.execute(
+                """
+                SELECT id
+                FROM tt_user_devices
+                WHERE tt_user_id = ?
+                  AND machine_id != ?
+                  AND (revoked_at IS NULL OR revoked_at = '')
+                ORDER BY COALESCE(last_verified_at, logged_in_at, '') ASC, id ASC
+                LIMIT ?
+                """,
+                (user_row["id"], machine_id, overflow_count),
+            ).fetchall()
+            for old_row in old_rows:
+                db.execute(
+                    """
+                    UPDATE tt_user_devices
+                    SET revoked_at = ?
+                    WHERE id = ? AND (revoked_at IS NULL OR revoked_at = '')
+                    """,
+                    (now_value, old_row["id"]),
+                )
+            replaced_device_count = len(old_rows)
+
+    if device_row:
+        db.execute(
+            """
+            UPDATE tt_user_devices
+            SET token_hash = ?, device_name = ?, app_name = ?, app_version = ?,
+                last_verified_at = ?, revoked_at = NULL
+            WHERE id = ?
+            """,
+            (
+                token_hash,
+                device_name or None,
+                app_name or None,
+                app_version or None,
+                now_value,
+                device_row["id"],
+            ),
+        )
+    else:
+        db.execute(
+            """
+            INSERT INTO tt_user_devices (
+                tt_user_id, machine_id, device_name, app_name, app_version,
+                token_hash, logged_in_at, last_verified_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                user_row["id"],
+                machine_id,
+                device_name or None,
+                app_name or None,
+                app_version or None,
+                token_hash,
+                now_value,
+                now_value,
+            ),
+        )
+
+    db.execute(
+        "UPDATE tt_users SET updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+        (user_row["id"],),
+    )
+    db.commit()
+    return build_tt_account_auth_response(
+        user_row,
+        machine_id=machine_id,
+        token=token,
+        logged_in_at=(
+            str(device_row["logged_in_at"])
+            if device_row and device_row["logged_in_at"]
+            else now_value
+        ),
+        last_verified_at=now_value,
+        replaced_device_count=replaced_device_count,
+    )
+
+
 def build_client_license_response(
     license_row: sqlite3.Row,
     *,
@@ -2689,6 +2943,13 @@ def license_management():
 @admin_required
 def user_management():
     return render_template("users.html")
+
+
+@app.route("/tt-users")
+@login_required
+@admin_required
+def tt_user_management():
+    return render_template("users.html", user_page_variant="tt_users")
 
 
 @app.route("/settings/minidrama")
@@ -3047,6 +3308,147 @@ def client_verify_account():
 
     try:
         result = activate_account_for_machine(
+            db,
+            user_row=user_row,
+            machine_id=payload["machine_id"],
+            device_name=payload["device_name"],
+            app_name=payload["app_name"],
+            app_version=payload["app_version"],
+        )
+    except ValueError as exc:
+        return jsonify({"ok": False, "message": str(exc)}), 400
+    return jsonify({"ok": True, "data": result})
+
+
+@app.route("/client-api/tt/account/login", methods=["POST"])
+@app.route("/tt/account/login", methods=["POST"])
+def client_login_tt_account():
+    data = request.get_json(silent=True) or {}
+    payload, error = validate_account_auth_payload(data)
+    if error:
+        return jsonify({"ok": False, "message": error}), 400
+    if not payload["password"]:
+        return jsonify({"ok": False, "message": "请输入密码"}), 400
+
+    db = get_db()
+    user_row = get_tt_user_by_account(db, payload["account"])
+    if not user_row or not check_password_hash(user_row["password_hash"], payload["password"]):
+        return jsonify({"ok": False, "message": "TT用户名、邮箱或密码不正确"}), 401
+
+    try:
+        result = activate_tt_account_for_machine(
+            db,
+            user_row=user_row,
+            machine_id=payload["machine_id"],
+            device_name=payload["device_name"],
+            app_name=payload["app_name"],
+            app_version=payload["app_version"],
+            force_login=payload["force_login"],
+        )
+    except ValueError as exc:
+        return jsonify({"ok": False, "message": str(exc)}), 400
+    return jsonify({"ok": True, "data": result})
+
+
+@app.route("/client-api/tt/account/logout", methods=["POST"])
+@app.route("/tt/account/logout", methods=["POST"])
+def client_logout_tt_account():
+    data = request.get_json(silent=True) or {}
+    machine_id = str(data.get("machine_id") or "").strip()
+    token = str(data.get("token") or "").strip()
+    account = str(data.get("account") or data.get("username") or data.get("email") or "").strip()
+    if not machine_id:
+        return jsonify({"ok": False, "message": "机器码不能为空"}), 400
+    if not token:
+        return jsonify({"ok": False, "message": "登录凭证不能为空"}), 400
+
+    try:
+        token_payload = verify_tt_account_token(token)
+    except ValueError as exc:
+        return jsonify({"ok": False, "message": str(exc)}), 400
+    if token_payload.get("machine_id") != machine_id:
+        return jsonify({"ok": False, "message": "登录凭证与当前机器不匹配"}), 400
+
+    db = get_db()
+    user_row = db.execute(
+        "SELECT * FROM tt_users WHERE id = ?",
+        (token_payload.get("tt_user_id"),),
+    ).fetchone()
+    if not user_row:
+        return jsonify({"ok": False, "message": "TT账号不存在"}), 404
+    if account and account not in {user_row["username"], user_row["email"] or ""}:
+        return jsonify({"ok": False, "message": "登录凭证与当前TT账号不匹配"}), 400
+
+    result = db.execute(
+        """
+        UPDATE tt_user_devices
+        SET revoked_at = ?
+        WHERE tt_user_id = ?
+          AND machine_id = ?
+          AND token_hash = ?
+          AND (revoked_at IS NULL OR revoked_at = '')
+        """,
+        (now_iso(), user_row["id"], machine_id, hash_token(token)),
+    )
+    db.execute(
+        "UPDATE tt_users SET updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+        (user_row["id"],),
+    )
+    db.commit()
+    if result.rowcount == 0:
+        return jsonify({"ok": False, "message": "当前机器未登录或登录凭证已失效"}), 400
+    return jsonify(
+        {
+            "ok": True,
+            "message": "退出登录成功",
+            "data": {"username": user_row["username"], "machine_id": machine_id},
+        }
+    )
+
+
+@app.route("/client-api/tt/account/verify", methods=["POST"])
+@app.route("/tt/account/verify", methods=["POST"])
+def client_verify_tt_account():
+    data = request.get_json(silent=True) or {}
+    payload, error = validate_account_auth_payload(data)
+    if error:
+        return jsonify({"ok": False, "message": error}), 400
+    if not payload["token"]:
+        return jsonify({"ok": False, "message": "登录凭证不能为空"}), 400
+
+    try:
+        token_payload = verify_tt_account_token(payload["token"])
+    except ValueError as exc:
+        return jsonify({"ok": False, "message": str(exc)}), 400
+
+    if token_payload.get("machine_id") != payload["machine_id"]:
+        return jsonify({"ok": False, "message": "登录凭证与当前机器不匹配"}), 400
+
+    db = get_db()
+    user_row = db.execute(
+        "SELECT * FROM tt_users WHERE id = ?",
+        (token_payload.get("tt_user_id"),),
+    ).fetchone()
+    if not user_row:
+        return jsonify({"ok": False, "message": "TT账号不存在"}), 404
+    if payload["account"] and payload["account"] not in {user_row["username"], user_row["email"] or ""}:
+        return jsonify({"ok": False, "message": "登录凭证与当前TT账号不匹配"}), 400
+
+    device_row = db.execute(
+        """
+        SELECT *
+        FROM tt_user_devices
+        WHERE tt_user_id = ? AND machine_id = ? AND (revoked_at IS NULL OR revoked_at = '')
+        """,
+        (user_row["id"], payload["machine_id"]),
+    ).fetchone()
+    if not device_row:
+        return jsonify({"ok": False, "message": "当前机器未登录"}), 400
+    if device_row["token_hash"] != hash_token(payload["token"]):
+        return jsonify({"ok": False, "message": "登录凭证已失效，请重新登录"}), 400
+
+    try:
+        result = activate_tt_account_for_machine(
             db,
             user_row=user_row,
             machine_id=payload["machine_id"],
@@ -3997,6 +4399,14 @@ def sanitize_user_payload(data: dict, *, require_password: bool = False) -> tupl
     }, None
 
 
+def sanitize_tt_user_payload(data: dict, *, require_password: bool = False) -> tuple[dict, str | None]:
+    payload, error = sanitize_user_payload(data, require_password=require_password)
+    if error:
+        return {}, error
+    payload.pop("role", None)
+    return payload, None
+
+
 @app.route("/api/users", methods=["GET"])
 @login_required
 @admin_required
@@ -4165,6 +4575,167 @@ def change_password(user_id: int):
     if result.rowcount == 0:
         return jsonify({"error": "未找到该用户"}), 404
     return jsonify({"message": "密码已更新"})
+
+
+@app.route("/api/tt-users", methods=["GET"])
+@login_required
+@admin_required
+def list_tt_users():
+    db = get_db()
+    rows = db.execute(
+        """
+        SELECT
+            u.id, u.username, u.email, 'tt_user' AS role, u.status, u.max_devices,
+            u.edition, u.expires_at, u.created_at,
+            (SELECT COUNT(*) FROM tt_user_devices d WHERE d.tt_user_id = u.id AND (d.revoked_at IS NULL OR d.revoked_at = '')) AS active_devices,
+            (SELECT COUNT(*) FROM tt_user_devices d WHERE d.tt_user_id = u.id) AS total_devices,
+            (SELECT COALESCE(MAX(d.last_verified_at), '') FROM tt_user_devices d WHERE d.tt_user_id = u.id) AS last_verified_at
+        FROM tt_users u
+        ORDER BY u.created_at DESC
+        """
+    ).fetchall()
+    return jsonify([dict(row) for row in rows])
+
+
+@app.route("/api/tt-users", methods=["POST"])
+@login_required
+@admin_required
+def create_tt_user():
+    data = request.get_json(silent=True) or {}
+    payload, error = sanitize_tt_user_payload(data, require_password=True)
+    if error:
+        return jsonify({"error": error}), 400
+    db = get_db()
+    try:
+        db.execute(
+            """
+            INSERT INTO tt_users (
+                username, email, password_hash, status,
+                max_devices, edition, expires_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            """,
+            (
+                payload["username"],
+                payload["email"] or None,
+                generate_password_hash(payload["password"]),
+                payload["status"],
+                payload["max_devices"],
+                payload["edition"],
+                payload["expires_at"],
+            ),
+        )
+        db.commit()
+    except sqlite3.IntegrityError:
+        return jsonify({"error": "TT用户名或邮箱已存在"}), 400
+    return jsonify({"message": "创建TT用户成功"}), 201
+
+
+@app.route("/api/tt-users/<int:user_id>", methods=["PUT"])
+@login_required
+@admin_required
+def update_tt_user(user_id: int):
+    data = request.get_json(silent=True) or {}
+    payload, error = sanitize_tt_user_payload(data)
+    if error:
+        return jsonify({"error": error}), 400
+    db = get_db()
+    try:
+        result = db.execute(
+            """
+            UPDATE tt_users
+            SET username = ?, email = ?, status = ?, max_devices = ?,
+                edition = ?, expires_at = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (
+                payload["username"],
+                payload["email"] or None,
+                payload["status"],
+                payload["max_devices"],
+                payload["edition"],
+                payload["expires_at"],
+                user_id,
+            ),
+        )
+        db.commit()
+    except sqlite3.IntegrityError:
+        return jsonify({"error": "TT用户名或邮箱已存在"}), 400
+    if result.rowcount == 0:
+        return jsonify({"error": "未找到该TT用户"}), 404
+    return jsonify({"message": "TT用户已更新"})
+
+
+@app.route("/api/tt-users/<int:user_id>/devices", methods=["GET"])
+@login_required
+@admin_required
+def list_tt_user_devices(user_id: int):
+    db = get_db()
+    user = db.execute(
+        "SELECT id, username, email, status, max_devices, edition, expires_at FROM tt_users WHERE id = ?",
+        (user_id,),
+    ).fetchone()
+    if not user:
+        return jsonify({"error": "未找到该TT用户"}), 404
+    rows = db.execute(
+        """
+        SELECT id, machine_id, device_name, app_name, app_version, logged_in_at, last_verified_at, revoked_at
+        FROM tt_user_devices
+        WHERE tt_user_id = ?
+        ORDER BY COALESCE(last_verified_at, logged_in_at, '') DESC, id DESC
+        """,
+        (user_id,),
+    ).fetchall()
+    return jsonify({"user": dict(user), "devices": [dict(row) for row in rows]})
+
+
+@app.route("/api/tt-users/<int:user_id>/devices/<int:device_id>/revoke", methods=["POST"])
+@login_required
+@admin_required
+def revoke_tt_user_device(user_id: int, device_id: int):
+    db = get_db()
+    result = db.execute(
+        """
+        UPDATE tt_user_devices
+        SET revoked_at = ?
+        WHERE id = ? AND tt_user_id = ? AND (revoked_at IS NULL OR revoked_at = '')
+        """,
+        (now_iso(), device_id, user_id),
+    )
+    db.commit()
+    if result.rowcount == 0:
+        return jsonify({"error": "未找到可解绑的TT设备"}), 404
+    return jsonify({"message": "TT设备已解绑"})
+
+
+@app.route("/api/tt-users/<int:user_id>", methods=["DELETE"])
+@login_required
+@admin_required
+def delete_tt_user(user_id: int):
+    db = get_db()
+    result = db.execute("DELETE FROM tt_users WHERE id = ?", (user_id,))
+    db.commit()
+    if result.rowcount == 0:
+        return jsonify({"error": "未找到该TT用户"}), 404
+    return jsonify({"message": "删除成功"})
+
+
+@app.route("/api/tt-users/<int:user_id>/password", methods=["PUT"])
+@login_required
+@admin_required
+def change_tt_user_password(user_id: int):
+    data = request.get_json(silent=True) or {}
+    new_password = (data.get("new_password") or "").strip()
+    if len(new_password) < 6:
+        return jsonify({"error": "新密码至少6位"}), 400
+    db = get_db()
+    result = db.execute(
+        "UPDATE tt_users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+        (generate_password_hash(new_password), user_id),
+    )
+    db.commit()
+    if result.rowcount == 0:
+        return jsonify({"error": "未找到该TT用户"}), 404
+    return jsonify({"message": "TT用户密码已更新"})
 
 
 @app.route("/api/users/<int:user_id>/devices-legacy", methods=["GET"])

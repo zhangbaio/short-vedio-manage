@@ -47,6 +47,10 @@
       <span class="app-nav-icon"><i class="bi bi-people" aria-hidden="true"></i></span>
       <span>用户管理</span>
     </a>
+    <a class="app-nav-link {% if active_page == 'tt_users' %}active{% endif %}" href="{{ url_for('tt_user_management') }}">
+      <span class="app-nav-icon"><i class="bi bi-person-badge" aria-hidden="true"></i></span>
+      <span>TT????</span>
+    </a>
     <a class="app-nav-link {% if active_page == 'minidrama_settings' %}active{% endif %}" href="{{ url_for('minidrama_settings_page') }}">
       <span class="app-nav-icon"><i class="bi bi-sliders" aria-hidden="true"></i></span>
       <span>小程序配置</span>

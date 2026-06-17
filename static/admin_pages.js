@@ -6,16 +6,30 @@ let editingUserId = null;
 let usersCache = [];
 let currentDevicesUserId = null;
 let userEditorModal = null;
+let userPageConfig = {
+  apiBase: "/api/users",
+  emptyText: "暂无用户",
+  entityLabel: "用户",
+  roleText: "",
+  addTitle: "新增用户",
+  editTitle: "编辑用户授权",
+  createSuccess: "新增用户成功",
+  updateSuccess: "用户已更新",
+  deleteSuccess: "用户删除成功",
+  deleteConfirmSuffix: "删除后该账号的桌面端登录设备也会失效。",
+  noDevicesText: "暂无登录设备",
+};
 
 document.addEventListener("DOMContentLoaded", () => {
   cacheDefaultFeedbackMessages();
-  if (window.adminPage === "users") initUsersPage();
+  if (window.adminPage === "users" || window.adminPage === "tt_users") initUsersPage();
   if (window.adminPage === "minidrama") initMinidramaSettingsPage();
   if (window.adminPage === "kuaishou") initKuaishouSettingsPage();
   if (window.adminPage === "remote") initRemotePage();
 });
 
 function initUsersPage() {
+  userPageConfig = { ...userPageConfig, ...(window.userPageConfig || {}) };
   userEditorModal = new bootstrap.Modal(document.getElementById("userEditorModal"));
   document.getElementById("addUserBtn")?.addEventListener("click", showUserEditor);
   document.getElementById("createUserBtn")?.addEventListener("click", saveUser);
@@ -61,7 +75,7 @@ async function initRemotePage() {
 
 async function loadUsers() {
   try {
-    const users = await requestJSON("/api/users");
+    const users = await requestJSON(userPageConfig.apiBase);
     if (!users) return;
     usersCache = users;
     const tbody = document.getElementById("userTableBody");
@@ -69,20 +83,20 @@ async function loadUsers() {
     tbody.innerHTML = "";
     if (mobileList) mobileList.innerHTML = "";
     if (!users.length) {
-      tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-4">暂无用户</td></tr>';
-      renderMobileEmptyState(mobileList, "暂无用户");
+      tbody.innerHTML = `<tr><td colspan="8" class="text-center text-muted py-4">${escapeHtml(userPageConfig.emptyText)}</td></tr>`;
+      renderMobileEmptyState(mobileList, userPageConfig.emptyText);
       return;
     }
     users.forEach((user) => {
       const tr = document.createElement("tr");
-      const isSelf = user.username === window.currentUser.username;
+      const isSelf = window.adminPage === "users" && user.username === window.currentUser.username;
       const statusText = user.status === "disabled" ? "停用" : "启用";
       const statusClass = user.status === "disabled" ? "text-bg-secondary" : "text-bg-success";
       const actionButtons = buildUserActionButtons(user, isSelf);
       tr.innerHTML = `
         <td>${escapeHtml(user.username)}</td>
         <td>${escapeHtml(user.email || "-")}</td>
-        <td>${user.role === "admin" ? "管理员" : "普通用户"}</td>
+        <td>${escapeHtml(getUserRoleText(user))}</td>
         <td><span class="badge ${statusClass}">${statusText}</span> <span class="text-muted small">${escapeHtml(user.edition || "pro")}</span></td>
         <td>${Number(user.active_devices || 0)}/${Number(user.max_devices || 0)}</td>
         <td>${escapeHtml(user.expires_at || "永久")}</td>
@@ -95,6 +109,11 @@ async function loadUsers() {
   } catch (error) {
     showToast(error.message, "danger");
   }
+}
+
+function getUserRoleText(user) {
+  if (userPageConfig.roleText) return userPageConfig.roleText;
+  return user.role === "admin" ? "管理员" : "普通用户";
 }
 
 function buildUserActionButtons(user, isSelf) {
@@ -116,7 +135,7 @@ function buildUserMobileCard(user, actionButtons, statusText, statusClass) {
     </div>
     <div class="mobile-record-subtitle">${escapeHtml(user.email || "未填写邮箱")}</div>
     <div class="mobile-record-grid">
-      <div><span>角色</span><strong>${user.role === "admin" ? "管理员" : "普通用户"}</strong></div>
+      <div><span>角色</span><strong>${escapeHtml(getUserRoleText(user))}</strong></div>
       <div><span>授权</span><strong>${escapeHtml(user.edition || "pro")}</strong></div>
       <div><span>设备</span><strong>${Number(user.active_devices || 0)}/${Number(user.max_devices || 0)}</strong></div>
       <div><span>到期</span><strong>${escapeHtml(user.expires_at || "永久")}</strong></div>
@@ -132,7 +151,7 @@ function showUserEditor(user = null) {
   hidePasswordEditor();
   hideDevicesPanel();
   editingUserId = user?.id || null;
-  document.getElementById("userEditorTitle").textContent = editingUserId ? "编辑用户授权" : "新增用户";
+  document.getElementById("userEditorTitle").textContent = editingUserId ? userPageConfig.editTitle : userPageConfig.addTitle;
   document.getElementById("createUserBtn").textContent = editingUserId ? "保存修改" : "保存";
   document.getElementById("userNameInput").value = user?.username || "";
   document.getElementById("userEmailInput").value = user?.email || "";
@@ -229,7 +248,7 @@ async function saveUser() {
   }
 
   try {
-    const url = editingUserId ? `/api/users/${editingUserId}` : "/api/users";
+    const url = editingUserId ? `${userPageConfig.apiBase}/${editingUserId}` : userPageConfig.apiBase;
     const method = editingUserId ? "PUT" : "POST";
     if (editingUserId) delete payload.password;
     await requestJSON(url, {
@@ -237,7 +256,7 @@ async function saveUser() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
-    showToast(editingUserId ? "用户已更新" : "新增用户成功", "success");
+    showToast(editingUserId ? userPageConfig.updateSuccess : userPageConfig.createSuccess, "success");
     resetUserForm();
     userEditorModal?.hide();
     await loadUsers();
@@ -265,10 +284,10 @@ async function handleUserTableClick(event) {
     return;
   }
   if (button.dataset.action !== "delete-user") return;
-  if (!confirm(`确定删除用户 ${username} 吗？删除后该账号的桌面端登录设备也会失效。`)) return;
+  if (!confirm(`确定删除${userPageConfig.entityLabel} ${username} 吗？${userPageConfig.deleteConfirmSuffix}`)) return;
   try {
-    await requestJSON(`/api/users/${id}`, { method: "DELETE" });
-    showToast("用户删除成功", "success");
+    await requestJSON(`${userPageConfig.apiBase}/${id}`, { method: "DELETE" });
+    showToast(userPageConfig.deleteSuccess, "success");
     await loadUsers();
     if (currentDevicesUserId === id) hideDevicesPanel();
   } catch (error) {
@@ -285,7 +304,7 @@ async function resetUserPassword() {
     return;
   }
   try {
-    await requestJSON(`/api/users/${passwordTargetUserId}/password`, {
+    await requestJSON(`${userPageConfig.apiBase}/${passwordTargetUserId}/password`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ new_password: newPassword }),
@@ -318,17 +337,17 @@ async function loadUserDevices(userId, username = "") {
     hideUserEditor();
     hidePasswordEditor();
     currentDevicesUserId = userId;
-    const data = await requestJSON(`/api/users/${userId}/devices`);
+    const data = await requestJSON(`${userPageConfig.apiBase}/${userId}/devices`);
     const user = data?.user || {};
     const devices = data?.devices || [];
-    document.getElementById("userDevicesTitle").textContent = `${username || user.username || "\u7528\u6237"} \u00b7 ${devices.length} \u53f0\u8bbe\u5907`;
+    document.getElementById("userDevicesTitle").textContent = `${username || user.username || userPageConfig.entityLabel} \u00b7 ${devices.length} \u53f0\u8bbe\u5907`;
     const tbody = document.getElementById("userDevicesTableBody");
     const mobileList = document.getElementById("userDevicesMobileList");
     tbody.innerHTML = "";
     if (mobileList) mobileList.innerHTML = "";
     if (!devices.length) {
-      tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-4">暂无登录设备</td></tr>';
-      renderMobileEmptyState(mobileList, "暂无登录设备");
+      tbody.innerHTML = `<tr><td colspan="7" class="text-center text-muted py-4">${escapeHtml(userPageConfig.noDevicesText)}</td></tr>`;
+      renderMobileEmptyState(mobileList, userPageConfig.noDevicesText);
     } else {
       devices.forEach((device) => {
         const revoked = Boolean(device.revoked_at);
@@ -387,7 +406,7 @@ async function handleUserDevicesTableClick(event) {
   const deviceId = Number(button.dataset.id);
   if (!confirm("确定解绑这台设备吗？客户端下次联网校验后需要重新登录。")) return;
   try {
-    await requestJSON(`/api/users/${currentDevicesUserId}/devices/${deviceId}/revoke`, { method: "POST" });
+    await requestJSON(`${userPageConfig.apiBase}/${currentDevicesUserId}/devices/${deviceId}/revoke`, { method: "POST" });
     showToast("设备已解绑", "success");
     await loadUserDevices(currentDevicesUserId);
     await loadUsers();
