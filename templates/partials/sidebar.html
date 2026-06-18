@@ -28,10 +28,13 @@
       <span class="app-nav-icon"><i class="bi bi-cloud-arrow-up" aria-hidden="true"></i></span>
       <span>上传记录</span>
     </a>
+    {# 红果短剧入口已隐藏；如需恢复，同时恢复 app.py 中 hongguo_bp 注册。 #}
+    {#
     <a class="app-nav-link {% if active_page == 'hongguo' %}active{% endif %}" href="{{ url_for('hongguo.ui_page') }}">
       <span class="app-nav-icon"><i class="bi bi-collection-play" aria-hidden="true"></i></span>
       <span>红果短剧</span>
     </a>
+    #}
     {% if session.role == 'admin' %}
     <a class="app-nav-link {% if active_page == 'licenses' %}active{% endif %}" href="{{ url_for('license_management') }}">
       <span class="app-nav-icon"><i class="bi bi-shield-check" aria-hidden="true"></i></span>
@@ -49,7 +52,7 @@
     </a>
     <a class="app-nav-link {% if active_page == 'tt_users' %}active{% endif %}" href="{{ url_for('tt_user_management') }}">
       <span class="app-nav-icon"><i class="bi bi-person-badge" aria-hidden="true"></i></span>
-      <span>TT????</span>
+      <span>TT用户管理</span>
     </a>
     <a class="app-nav-link {% if active_page == 'minidrama_settings' %}active{% endif %}" href="{{ url_for('minidrama_settings_page') }}">
       <span class="app-nav-icon"><i class="bi bi-sliders" aria-hidden="true"></i></span>
@@ -68,10 +71,13 @@
         hidden
       >0</span>
     </a>
+    {# 红果密钥入口已隐藏；如需恢复，同时恢复 app.py 中 hongguo_bp 注册。 #}
+    {#
     <a class="app-nav-link {% if active_page == 'hongguo_keys' %}active{% endif %}" href="{{ url_for('hongguo.keys_page') }}">
       <span class="app-nav-icon"><i class="bi bi-key" aria-hidden="true"></i></span>
       <span>红果密钥</span>
     </a>
+    #}
   </div>
   {% endif %}
 </aside>

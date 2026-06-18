@@ -215,12 +215,13 @@ def favicon():
 def apple_touch_icon():
     return send_file(APPLE_TOUCH_ICON_PATH, mimetype="image/png", max_age=86400)
 
-# 红果短剧链路(数据API + 密钥管理) Blueprint; 失败不影响主应用
-try:
-    from hongguo_bp import hongguo_bp
-    app.register_blueprint(hongguo_bp)
-except Exception as _hg_exc:  # noqa: BLE001
-    print(f"[warn] 红果 Blueprint 未加载: {_hg_exc}")
+# 红果短剧链路(数据API + 密钥管理)已隐藏并暂停注册。
+# 如需恢复红果短剧/红果密钥页面和相关 API，取消下面注释即可。
+# try:
+#     from hongguo_bp import hongguo_bp
+#     app.register_blueprint(hongguo_bp)
+# except Exception as _hg_exc:  # noqa: BLE001
+#     print(f"[warn] 红果 Blueprint 未加载: {_hg_exc}")
 
 
 def ensure_data_dir() -> None:
