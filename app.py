@@ -940,6 +940,52 @@ def current_active_activation_count(db: sqlite3.Connection, license_id: int) -> 
     return int(row["cnt"] if row else 0)
 
 
+def resolve_user_from_account_token_payload(
+    data: dict[str, Any],
+) -> tuple[sqlite3.Row | None, dict[str, str], tuple[Any, int] | None]:
+    payload, error = validate_account_auth_payload(data)
+    if error:
+        return None, payload, (jsonify({"ok": False, "message": error}), 400)
+    if not payload["token"]:
+        return None, payload, (jsonify({"ok": False, "message": "登录凭证不能为空"}), 400)
+
+    try:
+        token_payload = verify_account_token(payload["token"])
+    except ValueError as exc:
+        return None, payload, (jsonify({"ok": False, "message": str(exc)}), 400)
+    if token_payload.get("machine_id") != payload["machine_id"]:
+        return None, payload, (jsonify({"ok": False, "message": "登录凭证与当前机器不匹配"}), 400)
+
+    db = get_db()
+    user_row = db.execute(
+        "SELECT * FROM users WHERE id = ?",
+        (token_payload.get("user_id"),),
+    ).fetchone()
+    if not user_row:
+        return None, payload, (jsonify({"ok": False, "message": "账号不存在"}), 404)
+    if payload["account"] and payload["account"] not in {user_row["username"], user_row["email"] or ""}:
+        return None, payload, (jsonify({"ok": False, "message": "登录凭证与当前账号不匹配"}), 400)
+    ok, account_error = ensure_account_can_login(user_row)
+    if not ok:
+        return None, payload, (jsonify({"ok": False, "message": account_error}), 400)
+
+    device_row = db.execute(
+        """
+        SELECT *
+        FROM user_devices
+        WHERE user_id = ? AND machine_id = ?
+        """,
+        (user_row["id"], payload["machine_id"]),
+    ).fetchone()
+    if not device_row:
+        return None, payload, (jsonify({"ok": False, "message": "当前机器未登录或登录凭证已失效"}), 400)
+    if str(device_row["revoked_at"] or "").strip():
+        return None, payload, (jsonify({"ok": False, "message": "当前机器登录已退出，请重新登录"}), 400)
+    if device_row["token_hash"] != hash_token(payload["token"]):
+        return None, payload, (jsonify({"ok": False, "message": "登录凭证已失效，请重新登录"}), 400)
+    return user_row, payload, None
+
+
 def current_total_activation_count(db: sqlite3.Connection, license_id: int) -> int:
     row = db.execute(
         """
@@ -3525,6 +3571,29 @@ def client_create_remote_client_from_account():
             },
         }
     ), 201
+
+
+@app.route("/client-api/account/management-session", methods=["POST"])
+def client_create_management_session_from_account():
+    data = request.get_json(silent=True) or {}
+    user_row, _payload, error_response = resolve_user_from_account_token_payload(data)
+    if error_response is not None:
+        return error_response
+
+    session.clear()
+    session["user_id"] = user_row["id"]
+    session["username"] = user_row["username"]
+    session["role"] = user_row["role"] or "user"
+    return jsonify(
+        {
+            "ok": True,
+            "data": {
+                "user_id": user_row["id"],
+                "username": user_row["username"],
+                "role": user_row["role"] or "user",
+            },
+        }
+    )
 
 
 @app.route("/client-api/licenses/activate", methods=["POST"])
