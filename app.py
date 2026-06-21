@@ -2386,7 +2386,9 @@ def validate_account_auth_payload(data: dict, *, require_registration: bool = Fa
         "app_name": str(data.get("app_name") or "").strip(),
         "app_version": str(data.get("app_version") or "").strip(),
         "token": str(data.get("token") or "").strip(),
-        "force_login": parse_json_bool(data.get("force_login"), default=True),
+        # 设备数达到上限时默认拒绝新设备登录，只有客户端显式传 force_login=true
+        # 才允许顶掉旧设备，避免 max_devices=1 时被静默替换。
+        "force_login": parse_json_bool(data.get("force_login"), default=False),
     }
     if require_registration:
         if not USERNAME_RE.match(payload["username"]):
@@ -2466,7 +2468,7 @@ def activate_account_for_machine(
     device_name: str,
     app_name: str,
     app_version: str,
-    force_login: bool = True,
+    force_login: bool = False,
 ) -> dict:
     ok, error = ensure_account_can_login(user_row)
     if not ok:
@@ -2629,7 +2631,7 @@ def activate_tt_account_for_machine(
     device_name: str,
     app_name: str,
     app_version: str,
-    force_login: bool = True,
+    force_login: bool = False,
 ) -> dict:
     ok, error = ensure_tt_account_can_login(user_row)
     if not ok:
