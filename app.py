@@ -2930,6 +2930,7 @@ def monitor_dashboard():
 
 @app.route("/upload-records")
 @login_required
+@admin_required
 def upload_records_page():
     return render_template("upload_records.html")
 
@@ -3933,6 +3934,7 @@ def client_sync_upload_records():
 
 @app.route("/api/upload-records", methods=["GET"])
 @login_required
+@admin_required
 def list_upload_records():
     user_id = int(session["user_id"])
     role = str(session.get("role") or "user").strip().lower()
@@ -5193,6 +5195,7 @@ def batch_restore_licenses():
 
 @app.route("/api/remote/clients", methods=["GET"])
 @login_required
+@admin_required
 def list_remote_clients():
     db = get_db()
     user_id = int(session["user_id"])
@@ -5211,6 +5214,7 @@ def list_remote_clients():
 
 @app.route("/api/remote/clients", methods=["POST"])
 @login_required
+@admin_required
 def create_remote_client():
     data = request.get_json(silent=True) or {}
     client_name = str(data.get("client_name") or "").strip() or "默认设备"
@@ -5230,6 +5234,7 @@ def create_remote_client():
 
 @app.route("/api/remote/conversations", methods=["GET"])
 @login_required
+@admin_required
 def list_remote_conversations():
     db = get_db()
     user_id = int(session["user_id"])
@@ -5263,6 +5268,7 @@ def list_remote_conversations():
 
 @app.route("/api/remote/conversations", methods=["POST"])
 @login_required
+@admin_required
 def create_remote_conversation():
     data = request.get_json(silent=True) or {}
     client_id = str(data.get("client_id") or "").strip()
@@ -5294,6 +5300,7 @@ def create_remote_conversation():
 
 @app.route("/api/remote/conversations/<int:conversation_id>/messages", methods=["GET"])
 @login_required
+@admin_required
 def list_remote_messages(conversation_id: int):
     db = get_db()
     user_id = int(session["user_id"])
@@ -5322,6 +5329,7 @@ def list_remote_messages(conversation_id: int):
 
 @app.route("/api/remote/conversations/<int:conversation_id>/messages", methods=["POST"])
 @login_required
+@admin_required
 def create_remote_message(conversation_id: int):
     db = get_db()
     user_id = int(session["user_id"])
@@ -5797,6 +5805,7 @@ def _ensure_background_schedulers_started():
 
 @app.route("/api/remote/attachments/<int:attachment_id>", methods=["GET"])
 @login_required
+@admin_required
 def download_remote_attachment(attachment_id: int):
     db = get_db()
     user_id = int(session["user_id"])
