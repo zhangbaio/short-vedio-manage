@@ -928,6 +928,35 @@ def current_active_tt_user_device_count(db: sqlite3.Connection, tt_user_id: int)
     return int(row["cnt"] if row else 0)
 
 
+def ensure_tt_account_device_limit_for_machine(
+    db: sqlite3.Connection,
+    user_row: sqlite3.Row,
+    *,
+    machine_id: str,
+) -> tuple[bool, str]:
+    active_count = current_active_tt_user_device_count(db, user_row["id"])
+    max_devices = max(1, int(user_row["max_devices"] or ACCOUNT_DEFAULT_MAX_DEVICES))
+    if active_count <= max_devices:
+        return True, ""
+    retained_rows = db.execute(
+        """
+        SELECT id, machine_id
+        FROM tt_user_devices
+        WHERE tt_user_id = ? AND (revoked_at IS NULL OR revoked_at = '')
+        ORDER BY COALESCE(last_verified_at, logged_in_at, '') DESC, id DESC
+        LIMIT ?
+        """,
+        (user_row["id"], max_devices),
+    ).fetchall()
+    retained_machine_ids = {str(row["machine_id"] or "").strip() for row in retained_rows}
+    if str(machine_id or "").strip() in retained_machine_ids:
+        return True, ""
+    return (
+        False,
+        f"TT账号登录设备已超过上限（{active_count}/{max_devices}），请在管理后台解绑设备后重新登录",
+    )
+
+
 def current_active_activation_count(db: sqlite3.Connection, license_id: int) -> int:
     row = db.execute(
         """
@@ -2705,6 +2734,14 @@ def activate_tt_account_for_machine(
         """,
         (user_row["id"], machine_id),
     ).fetchone()
+    if active_current_row is not None:
+        ok, device_limit_error = ensure_tt_account_device_limit_for_machine(
+            db,
+            user_row,
+            machine_id=machine_id,
+        )
+        if not ok:
+            raise ValueError(device_limit_error)
     if active_current_row is None:
         active_count = current_active_tt_user_device_count(db, user_row["id"])
         max_devices = max(1, int(user_row["max_devices"] or ACCOUNT_DEFAULT_MAX_DEVICES))
