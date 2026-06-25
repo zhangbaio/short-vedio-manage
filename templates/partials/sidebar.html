@@ -29,6 +29,10 @@
       <span class="app-nav-icon"><i class="bi bi-cloud-arrow-up" aria-hidden="true"></i></span>
       <span>上传记录</span>
     </a>
+    <a class="app-nav-link {% if active_page == 'boom_prediction' %}active{% endif %}" href="{{ url_for('boom_prediction.page') }}">
+      <span class="app-nav-icon"><i class="bi bi-fire" aria-hidden="true"></i></span>
+      <span>爆剧预测</span>
+    </a>
     {% endif %}
     {# 红果短剧入口已隐藏；如需恢复，同时恢复 app.py 中 hongguo_bp 注册。 #}
     {#

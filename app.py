@@ -223,6 +223,17 @@ def apple_touch_icon():
 # except Exception as _hg_exc:  # noqa: BLE001
 #     print(f"[warn] 红果 Blueprint 未加载: {_hg_exc}")
 
+# 爆剧预测流水线(迁移自 xinge): 上新同步→指标补齐→画像评分→今日预测/爆剧预警。
+# 依赖 hongguo_core 签名/拉取层(环境变量 SIGN_SERVER 指向真实签名后端)。
+try:
+    from hongguo_predict import boom_prediction_bp, init_predict, start_scheduler
+
+    app.register_blueprint(boom_prediction_bp)
+    init_predict()
+    start_scheduler()
+except Exception as _bp_exc:  # noqa: BLE001
+    print(f"[warn] 爆剧预测 Blueprint 未加载: {_bp_exc}")
+
 
 def ensure_data_dir() -> None:
     os.makedirs(DATA_DIR, exist_ok=True)

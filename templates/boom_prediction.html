@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>爆剧预测 - 视频号短剧管理系统</title>
+    <link rel="icon" href="{{ url_for('static', filename='icons/app-icon.ico') }}?v=20260531" sizes="any" />
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='icons/app-icon.png') }}?v=20260531" />
+    <link rel="apple-touch-icon" href="{{ url_for('static', filename='icons/app-icon.png') }}?v=20260531" />
+    <link href="https://cdn.bootcdn.net/ajax/libs/bootstrap/5.3.2/css/bootstrap.min.css" rel="stylesheet" />
+    <link href="https://cdn.bootcdn.net/ajax/libs/bootstrap-icons/1.11.3/font/bootstrap-icons.min.css" rel="stylesheet" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+  </head>
+  <body class="app-body">
+    {% set active_page = 'boom_prediction' %}
+    <div class="app-shell">
+      {% include "partials/sidebar.html" %}
+      <div class="app-main">
+        <header class="app-topbar">
+          <div>
+            <h1 class="app-page-title">爆剧预测</h1>
+            <p class="app-page-subtitle">基于红果上新候选 + 历史画像评分，预测潜在爆款短剧</p>
+          </div>
+          <div class="app-userbar">
+            {% include "partials/theme_switch.html" %}
+            <span class="app-user-chip">{{ session.username }} · {{ session.role }}</span>
+            <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('logout') }}">退出</a>
+          </div>
+        </header>
+
+        <main class="app-content boom-page">
+          <div id="boomToast" class="alert d-none mb-3" role="alert"></div>
+
+          <!-- 任务配置 -->
+          <div class="card mb-4">
+            <div class="card-body">
+              <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+                <h2 class="h5 mb-0">分析任务配置</h2>
+                <button class="btn btn-primary btn-sm" id="boomSaveCfg">保存配置</button>
+              </div>
+              <div class="row g-3">
+                <div class="col-md-3 form-check ms-2 mt-2">
+                  <input class="form-check-input" type="checkbox" id="cfgEnabled" />
+                  <label class="form-check-label" for="cfgEnabled">总开关（启用流水线）</label>
+                </div>
+                <div class="col-md-2 form-check mt-2">
+                  <input class="form-check-input" type="checkbox" id="cfgNewSync" />
+                  <label class="form-check-label" for="cfgNewSync">上新同步</label>
+                </div>
+                <div class="col-md-2 form-check mt-2">
+                  <input class="form-check-input" type="checkbox" id="cfgMetrics" />
+                  <label class="form-check-label" for="cfgMetrics">指标补齐</label>
+                </div>
+                <div class="col-md-2 form-check mt-2">
+                  <input class="form-check-input" type="checkbox" id="cfgPrediction" />
+                  <label class="form-check-label" for="cfgPrediction">今日预测</label>
+                </div>
+                <div class="col-md-2 form-check mt-2">
+                  <input class="form-check-input" type="checkbox" id="cfgBoomAlert" />
+                  <label class="form-check-label" for="cfgBoomAlert">爆剧预警</label>
+                </div>
+              </div>
+              <hr />
+              <div class="row g-3">
+                <div class="col-md-3">
+                  <label class="form-label">上新同步间隔（分钟）</label>
+                  <input type="number" min="1" max="1440" class="form-control" id="cfgNewSyncInterval" />
+                </div>
+                <div class="col-md-3">
+                  <label class="form-label">指标补齐间隔（分钟）</label>
+                  <input type="number" min="5" max="1440" class="form-control" id="cfgMetricsInterval" />
+                </div>
+                <div class="col-md-3">
+                  <label class="form-label">今日预测间隔（分钟）</label>
+                  <input type="number" min="5" max="1440" class="form-control" id="cfgPredictionInterval" />
+                </div>
+                <div class="col-md-3">
+                  <label class="form-label">爆剧预警间隔（分钟）</label>
+                  <input type="number" min="1" max="1440" class="form-control" id="cfgBoomInterval" />
+                </div>
+                <div class="col-md-3">
+                  <label class="form-label">预警触发最低分</label>
+                  <input type="number" min="1" max="100" class="form-control" id="cfgBoomMinScore" />
+                </div>
+                <div class="col-md-3">
+                  <label class="form-label">预测候选上限</label>
+                  <input type="number" min="20" max="200" class="form-control" id="cfgPredictionLimit" />
+                </div>
+                <div class="col-md-3">
+                  <label class="form-label">指标补齐数量</label>
+                  <input type="number" min="1" max="200" class="form-control" id="cfgMetricsLimit" />
+                </div>
+                <div class="col-md-3">
+                  <label class="form-label">题材</label>
+                  <div class="mt-1">
+                    <label class="me-3"><input type="checkbox" value="comic_series" class="cfg-genre" /> 漫剧</label>
+                    <label class="me-3"><input type="checkbox" value="ai_series" class="cfg-genre" /> AI短剧</label>
+                    <label><input type="checkbox" value="short_play" class="cfg-genre" /> 短剧</label>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 任务状态 + 手动触发 -->
+          <div class="card mb-4">
+            <div class="card-body">
+              <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+                <h2 class="h5 mb-0">任务状态</h2>
+                <div class="d-flex gap-2 flex-wrap">
+                  <button class="btn btn-outline-secondary btn-sm" data-run="new_sync">同步上新</button>
+                  <button class="btn btn-outline-secondary btn-sm" data-run="metrics_refresh">补齐指标</button>
+                  <button class="btn btn-outline-secondary btn-sm" data-run="today_prediction">跑预测</button>
+                  <button class="btn btn-outline-secondary btn-sm" data-run="boom_alert">扫预警</button>
+                  <button class="btn btn-outline-primary btn-sm" id="boomRefresh">刷新</button>
+                </div>
+              </div>
+              <div class="table-responsive">
+                <table class="table table-sm align-middle">
+                  <thead class="table-light">
+                    <tr><th>任务</th><th>状态</th><th>最近完成</th><th>耗时(ms)</th><th>结果</th></tr>
+                  </thead>
+                  <tbody id="boomTaskBody"><tr><td colspan="5" class="text-secondary">加载中…</td></tr></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          <!-- 今日预测 -->
+          <div class="card mb-4">
+            <div class="card-body">
+              <h2 class="h5 mb-3">今日爆剧预测榜</h2>
+              <div class="table-responsive">
+                <table class="table table-hover align-middle">
+                  <thead class="table-light">
+                    <tr><th>剧名</th><th>题材</th><th>分类</th><th>集数</th><th>评分</th><th>等级</th><th>概率</th><th>收藏</th><th>播放</th><th>建议</th></tr>
+                  </thead>
+                  <tbody id="boomPredictBody"><tr><td colspan="10" class="text-secondary">暂无数据</td></tr></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          <!-- 爆剧预警记录 -->
+          <div class="card mb-4">
+            <div class="card-body">
+              <h2 class="h5 mb-3">爆剧预警记录</h2>
+              <div class="table-responsive">
+                <table class="table table-hover align-middle">
+                  <thead class="table-light">
+                    <tr><th>时间</th><th>剧名</th><th>题材</th><th>评分</th><th>概率</th><th>状态</th></tr>
+                  </thead>
+                  <tbody id="boomAlertBody"><tr><td colspan="6" class="text-secondary">暂无数据</td></tr></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          <!-- 运行日志 -->
+          <div class="card">
+            <div class="card-body">
+              <h2 class="h5 mb-3">运行日志</h2>
+              <div class="table-responsive">
+                <table class="table table-sm align-middle">
+                  <thead class="table-light">
+                    <tr><th>时间</th><th>任务</th><th>级别</th><th>消息</th></tr>
+                  </thead>
+                  <tbody id="boomLogBody"><tr><td colspan="4" class="text-secondary">暂无数据</td></tr></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </main>
+      </div>
+    </div>
+
+    <script>
+      window.currentUser = {
+        username: {{ session.username|tojson }},
+        role: {{ session.role|tojson }}
+      };
+    </script>
+    <script src="{{ url_for('static', filename='theme.js') }}"></script>
+    <script src="https://cdn.bootcdn.net/ajax/libs/bootstrap/5.3.2/js/bootstrap.bundle.min.js"></script>
+    <script src="{{ url_for('static', filename='boom_prediction.js') }}"></script>
+  </body>
+</html>
