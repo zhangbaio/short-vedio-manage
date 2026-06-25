@@ -103,9 +103,10 @@ def run_metrics_refresh(c, genres, limit, lookback_days=14):
     today = db.today()
     cutoff = _cutoff(lookback_days)
     placeholders = ",".join("?" for _ in genres) if genres else "''"
+    # 优先补"尚未采到收藏(fav_t0=0)"的当日新剧, 确保早期收藏信号尽快可用（优化②）。
     rows = c.execute(
         "SELECT series_id FROM hg_new_cohort WHERE t0>=? AND genre IN (" + placeholders + ") "
-        "ORDER BY t0 DESC, series_id DESC LIMIT ?",
+        "ORDER BY (CASE WHEN COALESCE(fav_t0,0)=0 THEN 0 ELSE 1 END), t0 DESC, series_id DESC LIMIT ?",
         [cutoff, *genres, db.clamp_int(limit, 1, 500, 80)]).fetchall()
     H = _H()
     refreshed = 0

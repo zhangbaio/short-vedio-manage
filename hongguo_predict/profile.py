@@ -188,7 +188,8 @@ def group_cap(group: str) -> int:
 
 
 def metric_cap(key: str) -> int:
-    return {"favorite": 36, "play": 8, "hot": 8}.get(key, 0)
+    # play/hot 提高封顶以承载对数缩放后的真实量级（旧值 8 把百万级播放压成噪声）
+    return {"favorite": 36, "play": 20, "hot": 12}.get(key, 0)
 
 
 def level_of(score: int) -> str:
@@ -312,23 +313,21 @@ def metric_signals(candidate: ProfileCandidate):
     if breakdown["favorite"] > metric_cap("favorite"):
         breakdown["favorite"] = metric_cap("favorite")
 
-    if candidate.play_cnt >= 1040:
-        breakdown["play"] = 6
-        reasons.append("play_signal")
-    elif candidate.play_cnt >= 1020:
-        breakdown["play"] = 4
-        reasons.append("play_signal")
-    elif candidate.play_cnt >= 1000:
-        breakdown["play"] = 2
-
-    if candidate.hot_value >= 10000:
-        breakdown["hot"] = 8
-        reasons.append("hot_signal")
-    elif candidate.hot_value >= 5000:
-        breakdown["hot"] = 5
-        reasons.append("hot_signal")
-    elif candidate.hot_value > 0:
-        breakdown["hot"] = 2
+    # 播放: 对数缩放覆盖 1e3~1e7+ 量级。旧版固定阈值 1000/1020/1040、封顶 6 分,
+    # 对真实百万级播放完全失真（14M 播放与 1040 播放同分）。
+    if candidate.play_cnt > 1000:
+        pts = int(round(math.log10(candidate.play_cnt / 1000.0) * 5))
+        pts = max(0, min(pts, metric_cap("play")))
+        if pts > 0:
+            breakdown["play"] = pts
+            reasons.append("play_signal")
+    # 热度: 同样对数缩放（覆盖 1e3~1e6+）
+    if candidate.hot_value > 1000:
+        pts = int(round(math.log10(candidate.hot_value / 1000.0) * 4))
+        pts = max(0, min(pts, metric_cap("hot")))
+        if pts > 0:
+            breakdown["hot"] = pts
+            reasons.append("hot_signal")
     return breakdown, reasons
 
 

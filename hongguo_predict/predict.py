@@ -10,11 +10,16 @@ from .profile import ProfileCandidate, level_of, score_profile_candidate
 SOURCE = "hgnew"
 HISTORY_DAYS = 15
 HIT_TOP = 20
+# 滚动复评窗口（优化③'）: 对最近 N 天上新的剧持续复评, 用当前累计指标评分,
+# 以抓住"上新后数天指标才 materialize"的晚熟爆款（仅评分上新当天会漏掉它们）。
+LOOKBACK_DAYS = 7
 
 
-def _today_candidates(c, genre):
-    """今日上新候选: cohort 中 t0=今日的该体裁剧, 跨快照聚合当前指标。"""
+def _today_candidates(c, genre, lookback_days=LOOKBACK_DAYS):
+    """滚动候选: cohort 中 t0 在最近 lookback_days 天的该体裁剧, 跨快照聚合当前指标。
+    lookback_days=0 退化为仅今日。"""
     today = db.today()
+    cutoff = _date_offset(max(0, lookback_days))
     rows = c.execute(
         """SELECT c.series_id, c.title, c.cover, c.genre, c.category, c.intro, c.author, c.episode_cnt,
                   c.t0, c.fetched_at,
@@ -22,9 +27,9 @@ def _today_candidates(c, genre):
                   COALESCE(MAX(m.favorite), c.fav_t0, 0), COALESCE(MIN(NULLIF(m.best_rank,0)),0)
            FROM hg_new_cohort c
            LEFT JOIN hg_metric_snapshot m ON m.series_id=c.series_id AND m.source=c.source
-           WHERE c.source=? AND c.genre=? AND c.t0=?
+           WHERE c.source=? AND c.genre=? AND c.t0>=? AND c.t0<=?
            GROUP BY c.series_id""",
-        (SOURCE, genre, today)).fetchall()
+        (SOURCE, genre, cutoff, today)).fetchall()
     out = []
     for r in rows:
         out.append({
