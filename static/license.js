@@ -72,6 +72,7 @@ function bindLicenseEvents() {
   document.getElementById("batchDisableLicenseBtn").addEventListener("click", batchDisableLicenses);
   document.getElementById("batchDeleteLicenseBtn").addEventListener("click", batchDeleteLicenses);
   document.getElementById("batchRestoreLicenseBtn").addEventListener("click", batchRestoreLicenses);
+  document.getElementById("clearAllLicensesBtn").addEventListener("click", clearAllLicenses);
   document.querySelector("#licenseTableBody")?.closest("table")?.querySelector("thead")?.addEventListener("click", handleLicenseSortClick);
 }
 
@@ -550,6 +551,32 @@ async function batchRestoreLicenses() {
     });
     showToast(result?.message || "批量恢复成功", "success");
     await loadLicenses({ preserveSelection: true });
+  } catch (error) {
+    showToast(error.message, "danger");
+  }
+}
+
+async function clearAllLicenses() {
+  if (!confirm("确定清空所有授权码吗？这会永久删除全部授权码和设备绑定记录，无法在页面中恢复。")) return;
+  const confirmText = prompt('请输入 CLEAR_ALL_LICENSES 确认清空所有授权码：');
+  if (confirmText !== "CLEAR_ALL_LICENSES") {
+    showToast("确认文本不匹配，已取消清空", "warning");
+    return;
+  }
+
+  try {
+    const result = await requestJSON("/api/licenses/clear-all", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ confirm: "CLEAR_ALL_LICENSES" }),
+    });
+    showToast(result?.message || "已清空所有授权码", "success");
+    currentLicenseId = null;
+    currentLicenseSecret = "";
+    licenseState.page = 1;
+    resetSelection();
+    clearLicenseActivations();
+    await loadLicenses();
   } catch (error) {
     showToast(error.message, "danger");
   }

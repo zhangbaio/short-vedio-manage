@@ -83,7 +83,7 @@ async function loadUsers() {
     tbody.innerHTML = "";
     if (mobileList) mobileList.innerHTML = "";
     if (!users.length) {
-      tbody.innerHTML = `<tr><td colspan="8" class="text-center text-muted py-4">${escapeHtml(userPageConfig.emptyText)}</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="9" class="text-center text-muted py-4">${escapeHtml(userPageConfig.emptyText)}</td></tr>`;
       renderMobileEmptyState(mobileList, userPageConfig.emptyText);
       return;
     }
@@ -95,8 +95,9 @@ async function loadUsers() {
       const actionButtons = buildUserActionButtons(user, isSelf);
       tr.innerHTML = `
         <td>${escapeHtml(user.username)}</td>
+        <td>${escapeHtml(user.full_name || "-")}</td>
         <td>${escapeHtml(user.email || "-")}</td>
-        <td>${escapeHtml(getUserRoleText(user))}</td>
+        <td>${buildUserRoleBadge(user)}</td>
         <td><span class="badge ${statusClass}">${statusText}</span> <span class="text-muted small">${escapeHtml(user.edition || "pro")}</span></td>
         <td>${Number(user.active_devices || 0)}/${Number(user.max_devices || 0)}</td>
         <td>${escapeHtml(user.expires_at || "永久")}</td>
@@ -116,6 +117,14 @@ function getUserRoleText(user) {
   return user.role === "admin" ? "管理员" : "普通用户";
 }
 
+function buildUserRoleBadge(user) {
+  if (userPageConfig.roleText) {
+    return `<span class="badge text-bg-primary">${escapeHtml(userPageConfig.roleText)}</span>`;
+  }
+  const isAdmin = user.role === "admin";
+  return `<span class="badge ${isAdmin ? "text-bg-primary" : "text-bg-secondary"}">${isAdmin ? "管理员" : "普通用户"}</span>`;
+}
+
 function buildUserActionButtons(user, isSelf) {
   return [
     `<button class="btn btn-sm btn-outline-secondary" data-action="edit-user" data-id="${user.id}">编辑</button>`,
@@ -133,9 +142,10 @@ function buildUserMobileCard(user, actionButtons, statusText, statusClass) {
       <div class="mobile-record-title">${escapeHtml(user.username)}</div>
       <span class="badge ${statusClass}">${statusText}</span>
     </div>
-    <div class="mobile-record-subtitle">${escapeHtml(user.email || "未填写邮箱")}</div>
+    <div class="mobile-record-subtitle">${escapeHtml([user.full_name, user.email].filter(Boolean).join(" · ") || "未填写姓名/邮箱")}</div>
     <div class="mobile-record-grid">
-      <div><span>角色</span><strong>${escapeHtml(getUserRoleText(user))}</strong></div>
+      <div><span>姓名</span><strong>${escapeHtml(user.full_name || "-")}</strong></div>
+      <div><span>角色</span><strong>${buildUserRoleBadge(user)}</strong></div>
       <div><span>授权</span><strong>${escapeHtml(user.edition || "pro")}</strong></div>
       <div><span>设备</span><strong>${Number(user.active_devices || 0)}/${Number(user.max_devices || 0)}</strong></div>
       <div><span>到期</span><strong>${escapeHtml(user.expires_at || "永久")}</strong></div>
@@ -154,6 +164,7 @@ function showUserEditor(user = null) {
   document.getElementById("userEditorTitle").textContent = editingUserId ? userPageConfig.editTitle : userPageConfig.addTitle;
   document.getElementById("createUserBtn").textContent = editingUserId ? "保存修改" : "保存";
   document.getElementById("userNameInput").value = user?.username || "";
+  document.getElementById("userFullNameInput").value = user?.full_name || "";
   document.getElementById("userEmailInput").value = user?.email || "";
   document.getElementById("userPasswordInput").value = "";
   document.getElementById("userPasswordInput").disabled = Boolean(editingUserId);
@@ -210,11 +221,13 @@ function generateReadablePassword() {
 
 async function saveUser() {
   const usernameInput = document.getElementById("userNameInput");
+  const fullNameInput = document.getElementById("userFullNameInput");
   const emailInput = document.getElementById("userEmailInput");
   const passwordInput = document.getElementById("userPasswordInput");
   const maxDevicesInput = document.getElementById("userMaxDevicesInput");
   const payload = {
     username: usernameInput.value.trim(),
+    full_name: fullNameInput.value.trim(),
     email: emailInput.value.trim(),
     password: passwordInput.value.trim(),
     role: document.getElementById("userRoleInput").value,
@@ -229,6 +242,10 @@ async function saveUser() {
   if (!validateField(usernameInput, () => /^(?:[A-Za-z0-9_]{2,30}|[^@\s]+@[^@\s]+\.[^@\s]+)$/.test(payload.username))) {
     isValid = false;
     firstInvalid = firstInvalid || usernameInput;
+  }
+  if (!validateField(fullNameInput, () => payload.full_name.length <= 80)) {
+    isValid = false;
+    firstInvalid = firstInvalid || fullNameInput;
   }
   if (!validateField(emailInput, () => !payload.email || /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(payload.email))) {
     isValid = false;
@@ -320,6 +337,7 @@ async function resetUserPassword() {
 function resetUserForm() {
   editingUserId = null;
   document.getElementById("userNameInput").value = "";
+  document.getElementById("userFullNameInput").value = "";
   document.getElementById("userEmailInput").value = "";
   document.getElementById("userPasswordInput").value = "";
   document.getElementById("userPasswordInput").disabled = false;

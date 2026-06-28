@@ -108,6 +108,7 @@
                   <thead>
                     <tr>
                       <th>用户名</th>
+                      <th>姓名</th>
                       <th>邮箱</th>
                       <th>{{ '类型' if is_tt_users else '角色' }}</th>
                       <th>授权</th>
@@ -141,6 +142,11 @@
                   <label class="form-label" for="userNameInput">用户名</label>
                   <input type="text" class="form-control" id="userNameInput" autocomplete="off" />
                   <div class="invalid-feedback">用户名不能为空，2-30位字母数字下划线</div>
+                </div>
+                <div class="col-lg-6">
+                  <label class="form-label" for="userFullNameInput">姓名</label>
+                  <input type="text" class="form-control" id="userFullNameInput" maxlength="80" autocomplete="off" />
+                  <div class="invalid-feedback">姓名最多80个字符</div>
                 </div>
                 <div class="col-lg-6">
                   <label class="form-label" for="userEmailInput">邮箱</label>

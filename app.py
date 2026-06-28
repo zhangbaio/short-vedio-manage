@@ -269,6 +269,7 @@ def init_db() -> None:
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 username TEXT UNIQUE NOT NULL,
+                full_name TEXT,
                 email TEXT,
                 password_hash TEXT NOT NULL,
                 role TEXT NOT NULL DEFAULT 'user',
@@ -283,6 +284,7 @@ def init_db() -> None:
             CREATE TABLE IF NOT EXISTS tt_users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 username TEXT UNIQUE NOT NULL,
+                full_name TEXT,
                 email TEXT,
                 password_hash TEXT NOT NULL,
                 status TEXT NOT NULL DEFAULT 'active',
@@ -571,12 +573,14 @@ def init_db() -> None:
             "ALTER TABLE dramas ADD COLUMN remark3 TEXT DEFAULT NULL",
             "ALTER TABLE licenses ADD COLUMN deleted_at TEXT DEFAULT NULL",
             "ALTER TABLE licenses ADD COLUMN deleted_by INTEGER DEFAULT NULL",
+            "ALTER TABLE users ADD COLUMN full_name TEXT DEFAULT NULL",
             "ALTER TABLE users ADD COLUMN email TEXT DEFAULT NULL",
             "ALTER TABLE users ADD COLUMN status TEXT NOT NULL DEFAULT 'active'",
             "ALTER TABLE users ADD COLUMN max_devices INTEGER NOT NULL DEFAULT 1",
             "ALTER TABLE users ADD COLUMN edition TEXT NOT NULL DEFAULT 'pro'",
             "ALTER TABLE users ADD COLUMN expires_at TEXT DEFAULT NULL",
             "ALTER TABLE users ADD COLUMN updated_at TEXT DEFAULT NULL",
+            "ALTER TABLE tt_users ADD COLUMN full_name TEXT DEFAULT NULL",
             "ALTER TABLE upload_records ADD COLUMN audit_reject_reason TEXT DEFAULT NULL",
             "ALTER TABLE upload_records ADD COLUMN audit_reject_detail TEXT DEFAULT NULL",
             "ALTER TABLE upload_records ADD COLUMN online_status TEXT DEFAULT NULL",
@@ -4480,6 +4484,7 @@ def import_excel():
 
 def sanitize_user_payload(data: dict, *, require_password: bool = False) -> tuple[dict, str | None]:
     username = str(data.get("username") or "").strip()
+    full_name = str(data.get("full_name") or data.get("name") or "").strip()
     email = normalize_email(str(data.get("email") or ""))
     password = str(data.get("password") or "")
     role = str(data.get("role") or "user").strip().lower()
@@ -4492,6 +4497,8 @@ def sanitize_user_payload(data: dict, *, require_password: bool = False) -> tupl
         return {}, "最大设备数必须是正整数"
     if not USERNAME_RE.match(username):
         return {}, "用户名需为 2-30 位字母数字下划线，或使用邮箱格式"
+    if len(full_name) > 80:
+        return {}, "姓名最多80个字符"
     if require_password and len(password) < 6:
         return {}, "密码至少6位"
     if email and not EMAIL_RE.match(email):
@@ -4511,6 +4518,7 @@ def sanitize_user_payload(data: dict, *, require_password: bool = False) -> tupl
             return {}, "到期时间格式不正确"
     return {
         "username": username,
+        "full_name": full_name or None,
         "email": email,
         "password": password,
         "role": role,
@@ -4537,13 +4545,13 @@ def list_users():
     rows = db.execute(
         """
         SELECT
-            u.id, u.username, u.email, u.role, u.status, u.max_devices,
+            u.id, u.username, u.full_name, u.email, u.role, u.status, u.max_devices,
             u.edition, u.expires_at, u.created_at,
             (SELECT COUNT(*) FROM user_devices d WHERE d.user_id = u.id AND (d.revoked_at IS NULL OR d.revoked_at = '')) AS active_devices,
             (SELECT COUNT(*) FROM user_devices d WHERE d.user_id = u.id) AS total_devices,
             (SELECT COALESCE(MAX(d.last_verified_at), '') FROM user_devices d WHERE d.user_id = u.id) AS last_verified_at
         FROM users u
-        ORDER BY u.created_at DESC
+        ORDER BY CASE WHEN u.role = 'admin' THEN 0 ELSE 1 END, u.created_at DESC, u.id DESC
         """
     ).fetchall()
     return jsonify([dict(row) for row in rows])
@@ -4562,12 +4570,13 @@ def create_user():
         db.execute(
             """
             INSERT INTO users (
-                username, email, password_hash, role, status,
+                username, full_name, email, password_hash, role, status,
                 max_devices, edition, expires_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             """,
             (
                 payload["username"],
+                payload["full_name"],
                 payload["email"] or None,
                 generate_password_hash(payload["password"]),
                 payload["role"],
@@ -4601,12 +4610,13 @@ def update_user(user_id: int):
         result = db.execute(
             """
             UPDATE users
-            SET username = ?, email = ?, role = ?, status = ?, max_devices = ?,
+            SET username = ?, full_name = ?, email = ?, role = ?, status = ?, max_devices = ?,
                 edition = ?, expires_at = ?, updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
             """,
             (
                 payload["username"],
+                payload["full_name"],
                 payload["email"] or None,
                 payload["role"],
                 payload["status"],
@@ -4630,7 +4640,7 @@ def update_user(user_id: int):
 def list_user_devices(user_id: int):
     db = get_db()
     user = db.execute(
-        "SELECT id, username, email, status, max_devices, edition, expires_at FROM users WHERE id = ?",
+        "SELECT id, username, full_name, email, status, max_devices, edition, expires_at FROM users WHERE id = ?",
         (user_id,),
     ).fetchone()
     if not user:
@@ -4707,7 +4717,7 @@ def list_tt_users():
     rows = db.execute(
         """
         SELECT
-            u.id, u.username, u.email, 'tt_user' AS role, u.status, u.max_devices,
+            u.id, u.username, u.full_name, u.email, 'tt_user' AS role, u.status, u.max_devices,
             u.edition, u.expires_at, u.created_at,
             (SELECT COUNT(*) FROM tt_user_devices d WHERE d.tt_user_id = u.id AND (d.revoked_at IS NULL OR d.revoked_at = '')) AS active_devices,
             (SELECT COUNT(*) FROM tt_user_devices d WHERE d.tt_user_id = u.id) AS total_devices,
@@ -4732,12 +4742,13 @@ def create_tt_user():
         db.execute(
             """
             INSERT INTO tt_users (
-                username, email, password_hash, status,
+                username, full_name, email, password_hash, status,
                 max_devices, edition, expires_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             """,
             (
                 payload["username"],
+                payload["full_name"],
                 payload["email"] or None,
                 generate_password_hash(payload["password"]),
                 payload["status"],
@@ -4765,12 +4776,13 @@ def update_tt_user(user_id: int):
         result = db.execute(
             """
             UPDATE tt_users
-            SET username = ?, email = ?, status = ?, max_devices = ?,
+            SET username = ?, full_name = ?, email = ?, status = ?, max_devices = ?,
                 edition = ?, expires_at = ?, updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
             """,
             (
                 payload["username"],
+                payload["full_name"],
                 payload["email"] or None,
                 payload["status"],
                 payload["max_devices"],
@@ -4793,7 +4805,7 @@ def update_tt_user(user_id: int):
 def list_tt_user_devices(user_id: int):
     db = get_db()
     user = db.execute(
-        "SELECT id, username, email, status, max_devices, edition, expires_at FROM tt_users WHERE id = ?",
+        "SELECT id, username, full_name, email, status, max_devices, edition, expires_at FROM tt_users WHERE id = ?",
         (user_id,),
     ).fetchone()
     if not user:
@@ -5267,6 +5279,29 @@ def batch_delete_licenses():
 
     db.commit()
     return jsonify({"message": f"已删除 {len(rows)} 条授权码"})
+
+
+@app.route("/api/licenses/clear-all", methods=["POST"])
+@login_required
+@admin_required
+def clear_all_licenses():
+    data = request.get_json(silent=True) or {}
+    if str(data.get("confirm") or "").strip() != "CLEAR_ALL_LICENSES":
+        return jsonify({"error": "确认文本不匹配，已取消清空"}), 400
+
+    db = get_db()
+    license_count = int(db.execute("SELECT COUNT(*) FROM licenses").fetchone()[0] or 0)
+    activation_count = int(db.execute("SELECT COUNT(*) FROM license_activations").fetchone()[0] or 0)
+    db.execute("DELETE FROM license_activations")
+    db.execute("DELETE FROM licenses")
+    db.commit()
+    return jsonify(
+        {
+            "message": f"已清空 {license_count} 条授权码和 {activation_count} 条设备绑定记录",
+            "deleted_licenses": license_count,
+            "deleted_activations": activation_count,
+        }
+    )
 
 
 @app.route("/api/licenses/<int:license_id>/restore", methods=["POST"])
