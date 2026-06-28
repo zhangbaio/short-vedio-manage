@@ -20,6 +20,10 @@
       <span class="app-nav-icon"><i class="bi bi-lightning-charge" aria-hidden="true"></i></span>
       <span>快手短剧管理</span>
     </a>
+    <a class="app-nav-link {% if active_page == 'tt_dramas' %}active{% endif %}" href="{{ url_for('tt_dramas_page') }}">
+      <span class="app-nav-icon"><i class="bi bi-play-circle" aria-hidden="true"></i></span>
+      <span>TT短剧管理</span>
+    </a>
     {% if session.role == 'admin' %}
     <a class="app-nav-link {% if active_page == 'monitor' %}active{% endif %}" href="{{ url_for('monitor_dashboard') }}">
       <span class="app-nav-icon"><i class="bi bi-graph-up-arrow" aria-hidden="true"></i></span>

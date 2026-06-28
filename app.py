@@ -130,11 +130,12 @@ KUAISHOU_REFRESH_TOKEN_RENEW_MARGIN_SECONDS = 7 * 24 * 60 * 60
 KUAISHOU_TOKEN_REFRESH_LOCK_SECONDS = 60
 KUAISHOU_TOKEN_REFRESH_SCHEDULER_INTERVAL_SECONDS = _int_env('KUAISHOU_TOKEN_REFRESH_SCHEDULER_INTERVAL_SECONDS', 60 * 60)
 KUAISHOU_TOKEN_REFRESH_STARTUP_DELAY_SECONDS = _int_env('KUAISHOU_TOKEN_REFRESH_STARTUP_DELAY_SECONDS', 10)
-UPLOAD_RECORD_PLATFORMS = {"video_channel", "miniprogram", "kuaishou"}
+UPLOAD_RECORD_PLATFORMS = {"video_channel", "miniprogram", "kuaishou", "tt"}
 UPLOAD_RECORD_PLATFORM_LABELS = {
     "video_channel": "微信视频号",
     "miniprogram": "微信小程序",
     "kuaishou": "快手",
+    "tt": "TikTok",
 }
 PLATFORM_DRAMA_SORTABLE_FIELDS = {
     "date": "COALESCE(ur.date, substr(ur.record_time, 1, 10), d.date, '')",
@@ -2021,6 +2022,8 @@ def normalize_upload_record_platform(value: object) -> str:
         "mini": "miniprogram",
         "ks": "kuaishou",
         "kwai": "kuaishou",
+        "tiktok": "tt",
+        "tt_drama": "tt",
     }
     return aliases.get(normalized, normalized)
 
@@ -2108,7 +2111,7 @@ def sanitize_upload_record_payload(data: dict[str, Any]) -> tuple[dict[str, Any]
     merged = {**raw, **data}
     platform = normalize_upload_record_platform(merged.get("platform"))
     if platform not in UPLOAD_RECORD_PLATFORMS:
-        return {}, "platform 仅支持 video_channel / miniprogram / kuaishou"
+        return {}, "platform 仅支持 video_channel / miniprogram / kuaishou / tt"
 
     payload: dict[str, Any] = {
         "platform": platform,
@@ -3017,6 +3020,12 @@ def miniprogram_dramas_page():
 @login_required
 def kuaishou_dramas_page():
     return render_template("kuaishou_dramas.html")
+
+
+@app.route("/dramas/tt")
+@login_required
+def tt_dramas_page():
+    return render_template("tt_dramas.html")
 
 
 @app.route("/monitor")
@@ -4135,7 +4144,7 @@ def list_platform_dramas():
     role = str(session.get("role") or "user").strip().lower()
     platform = normalize_upload_record_platform(request.args.get("platform") or "video_channel")
     if platform not in UPLOAD_RECORD_PLATFORMS:
-        return jsonify({"error": "platform 仅支持 video_channel / miniprogram / kuaishou"}), 400
+        return jsonify({"error": "platform 仅支持 video_channel / miniprogram / kuaishou / tt"}), 400
 
     page = max(1, int(request.args.get("page", 1) or 1))
     page_size = min(100, max(1, int(request.args.get("page_size", 20) or 20)))
