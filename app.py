@@ -2153,6 +2153,9 @@ def _authenticate_tt_account_from_request(db: sqlite3.Connection) -> sqlite3.Row
     ).fetchone()
     if not user_row:
         return None
+    ok, _account_error = ensure_tt_account_can_login(user_row)
+    if not ok:
+        return None
     if account and account not in {user_row["username"], user_row["email"] or ""}:
         return None
     device_row = db.execute(
@@ -3158,7 +3161,7 @@ def login():
         # 普通用户未命中：尝试 TT 账号（tt_users），权限等同普通用户。
         tt_user = db.execute(
             """
-            SELECT id, username, password_hash, status
+            SELECT id, username, password_hash, status, expires_at
             FROM tt_users
             WHERE username = ? OR lower(COALESCE(email, '')) = lower(?)
             """,
@@ -3169,6 +3172,10 @@ def login():
             and str(tt_user["status"] or "active").strip().lower() == "active"
             and check_password_hash(tt_user["password_hash"], password)
         ):
+            ok, account_error = ensure_tt_account_can_login(tt_user)
+            if not ok:
+                error = account_error
+                return render_template("login.html", error=error)
             session.clear()
             session["user_id"] = tt_user["id"]
             session["username"] = tt_user["username"]
