@@ -1,6 +1,6 @@
 (() => {
   const PLATFORM = "tt";
-  const EMPTY_COLSPAN = 16;
+  const EMPTY_COLSPAN = 13;
   const state = {
     page: 1,
     pageSize: 20,
@@ -174,10 +174,7 @@
         <td>${escapeHtml(item.audit_status || "-")}</td>
         <td class="text-truncate" style="max-width: 260px">${escapeHtml(item.audit_reject_detail || item.audit_reject_reason || "-")}</td>
         <td>${statusTextBadge(item.online_status)}</td>
-        <td>${escapeHtml(item.selling_status || "-")}</td>
-        <td>${statusTextBadge(item.distribution_status)}</td>
         <td>${escapeHtml(item.uploader_display || item.account_profile_name || item.drama_uploader || "-")}</td>
-        <td>${escapeHtml(item.company || "-")}</td>
       `;
       tbody.appendChild(tr);
 
@@ -195,7 +192,6 @@
           <div><span>用户</span><strong>${escapeHtml(item.owner_username || "-")}</strong></div>
           <div><span>TT ID</span><strong>${escapeHtml(item.series_id || item.mini_series_id || "-")}</strong></div>
           <div><span>上架</span><strong>${escapeHtml(item.online_status || "-")}</strong></div>
-          <div><span>分销</span><strong>${escapeHtml(item.distribution_status || "-")}</strong></div>
           <div><span>审核原因</span><strong>${escapeHtml(item.audit_reject_detail || item.audit_reject_reason || "-")}</strong></div>
         </div>
       `;
@@ -233,7 +229,7 @@
   }
 
   function downloadCsv(filename, rows) {
-    const header = ["记录时间", "用户", "原剧名", "新剧名", "集数", "上传进度", "上传状态", "TT剧集ID", "审核状态", "审核未通过原因", "上架状态", "售卖状态", "分销状态", "上传者", "公司"];
+    const header = ["记录时间", "用户", "原剧名", "新剧名", "集数", "上传进度", "上传状态", "TT剧集ID", "审核状态", "审核未通过原因", "上架状态", "上传者"];
     const body = rows.map((item) => [
       item.record_time || item.date || "",
       item.owner_username || "",
@@ -246,10 +242,7 @@
       item.audit_status || "",
       item.audit_reject_detail || item.audit_reject_reason || "",
       item.online_status || "",
-      item.selling_status || "",
-      item.distribution_status || "",
       item.uploader_display || item.account_profile_name || item.drama_uploader || "",
-      item.company || "",
     ]);
     const csv = [header, ...body].map((row) => row.map(csvCell).join(",")).join("\r\n");
     const blob = new Blob([`﻿${csv}`], { type: "text/csv;charset=utf-8" });
