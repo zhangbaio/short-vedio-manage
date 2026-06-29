@@ -4266,6 +4266,44 @@ def client_sync_upload_records():
     )
 
 
+@app.route("/client-api/upload-records/check-duplicates", methods=["POST"])
+def client_check_upload_duplicates():
+    """按原剧名查重：返回当前归属(TT 账号或远程客户端归属用户)已存在的原剧名列表。"""
+    db, client_row = require_remote_client()
+    if client_row is not None:
+        owner_field, owner_id = "owner_user_id", int(client_row["owner_user_id"])
+    else:
+        tt_user_row = _authenticate_tt_account_from_request(db)
+        if tt_user_row is None:
+            return jsonify({"ok": False, "message": "鉴权失败：client_id/client_token 或 TT 登录态无效"}), 401
+        owner_field, owner_id = "owner_tt_user_id", int(tt_user_row["id"])
+
+    data = request.get_json(silent=True) or {}
+    raw_names = data.get("original_names")
+    if not isinstance(raw_names, list):
+        return jsonify({"ok": False, "message": "original_names 必须是数组"}), 400
+    platform = normalize_upload_record_platform(data.get("platform") or "tt")
+
+    seen: set[str] = set()
+    names: list[str] = []
+    for n in raw_names:
+        s = str(n or "").strip()
+        if s and s not in seen:
+            seen.add(s)
+            names.append(s)
+    if not names:
+        return jsonify({"ok": True, "data": {"duplicates": []}})
+
+    placeholders = ",".join(["?"] * len(names))
+    rows = db.execute(
+        f"SELECT DISTINCT original_name FROM upload_records "
+        f"WHERE {owner_field} = ? AND platform = ? AND original_name IN ({placeholders})",
+        [owner_id, platform, *names],
+    ).fetchall()
+    duplicates = [str(r["original_name"]) for r in rows if r["original_name"]]
+    return jsonify({"ok": True, "data": {"duplicates": duplicates}})
+
+
 @app.route("/api/upload-records", methods=["GET"])
 @login_required
 @admin_required
