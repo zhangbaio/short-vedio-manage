@@ -261,6 +261,111 @@ def close_db(_: Exception | None = None) -> None:
 app.teardown_appcontext(close_db)
 
 
+def _migrate_upload_records_owner_tt(db: sqlite3.Connection) -> None:
+    """把旧的 upload_records 重建为支持 TT 账号归属的新结构。
+
+    旧结构：owner_user_id NOT NULL + 行内 UNIQUE(owner_user_id, platform, sync_key)，
+    无法承载 TT 账号（tt_users）的上传记录。新结构：owner_user_id 可空、新增
+    owner_tt_user_id，唯一性改由两个部分唯一索引承担（在建索引阶段创建）。
+    幂等：已是新结构则直接返回。
+    """
+    cols = {row["name"]: row for row in db.execute("PRAGMA table_info(upload_records)").fetchall()}
+    if not cols:
+        return  # 表尚未创建（全新库由 CREATE TABLE 直接建成新结构）
+    owner = cols.get("owner_user_id")
+    needs_rebuild = ("owner_tt_user_id" not in cols) or bool(owner and owner["notnull"])
+    if not needs_rebuild:
+        return
+    legacy_columns = list(cols.keys())  # 旧表所有列都存在于新表
+    column_list = ", ".join(legacy_columns)
+    db.commit()  # 结束任何隐式事务，PRAGMA foreign_keys 才能切换
+    db.execute("PRAGMA foreign_keys = OFF")
+    try:
+        db.execute("BEGIN")
+        db.execute(
+            """
+            CREATE TABLE upload_records__new (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                owner_user_id INTEGER,
+                owner_tt_user_id INTEGER,
+                owner_username TEXT,
+                remote_client_id INTEGER,
+                drama_id INTEGER,
+                platform TEXT NOT NULL,
+                platform_label TEXT,
+                sync_key TEXT NOT NULL,
+                record_time TEXT,
+                date TEXT,
+                upload_status TEXT,
+                execution_mode TEXT,
+                step_label TEXT,
+                project_name TEXT,
+                project_path TEXT,
+                original_name TEXT,
+                new_name TEXT,
+                episodes INTEGER,
+                video_file_count INTEGER,
+                uploaded_video_count INTEGER,
+                uploader_display TEXT,
+                account_profile_id TEXT,
+                account_profile_name TEXT,
+                device_name TEXT,
+                failure_reason TEXT,
+                extra_info TEXT,
+                series_id TEXT,
+                mini_series_id TEXT,
+                audit_status TEXT,
+                selling_status TEXT,
+                audit_reject_reason TEXT,
+                audit_reject_detail TEXT,
+                online_status TEXT,
+                online_at TEXT,
+                distribution_status TEXT,
+                distribution_at TEXT,
+                distribution_detail TEXT,
+                submitted_at TEXT,
+                raw_json TEXT,
+                created_at TEXT,
+                updated_at TEXT,
+                FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE CASCADE,
+                FOREIGN KEY (owner_tt_user_id) REFERENCES tt_users(id) ON DELETE CASCADE,
+                FOREIGN KEY (remote_client_id) REFERENCES remote_clients(id) ON DELETE SET NULL,
+                FOREIGN KEY (drama_id) REFERENCES dramas(id) ON DELETE SET NULL,
+                CHECK (owner_user_id IS NOT NULL OR owner_tt_user_id IS NOT NULL)
+            )
+            """
+        )
+        db.execute(
+            f"INSERT INTO upload_records__new ({column_list}) SELECT {column_list} FROM upload_records"
+        )
+        db.execute("DROP TABLE upload_records")
+        db.execute("ALTER TABLE upload_records__new RENAME TO upload_records")
+        db.execute("COMMIT")
+    except Exception:
+        db.execute("ROLLBACK")
+        raise
+    finally:
+        db.execute("PRAGMA foreign_keys = ON")
+
+
+def _owner_visibility_filter(alias: str = "ur") -> tuple[str | None, list]:
+    """按当前登录账号类型返回上传记录归属过滤 (sql, params)。
+
+    - TT 账号(session.user_type == 'tt')：按 owner_tt_user_id 过滤（tt_users.id）。
+    - 普通非 admin 用户：按 owner_user_id 过滤（users.id）。
+    - admin：返回 (None, [])，由各接口自行处理可选的 user_id 过滤。
+    注意：tt_users.id 与 users.id 主键空间重叠，务必按类型选列，避免串号。
+    """
+    user_id = int(session.get("user_id") or 0)
+    role = str(session.get("role") or "user").strip().lower()
+    user_type = str(session.get("user_type") or "normal").strip().lower()
+    if user_type == "tt":
+        return f"{alias}.owner_tt_user_id = ?", [user_id]
+    if role != "admin":
+        return f"{alias}.owner_user_id = ?", [user_id]
+    return None, []
+
+
 def init_db() -> None:
     ensure_data_dir()
     with app.app_context():
@@ -493,7 +598,8 @@ def init_db() -> None:
 
             CREATE TABLE IF NOT EXISTS upload_records (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                owner_user_id INTEGER NOT NULL,
+                owner_user_id INTEGER,
+                owner_tt_user_id INTEGER,
                 owner_username TEXT,
                 remote_client_id INTEGER,
                 drama_id INTEGER,
@@ -534,9 +640,10 @@ def init_db() -> None:
                 created_at TEXT,
                 updated_at TEXT,
                 FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE CASCADE,
+                FOREIGN KEY (owner_tt_user_id) REFERENCES tt_users(id) ON DELETE CASCADE,
                 FOREIGN KEY (remote_client_id) REFERENCES remote_clients(id) ON DELETE SET NULL,
                 FOREIGN KEY (drama_id) REFERENCES dramas(id) ON DELETE SET NULL,
-                UNIQUE(owner_user_id, platform, sync_key)
+                CHECK (owner_user_id IS NOT NULL OR owner_tt_user_id IS NOT NULL)
             );
 
             CREATE TABLE IF NOT EXISTS drama_platform_status (
@@ -598,6 +705,7 @@ def init_db() -> None:
                 db.commit()
             except Exception:
                 pass
+        _migrate_upload_records_owner_tt(db)
         db.execute(
             "CREATE INDEX IF NOT EXISTS idx_license_activations_license_id ON license_activations(license_id)"
         )
@@ -660,6 +768,18 @@ def init_db() -> None:
         )
         db.execute(
             "CREATE INDEX IF NOT EXISTS idx_upload_records_owner_user_id ON upload_records(owner_user_id)"
+        )
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_upload_records_owner_tt_user_id ON upload_records(owner_tt_user_id)"
+        )
+        # 归属去重：普通用户与 TT 用户各用一个部分唯一索引（替代旧的行内 UNIQUE）。
+        db.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_upload_records_owner_sync "
+            "ON upload_records(owner_user_id, platform, sync_key) WHERE owner_user_id IS NOT NULL"
+        )
+        db.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_upload_records_owner_tt_sync "
+            "ON upload_records(owner_tt_user_id, platform, sync_key) WHERE owner_tt_user_id IS NOT NULL"
         )
         db.execute(
             "CREATE INDEX IF NOT EXISTS idx_upload_records_platform ON upload_records(platform)"
@@ -2009,6 +2129,44 @@ def require_remote_client() -> tuple[sqlite3.Connection, sqlite3.Row] | tuple[sq
     return db, row
 
 
+def _authenticate_tt_account_from_request(db: sqlite3.Connection) -> sqlite3.Row | None:
+    """用 TT 登录态（X-TT-Account / X-TT-Machine-Id / X-TT-Token 或同名 body 字段）鉴权。
+
+    校验 token 签名、machine_id 一致、tt_users 存在、tt_user_devices 设备有效且 token 哈希匹配。
+    成功返回 tt_users 行，否则返回 None。
+    """
+    data = request.get_json(silent=True) or {}
+    token = str(request.headers.get("X-TT-Token") or data.get("tt_token") or "").strip()
+    machine_id = str(request.headers.get("X-TT-Machine-Id") or data.get("tt_machine_id") or "").strip()
+    account = str(request.headers.get("X-TT-Account") or data.get("tt_account") or "").strip()
+    if not token or not machine_id:
+        return None
+    try:
+        token_payload = verify_tt_account_token(token)
+    except ValueError:
+        return None
+    if str(token_payload.get("machine_id") or "") != machine_id:
+        return None
+    user_row = db.execute(
+        "SELECT * FROM tt_users WHERE id = ?",
+        (token_payload.get("tt_user_id"),),
+    ).fetchone()
+    if not user_row:
+        return None
+    if account and account not in {user_row["username"], user_row["email"] or ""}:
+        return None
+    device_row = db.execute(
+        """
+        SELECT * FROM tt_user_devices
+        WHERE tt_user_id = ? AND machine_id = ? AND (revoked_at IS NULL OR revoked_at = '')
+        """,
+        (user_row["id"], machine_id),
+    ).fetchone()
+    if not device_row or device_row["token_hash"] != hash_token(token):
+        return None
+    return user_row
+
+
 def normalize_upload_record_platform(value: object) -> str:
     normalized = str(value or "").strip().lower()
     aliases = {
@@ -2162,7 +2320,8 @@ def sanitize_upload_record_payload(data: dict[str, Any]) -> tuple[dict[str, Any]
 def upsert_upload_record(
     db: sqlite3.Connection,
     *,
-    owner_user_id: int,
+    owner_user_id: int | None = None,
+    owner_tt_user_id: int | None = None,
     owner_username: str,
     remote_client_id: int | None,
     data: dict[str, Any],
@@ -2170,23 +2329,31 @@ def upsert_upload_record(
     payload, error = sanitize_upload_record_payload(data)
     if error:
         return None, error, False
-    payload["owner_user_id"] = int(owner_user_id)
+    payload["owner_user_id"] = int(owner_user_id) if owner_user_id else None
+    payload["owner_tt_user_id"] = int(owner_tt_user_id) if owner_tt_user_id else None
     payload["owner_username"] = str(owner_username or "").strip()
     payload["remote_client_id"] = remote_client_id
     payload["drama_id"] = _find_upload_record_drama_id(db, payload)
 
     now = now_iso()
-    existing = db.execute(
-        "SELECT id FROM upload_records WHERE owner_user_id = ? AND platform = ? AND sync_key = ?",
-        (payload["owner_user_id"], payload["platform"], payload["sync_key"]),
-    ).fetchone()
+    # 按归属维度判断 insert/update：TT 记录用 owner_tt_user_id，普通记录用 owner_user_id。
+    if payload["owner_tt_user_id"]:
+        existing = db.execute(
+            "SELECT id FROM upload_records WHERE owner_tt_user_id = ? AND platform = ? AND sync_key = ?",
+            (payload["owner_tt_user_id"], payload["platform"], payload["sync_key"]),
+        ).fetchone()
+    else:
+        existing = db.execute(
+            "SELECT id FROM upload_records WHERE owner_user_id = ? AND platform = ? AND sync_key = ?",
+            (payload["owner_user_id"], payload["platform"], payload["sync_key"]),
+        ).fetchone()
     payload["updated_at"] = now
     if existing:
         payload["id"] = int(existing["id"])
         set_columns = [
             key
             for key in payload.keys()
-            if key not in {"id", "owner_user_id", "platform", "sync_key"}
+            if key not in {"id", "owner_user_id", "owner_tt_user_id", "platform", "sync_key"}
         ]
         set_clause = ", ".join(f"{key} = :{key}" for key in set_columns)
         db.execute(
@@ -2986,6 +3153,27 @@ def login():
             session["user_id"] = user["id"]
             session["username"] = user["username"]
             session["role"] = user["role"]
+            session["user_type"] = "normal"
+            return redirect(url_for("index"))
+        # 普通用户未命中：尝试 TT 账号（tt_users），权限等同普通用户。
+        tt_user = db.execute(
+            """
+            SELECT id, username, password_hash, status
+            FROM tt_users
+            WHERE username = ? OR lower(COALESCE(email, '')) = lower(?)
+            """,
+            (username, username),
+        ).fetchone()
+        if (
+            tt_user
+            and str(tt_user["status"] or "active").strip().lower() == "active"
+            and check_password_hash(tt_user["password_hash"], password)
+        ):
+            session.clear()
+            session["user_id"] = tt_user["id"]
+            session["username"] = tt_user["username"]
+            session["role"] = "user"
+            session["user_type"] = "tt"
             return redirect(url_for("index"))
         error = "用户名或密码错误"
     return render_template("login.html", error=error)
@@ -4006,8 +4194,12 @@ def set_upload_state(drama_id: int):
 @app.route("/client-api/upload-records/batch", methods=["POST"])
 def client_sync_upload_records():
     db, client_row = require_remote_client()
+    tt_user_row = None
     if client_row is None:
-        return jsonify({"ok": False, "message": "client_id 或 client_token 无效"}), 401
+        # 普通 remote_client 凭据未命中：尝试 TT 登录态（X-TT-* / body），复用 TT 账号登录态免配置同步。
+        tt_user_row = _authenticate_tt_account_from_request(db)
+        if tt_user_row is None:
+            return jsonify({"ok": False, "message": "鉴权失败：client_id/client_token 或 TT 登录态无效"}), 401
     data = request.get_json(silent=True) or {}
     raw_records = data.get("records")
     if not isinstance(raw_records, list):
@@ -4015,13 +4207,19 @@ def client_sync_upload_records():
     if len(raw_records) > 200:
         return jsonify({"ok": False, "message": "单次最多同步 200 条上传记录"}), 400
 
-    owner_user_id = int(client_row["owner_user_id"])
-    user_row = db.execute(
-        "SELECT id, username FROM users WHERE id = ?",
-        (owner_user_id,),
-    ).fetchone()
-    if not user_row:
-        return jsonify({"ok": False, "message": "远程客户端归属用户不存在"}), 400
+    if client_row is not None:
+        owner_user_id = int(client_row["owner_user_id"])
+        user_row = db.execute(
+            "SELECT id, username FROM users WHERE id = ?",
+            (owner_user_id,),
+        ).fetchone()
+        if not user_row:
+            return jsonify({"ok": False, "message": "远程客户端归属用户不存在"}), 400
+        owner_kwargs = {"owner_user_id": owner_user_id, "remote_client_id": int(client_row["id"])}
+        owner_username = str(user_row["username"] or "")
+    else:
+        owner_kwargs = {"owner_tt_user_id": int(tt_user_row["id"]), "remote_client_id": None}
+        owner_username = str(tt_user_row["username"] or "")
 
     created_count = 0
     updated_count = 0
@@ -4033,10 +4231,9 @@ def client_sync_upload_records():
             continue
         item, error, created = upsert_upload_record(
             db,
-            owner_user_id=owner_user_id,
-            owner_username=str(user_row["username"] or ""),
-            remote_client_id=int(client_row["id"]),
+            owner_username=owner_username,
             data=raw_item,
+            **owner_kwargs,
         )
         if error:
             failed.append({"index": index, "message": error})
@@ -4073,9 +4270,10 @@ def list_upload_records():
 
     clauses = ["1=1"]
     params: list[object] = []
-    if role != "admin":
-        clauses.append("ur.owner_user_id = ?")
-        params.append(user_id)
+    owner_clause, owner_params = _owner_visibility_filter("ur")
+    if owner_clause:
+        clauses.append(owner_clause)
+        params.extend(owner_params)
     else:
         requested_user_id = str(request.args.get("user_id") or "").strip()
         if requested_user_id.isdigit():
@@ -4156,9 +4354,10 @@ def list_platform_dramas():
 
     clauses = ["ur.platform = ?"]
     params: list[object] = [platform]
-    if role != "admin":
-        clauses.append("ur.owner_user_id = ?")
-        params.append(user_id)
+    owner_clause, owner_params = _owner_visibility_filter("ur")
+    if owner_clause:
+        clauses.append(owner_clause)
+        params.extend(owner_params)
     else:
         requested_user_id = str(request.args.get("user_id") or "").strip()
         if requested_user_id.isdigit():
@@ -4181,7 +4380,9 @@ def list_platform_dramas():
     if company:
         clauses.append("d.company = ?")
         params.append(company)
-    review_passed = normalize_flag(request.args.get("review_passed"))
+    # 仅当显式传入有效的 是/否 时才过滤；缺省不过滤（旧逻辑用 normalize_flag 会把缺省强制按"否"过滤，
+    # 导致无对应 drama 记录的上传记录——尤其 TT 同步记录——被错误隐藏）。
+    review_passed = str(request.args.get("review_passed") or "").strip()
     if review_passed in ALLOWED_FLAGS:
         clauses.append("d.review_passed = ?")
         params.append(review_passed)
@@ -4296,9 +4497,10 @@ def list_drama_upload_records(drama_id: int):
     role = str(session.get("role") or "user").strip().lower()
     clauses = ["ur.drama_id = ?"]
     params: list[object] = [drama_id]
-    if role != "admin":
-        clauses.append("ur.owner_user_id = ?")
-        params.append(user_id)
+    owner_clause, owner_params = _owner_visibility_filter("ur")
+    if owner_clause:
+        clauses.append(owner_clause)
+        params.extend(owner_params)
     db = get_db()
     rows = db.execute(
         f"""
@@ -4323,17 +4525,18 @@ def list_companies():
             "SELECT DISTINCT company FROM dramas WHERE company IS NOT NULL AND company <> '' ORDER BY company ASC"
         ).fetchall()
     else:
+        owner_clause, owner_params = _owner_visibility_filter("ur")
         rows = db.execute(
-            """
+            f"""
             SELECT DISTINCT d.company
             FROM upload_records ur
             JOIN dramas d ON d.id = ur.drama_id
-            WHERE ur.owner_user_id = ?
+            WHERE {owner_clause}
               AND d.company IS NOT NULL
               AND d.company <> ''
             ORDER BY d.company ASC
             """,
-            (int(session["user_id"]),),
+            owner_params,
         ).fetchall()
     return jsonify([row["company"] for row in rows])
 
