@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime
 import hashlib
+import ipaddress
 import json
 import math
 import os
@@ -65,6 +66,13 @@ def _int_env(name: str, default: int) -> int:
         return default
 
 
+def _float_env(name: str, default: float) -> float:
+    try:
+        return float(os.environ.get(name, "") or default)
+    except (TypeError, ValueError):
+        return default
+
+
 LICENSE_STATUS_VALUES = {"active", "disabled", "expired"}
 LICENSE_EDITION_VALUES = {"basic", "pro", "enterprise"}
 LICENSE_LIST_SORTABLE_FIELDS = {
@@ -88,6 +96,20 @@ TT_ACCOUNT_TOKEN_SALT = "tiktok-account"
 ACCOUNT_TOKEN_MAX_AGE_SECONDS = _int_env("ACCOUNT_TOKEN_MAX_AGE_SECONDS", 60 * 60 * 24)
 ACCOUNT_OFFLINE_GRACE_HOURS = _int_env("ACCOUNT_OFFLINE_GRACE_HOURS", 72)
 ACCOUNT_DEFAULT_MAX_DEVICES = 1
+TRUSTED_PROXY_CIDRS = tuple(
+    part.strip()
+    for part in os.environ.get(
+        "TRUSTED_PROXY_CIDRS",
+        "127.0.0.1/32,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16",
+    ).split(",")
+    if part.strip()
+)
+IP_REGION_LOOKUP_URL = os.environ.get(
+    "IP_REGION_LOOKUP_URL",
+    "http://ip-api.com/json/{ip}?lang=zh-CN&fields=status,country,regionName,city,isp,query,message",
+).strip()
+IP_REGION_LOOKUP_TIMEOUT_SECONDS = max(0.2, _float_env("IP_REGION_LOOKUP_TIMEOUT_SECONDS", 1.5))
+IP_REGION_CACHE_DAYS = max(1, _int_env("IP_REGION_CACHE_DAYS", 30))
 USERNAME_RE = re.compile(r"^(?:[A-Za-z0-9_]{2,30}|[^@\s]+@[^@\s]+\.[^@\s]+)$")
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 REMOTE_MESSAGE_STATUS_VALUES = {"pending", "sent", "running", "success", "failed", "canceled", "stopped"}
@@ -250,6 +272,152 @@ def get_db() -> sqlite3.Connection:
         conn.execute("PRAGMA journal_mode = WAL;")
         g.db = conn
     return g.db
+
+
+def normalize_ip_address(value: object) -> str:
+    text = str(value or "").strip().strip('"').strip("'")
+    if not text or text.lower() in {"unknown", "null", "none"}:
+        return ""
+    if text.startswith("[") and "]" in text:
+        text = text[1:text.index("]")]
+    elif "." in text and text.count(":") == 1:
+        host, port = text.rsplit(":", 1)
+        if port.isdigit():
+            text = host
+    try:
+        address = ipaddress.ip_address(text)
+    except ValueError:
+        return ""
+    if getattr(address, "ipv4_mapped", None):
+        address = address.ipv4_mapped
+    return str(address)
+
+
+def _trusted_proxy_networks() -> list[ipaddress._BaseNetwork]:
+    networks: list[ipaddress._BaseNetwork] = []
+    for raw in TRUSTED_PROXY_CIDRS:
+        try:
+            networks.append(ipaddress.ip_network(raw, strict=False))
+        except ValueError:
+            continue
+    return networks
+
+
+def _is_trusted_proxy_address(value: object) -> bool:
+    ip = normalize_ip_address(value)
+    if not ip:
+        return False
+    try:
+        address = ipaddress.ip_address(ip)
+    except ValueError:
+        return False
+    return any(address in network for network in _trusted_proxy_networks())
+
+
+def get_request_client_ip() -> str:
+    remote_ip = normalize_ip_address(request.remote_addr)
+    if _is_trusted_proxy_address(remote_ip):
+        real_ip = normalize_ip_address(request.headers.get("X-Real-IP"))
+        if real_ip:
+            return real_ip
+        forwarded_for = str(request.headers.get("X-Forwarded-For") or "")
+        for part in reversed(forwarded_for.split(",")):
+            forwarded_ip = normalize_ip_address(part)
+            if forwarded_ip:
+                return forwarded_ip
+    return remote_ip
+
+
+def _special_ip_region(ip: str) -> str:
+    try:
+        address = ipaddress.ip_address(ip)
+    except ValueError:
+        return ""
+    if address.is_loopback:
+        return "本机"
+    if address.is_private or address.is_link_local:
+        return "内网"
+    if address.is_unspecified:
+        return "未知"
+    if address.is_multicast or address.is_reserved:
+        return "保留地址"
+    return ""
+
+
+def _format_ip_region_payload(payload: dict[str, Any]) -> str:
+    if str(payload.get("status") or "").lower() in {"fail", "failed", "error"}:
+        return ""
+    country = payload.get("country") or payload.get("country_name") or payload.get("country_name_zh")
+    region = payload.get("regionName") or payload.get("region") or payload.get("region_name")
+    city = payload.get("city") or payload.get("city_name")
+    isp = payload.get("isp") or payload.get("org") or payload.get("as")
+    parts: list[str] = []
+    for value in (country, region, city, isp):
+        text = str(value or "").strip()
+        if text and text not in parts:
+            parts.append(text)
+    return " ".join(parts)
+
+
+def _lookup_ip_region_online(ip: str) -> str:
+    if not IP_REGION_LOOKUP_URL:
+        return ""
+    try:
+        url = IP_REGION_LOOKUP_URL.format(ip=urlparse.quote(ip, safe=""))
+        req = urlrequest.Request(
+            url,
+            headers={"Accept": "application/json", "User-Agent": "short-video-manage/1.0"},
+        )
+        with urlrequest.urlopen(req, timeout=IP_REGION_LOOKUP_TIMEOUT_SECONDS) as response:
+            raw = response.read().decode("utf-8", errors="replace")
+        data = json.loads(raw)
+    except Exception:
+        return ""
+    if isinstance(data, dict):
+        return _format_ip_region_payload(data)
+    return ""
+
+
+def resolve_ip_region(db: sqlite3.Connection, ip: str) -> str:
+    normalized_ip = normalize_ip_address(ip)
+    if not normalized_ip:
+        return ""
+    special = _special_ip_region(normalized_ip)
+    if special:
+        return special
+
+    row = db.execute(
+        "SELECT region, updated_at FROM ip_region_cache WHERE ip = ?",
+        (normalized_ip,),
+    ).fetchone()
+    if row:
+        cached_region = str(row["region"] or "").strip()
+        updated_at = str(row["updated_at"] or "").strip()
+        try:
+            updated_value = datetime.datetime.fromisoformat(updated_at)
+        except ValueError:
+            updated_value = None
+        if cached_region and updated_value:
+            expires_at = updated_value + datetime.timedelta(days=IP_REGION_CACHE_DAYS)
+            if datetime.datetime.now() < expires_at:
+                return cached_region
+
+    region = _lookup_ip_region_online(normalized_ip)
+    if region:
+        db.execute(
+            """
+            INSERT INTO ip_region_cache (ip, region, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(ip) DO UPDATE SET region = excluded.region, updated_at = excluded.updated_at
+            """,
+            (normalized_ip, region, datetime.datetime.now().isoformat(timespec="seconds")),
+        )
+    return region or (str(row["region"] or "").strip() if row else "未知")
+
+
+def get_request_ip_context(db: sqlite3.Connection) -> tuple[str, str]:
+    ip = get_request_client_ip()
+    return ip, resolve_ip_region(db, ip) if ip else ""
 
 
 def close_db(_: Exception | None = None) -> None:
@@ -442,6 +610,10 @@ def init_db() -> None:
                 token_hash TEXT NOT NULL,
                 activated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 last_verified_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                login_ip TEXT,
+                login_ip_region TEXT,
+                last_ip TEXT,
+                last_ip_region TEXT,
                 revoked_at TEXT,
                 FOREIGN KEY (license_id) REFERENCES licenses(id) ON DELETE CASCADE,
                 UNIQUE(license_id, machine_id)
@@ -457,6 +629,10 @@ def init_db() -> None:
                 token_hash TEXT NOT NULL,
                 logged_in_at TEXT,
                 last_verified_at TEXT,
+                login_ip TEXT,
+                login_ip_region TEXT,
+                last_ip TEXT,
+                last_ip_region TEXT,
                 revoked_at TEXT,
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
                 UNIQUE(user_id, machine_id)
@@ -472,9 +648,19 @@ def init_db() -> None:
                 token_hash TEXT NOT NULL,
                 logged_in_at TEXT,
                 last_verified_at TEXT,
+                login_ip TEXT,
+                login_ip_region TEXT,
+                last_ip TEXT,
+                last_ip_region TEXT,
                 revoked_at TEXT,
                 FOREIGN KEY (tt_user_id) REFERENCES tt_users(id) ON DELETE CASCADE,
                 UNIQUE(tt_user_id, machine_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS ip_region_cache (
+                ip TEXT PRIMARY KEY,
+                region TEXT,
+                updated_at TEXT
             );
 
             CREATE TABLE IF NOT EXISTS remote_clients (
@@ -689,6 +875,18 @@ def init_db() -> None:
             "ALTER TABLE users ADD COLUMN expires_at TEXT DEFAULT NULL",
             "ALTER TABLE users ADD COLUMN updated_at TEXT DEFAULT NULL",
             "ALTER TABLE tt_users ADD COLUMN full_name TEXT DEFAULT NULL",
+            "ALTER TABLE license_activations ADD COLUMN login_ip TEXT DEFAULT NULL",
+            "ALTER TABLE license_activations ADD COLUMN login_ip_region TEXT DEFAULT NULL",
+            "ALTER TABLE license_activations ADD COLUMN last_ip TEXT DEFAULT NULL",
+            "ALTER TABLE license_activations ADD COLUMN last_ip_region TEXT DEFAULT NULL",
+            "ALTER TABLE user_devices ADD COLUMN login_ip TEXT DEFAULT NULL",
+            "ALTER TABLE user_devices ADD COLUMN login_ip_region TEXT DEFAULT NULL",
+            "ALTER TABLE user_devices ADD COLUMN last_ip TEXT DEFAULT NULL",
+            "ALTER TABLE user_devices ADD COLUMN last_ip_region TEXT DEFAULT NULL",
+            "ALTER TABLE tt_user_devices ADD COLUMN login_ip TEXT DEFAULT NULL",
+            "ALTER TABLE tt_user_devices ADD COLUMN login_ip_region TEXT DEFAULT NULL",
+            "ALTER TABLE tt_user_devices ADD COLUMN last_ip TEXT DEFAULT NULL",
+            "ALTER TABLE tt_user_devices ADD COLUMN last_ip_region TEXT DEFAULT NULL",
             "ALTER TABLE upload_records ADD COLUMN audit_reject_reason TEXT DEFAULT NULL",
             "ALTER TABLE upload_records ADD COLUMN audit_reject_detail TEXT DEFAULT NULL",
             "ALTER TABLE upload_records ADD COLUMN online_status TEXT DEFAULT NULL",
@@ -2732,6 +2930,8 @@ def activate_account_for_machine(
     app_name: str,
     app_version: str,
     force_login: bool = False,
+    client_ip: str = "",
+    client_ip_region: str = "",
 ) -> dict:
     ok, error = ensure_account_can_login(user_row)
     if not ok:
@@ -2749,6 +2949,8 @@ def activate_account_for_machine(
     token = issue_account_token(user_row=user_row, machine_id=machine_id)
     token_hash = hash_token(token)
     now_iso = datetime.datetime.now().isoformat(timespec="seconds")
+    normalized_client_ip = normalize_ip_address(client_ip)
+    normalized_client_region = str(client_ip_region or "").strip()
     replaced_device_count = 0
 
     active_current_row = db.execute(
@@ -2794,7 +2996,12 @@ def activate_account_for_machine(
             """
             UPDATE user_devices
             SET token_hash = ?, device_name = ?, app_name = ?, app_version = ?,
-                last_verified_at = ?, revoked_at = NULL
+                last_verified_at = ?,
+                login_ip = COALESCE(NULLIF(login_ip, ''), ?),
+                login_ip_region = COALESCE(NULLIF(login_ip_region, ''), ?),
+                last_ip = ?,
+                last_ip_region = ?,
+                revoked_at = NULL
             WHERE id = ?
             """,
             (
@@ -2803,6 +3010,10 @@ def activate_account_for_machine(
                 app_name or None,
                 app_version or None,
                 now_iso,
+                normalized_client_ip or None,
+                normalized_client_region or None,
+                normalized_client_ip or None,
+                normalized_client_region or None,
                 device_row["id"],
             ),
         )
@@ -2811,8 +3022,9 @@ def activate_account_for_machine(
             """
             INSERT INTO user_devices (
                 user_id, machine_id, device_name, app_name, app_version,
-                token_hash, logged_in_at, last_verified_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                token_hash, logged_in_at, last_verified_at,
+                login_ip, login_ip_region, last_ip, last_ip_region
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 user_row["id"],
@@ -2823,6 +3035,10 @@ def activate_account_for_machine(
                 token_hash,
                 now_iso,
                 now_iso,
+                normalized_client_ip or None,
+                normalized_client_region or None,
+                normalized_client_ip or None,
+                normalized_client_region or None,
             ),
         )
 
@@ -2895,6 +3111,8 @@ def activate_tt_account_for_machine(
     app_name: str,
     app_version: str,
     force_login: bool = False,
+    client_ip: str = "",
+    client_ip_region: str = "",
 ) -> dict:
     ok, error = ensure_tt_account_can_login(user_row)
     if not ok:
@@ -2912,6 +3130,8 @@ def activate_tt_account_for_machine(
     token = issue_tt_account_token(user_row=user_row, machine_id=machine_id)
     token_hash = hash_token(token)
     now_value = now_iso()
+    normalized_client_ip = normalize_ip_address(client_ip)
+    normalized_client_region = str(client_ip_region or "").strip()
     replaced_device_count = 0
 
     active_current_row = db.execute(
@@ -2965,7 +3185,12 @@ def activate_tt_account_for_machine(
             """
             UPDATE tt_user_devices
             SET token_hash = ?, device_name = ?, app_name = ?, app_version = ?,
-                last_verified_at = ?, revoked_at = NULL
+                last_verified_at = ?,
+                login_ip = COALESCE(NULLIF(login_ip, ''), ?),
+                login_ip_region = COALESCE(NULLIF(login_ip_region, ''), ?),
+                last_ip = ?,
+                last_ip_region = ?,
+                revoked_at = NULL
             WHERE id = ?
             """,
             (
@@ -2974,6 +3199,10 @@ def activate_tt_account_for_machine(
                 app_name or None,
                 app_version or None,
                 now_value,
+                normalized_client_ip or None,
+                normalized_client_region or None,
+                normalized_client_ip or None,
+                normalized_client_region or None,
                 device_row["id"],
             ),
         )
@@ -2982,8 +3211,9 @@ def activate_tt_account_for_machine(
             """
             INSERT INTO tt_user_devices (
                 tt_user_id, machine_id, device_name, app_name, app_version,
-                token_hash, logged_in_at, last_verified_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                token_hash, logged_in_at, last_verified_at,
+                login_ip, login_ip_region, last_ip, last_ip_region
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 user_row["id"],
@@ -2994,6 +3224,10 @@ def activate_tt_account_for_machine(
                 token_hash,
                 now_value,
                 now_value,
+                normalized_client_ip or None,
+                normalized_client_region or None,
+                normalized_client_ip or None,
+                normalized_client_region or None,
             ),
         )
 
@@ -3044,6 +3278,8 @@ def activate_license_for_machine(
     machine_id: str,
     app_name: str,
     app_version: str,
+    client_ip: str = "",
+    client_ip_region: str = "",
 ) -> dict:
     active_row = db.execute(
         """
@@ -3062,24 +3298,54 @@ def activate_license_for_machine(
     token = issue_license_token(license_row=license_row, machine_id=machine_id)
     token_hash = hash_token(token)
     now_iso = datetime.datetime.now().isoformat(timespec="seconds")
+    normalized_client_ip = normalize_ip_address(client_ip)
+    normalized_client_region = str(client_ip_region or "").strip()
 
     if active_row:
         db.execute(
             """
             UPDATE license_activations
-            SET token_hash = ?, app_name = ?, app_version = ?, last_verified_at = ?, revoked_at = NULL
+            SET token_hash = ?, app_name = ?, app_version = ?, last_verified_at = ?,
+                login_ip = COALESCE(NULLIF(login_ip, ''), ?),
+                login_ip_region = COALESCE(NULLIF(login_ip_region, ''), ?),
+                last_ip = ?,
+                last_ip_region = ?,
+                revoked_at = NULL
             WHERE id = ?
             """,
-            (token_hash, app_name or None, app_version or None, now_iso, active_row["id"]),
+            (
+                token_hash,
+                app_name or None,
+                app_version or None,
+                now_iso,
+                normalized_client_ip or None,
+                normalized_client_region or None,
+                normalized_client_ip or None,
+                normalized_client_region or None,
+                active_row["id"],
+            ),
         )
     else:
         db.execute(
             """
             INSERT INTO license_activations (
-                license_id, machine_id, app_name, app_version, token_hash, activated_at, last_verified_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                license_id, machine_id, app_name, app_version, token_hash, activated_at, last_verified_at,
+                login_ip, login_ip_region, last_ip, last_ip_region
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (license_row["id"], machine_id, app_name or None, app_version or None, token_hash, now_iso, now_iso),
+            (
+                license_row["id"],
+                machine_id,
+                app_name or None,
+                app_version or None,
+                token_hash,
+                now_iso,
+                now_iso,
+                normalized_client_ip or None,
+                normalized_client_region or None,
+                normalized_client_ip or None,
+                normalized_client_region or None,
+            ),
         )
 
     db.execute(
@@ -3470,6 +3736,7 @@ def client_register_account():
         return jsonify({"ok": False, "message": conflict_message or "用户名或邮箱已存在"}), 400
 
     user_row = get_user_by_account(db, payload["username"])
+    client_ip, client_ip_region = get_request_ip_context(db)
     try:
         result = activate_account_for_machine(
             db,
@@ -3479,6 +3746,8 @@ def client_register_account():
             app_name=payload["app_name"],
             app_version=payload["app_version"],
             force_login=payload["force_login"],
+            client_ip=client_ip,
+            client_ip_region=client_ip_region,
         )
     except ValueError as exc:
         return jsonify({"ok": False, "message": str(exc)}), 400
@@ -3500,6 +3769,7 @@ def client_login_account():
     if not user_row or not check_password_hash(user_row["password_hash"], payload["password"]):
         return jsonify({"ok": False, "message": "用户名/邮箱或密码不正确"}), 401
 
+    client_ip, client_ip_region = get_request_ip_context(db)
     try:
         result = activate_account_for_machine(
             db,
@@ -3509,6 +3779,8 @@ def client_login_account():
             app_name=payload["app_name"],
             app_version=payload["app_version"],
             force_login=payload["force_login"],
+            client_ip=client_ip,
+            client_ip_region=client_ip_region,
         )
     except ValueError as exc:
         return jsonify({"ok": False, "message": str(exc)}), 400
@@ -3612,6 +3884,7 @@ def client_verify_account():
     if device_row["token_hash"] != hash_token(payload["token"]):
         return jsonify({"ok": False, "message": "登录凭证已失效，请重新登录"}), 400
 
+    client_ip, client_ip_region = get_request_ip_context(db)
     try:
         result = activate_account_for_machine(
             db,
@@ -3620,6 +3893,8 @@ def client_verify_account():
             device_name=payload["device_name"],
             app_name=payload["app_name"],
             app_version=payload["app_version"],
+            client_ip=client_ip,
+            client_ip_region=client_ip_region,
         )
     except ValueError as exc:
         return jsonify({"ok": False, "message": str(exc)}), 400
@@ -3641,6 +3916,7 @@ def client_login_tt_account():
     if not user_row or not check_password_hash(user_row["password_hash"], payload["password"]):
         return jsonify({"ok": False, "message": "TT用户名、邮箱或密码不正确"}), 401
 
+    client_ip, client_ip_region = get_request_ip_context(db)
     try:
         result = activate_tt_account_for_machine(
             db,
@@ -3650,6 +3926,8 @@ def client_login_tt_account():
             app_name=payload["app_name"],
             app_version=payload["app_version"],
             force_login=payload["force_login"],
+            client_ip=client_ip,
+            client_ip_region=client_ip_region,
         )
     except ValueError as exc:
         return jsonify({"ok": False, "message": str(exc)}), 400
@@ -3753,6 +4031,7 @@ def client_verify_tt_account():
     if device_row["token_hash"] != hash_token(payload["token"]):
         return jsonify({"ok": False, "message": "登录凭证已失效，请重新登录"}), 400
 
+    client_ip, client_ip_region = get_request_ip_context(db)
     try:
         result = activate_tt_account_for_machine(
             db,
@@ -3761,6 +4040,8 @@ def client_verify_tt_account():
             device_name=payload["device_name"],
             app_name=payload["app_name"],
             app_version=payload["app_version"],
+            client_ip=client_ip,
+            client_ip_region=client_ip_region,
         )
     except ValueError as exc:
         return jsonify({"ok": False, "message": str(exc)}), 400
@@ -3878,6 +4159,7 @@ def client_activate_license():
         db.commit()
         return jsonify({"ok": False, "message": "该激活码已过期"}), 400
 
+    client_ip, client_ip_region = get_request_ip_context(db)
     try:
         result = activate_license_for_machine(
             db,
@@ -3885,6 +4167,8 @@ def client_activate_license():
             machine_id=payload["machine_id"],
             app_name=payload["app_name"],
             app_version=payload["app_version"],
+            client_ip=client_ip,
+            client_ip_region=client_ip_region,
         )
     except ValueError as exc:
         return jsonify({"ok": False, "message": str(exc)}), 400
@@ -3942,12 +4226,15 @@ def client_verify_license():
     if activation_row["token_hash"] != hash_token(payload["token"]):
         return jsonify({"ok": False, "message": "授权 token 已失效，请重新激活"}), 400
 
+    client_ip, client_ip_region = get_request_ip_context(db)
     result = activate_license_for_machine(
         db,
         license_row=license_row,
         machine_id=payload["machine_id"],
         app_name=payload["app_name"],
         app_version=payload["app_version"],
+        client_ip=client_ip,
+        client_ip_region=client_ip_region,
     )
     return jsonify({"ok": True, "data": result})
 
@@ -4904,7 +5191,8 @@ def list_user_devices(user_id: int):
         return jsonify({"error": "未找到该用户"}), 404
     rows = db.execute(
         """
-        SELECT id, machine_id, device_name, app_name, app_version, logged_in_at, last_verified_at, revoked_at
+        SELECT id, machine_id, device_name, app_name, app_version, logged_in_at, last_verified_at,
+               login_ip, login_ip_region, last_ip, last_ip_region, revoked_at
         FROM user_devices
         WHERE user_id = ?
         ORDER BY COALESCE(last_verified_at, logged_in_at, '') DESC, id DESC
@@ -5069,7 +5357,8 @@ def list_tt_user_devices(user_id: int):
         return jsonify({"error": "未找到该TT用户"}), 404
     rows = db.execute(
         """
-        SELECT id, machine_id, device_name, app_name, app_version, logged_in_at, last_verified_at, revoked_at
+        SELECT id, machine_id, device_name, app_name, app_version, logged_in_at, last_verified_at,
+               login_ip, login_ip_region, last_ip, last_ip_region, revoked_at
         FROM tt_user_devices
         WHERE tt_user_id = ?
         ORDER BY COALESCE(last_verified_at, logged_in_at, '') DESC, id DESC
@@ -5143,7 +5432,8 @@ def list_user_devices_legacy(user_id: int):
     rows = db.execute(
         """
         SELECT id, user_id, machine_id, device_name, app_name, app_version,
-               logged_in_at, last_verified_at, revoked_at
+               logged_in_at, last_verified_at,
+               login_ip, login_ip_region, last_ip, last_ip_region, revoked_at
         FROM user_devices
         WHERE user_id = ?
         ORDER BY

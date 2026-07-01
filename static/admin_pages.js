@@ -374,16 +374,20 @@ async function loadUserDevices(userId, username = "") {
     tbody.innerHTML = "";
     if (mobileList) mobileList.innerHTML = "";
     if (!devices.length) {
-      tbody.innerHTML = `<tr><td colspan="7" class="text-center text-muted py-4">${escapeHtml(userPageConfig.noDevicesText)}</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="9" class="text-center text-muted py-4">${escapeHtml(userPageConfig.noDevicesText)}</td></tr>`;
       renderMobileEmptyState(mobileList, userPageConfig.noDevicesText);
     } else {
       devices.forEach((device) => {
         const revoked = Boolean(device.revoked_at);
+        const deviceIp = getDeviceDisplayIp(device);
+        const deviceRegion = getDeviceDisplayIpRegion(device);
         const tr = document.createElement("tr");
         tr.innerHTML = `
           <td>${escapeHtml(device.device_name || "-")}</td>
           <td class="font-monospace small">${escapeHtml(device.machine_id || "-")}</td>
           <td>${escapeHtml([device.app_name, device.app_version].filter(Boolean).join(" ") || "-")}</td>
+          <td class="font-monospace small">${escapeHtml(deviceIp)}</td>
+          <td>${escapeHtml(deviceRegion)}</td>
           <td>${escapeHtml(device.logged_in_at || "-")}</td>
           <td>${escapeHtml(device.last_verified_at || "-")}</td>
           <td>${revoked ? '<span class="badge text-bg-secondary">已解绑</span>' : '<span class="badge text-bg-success">有效</span>'}</td>
@@ -401,7 +405,17 @@ async function loadUserDevices(userId, username = "") {
   }
 }
 
+function getDeviceDisplayIp(device) {
+  return device?.last_ip || device?.login_ip || "-";
+}
+
+function getDeviceDisplayIpRegion(device) {
+  return device?.last_ip_region || device?.login_ip_region || "-";
+}
+
 function buildUserDeviceMobileCard(device, revoked) {
+  const deviceIp = getDeviceDisplayIp(device);
+  const deviceRegion = getDeviceDisplayIpRegion(device);
   const card = document.createElement("article");
   card.className = "mobile-record-card";
   card.innerHTML = `
@@ -412,6 +426,8 @@ function buildUserDeviceMobileCard(device, revoked) {
     <div class="mobile-record-subtitle font-monospace">${escapeHtml(device.machine_id || "-")}</div>
     <div class="mobile-record-grid">
       <div><span>应用</span><strong>${escapeHtml([device.app_name, device.app_version].filter(Boolean).join(" ") || "-")}</strong></div>
+      <div><span>IP</span><strong>${escapeHtml(deviceIp)}</strong></div>
+      <div><span>IP归属地</span><strong>${escapeHtml(deviceRegion)}</strong></div>
       <div><span>登录时间</span><strong>${escapeHtml(device.logged_in_at || "-")}</strong></div>
       <div><span>最近校验</span><strong>${escapeHtml(device.last_verified_at || "-")}</strong></div>
     </div>

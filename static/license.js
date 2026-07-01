@@ -683,7 +683,7 @@ async function loadLicenseActivations(licenseId, { silent = false } = {}) {
     selectedCard?.classList.add("is-active");
 
     if (!(data.items || []).length) {
-      renderEmptyState(tbody, 7, "该授权码暂无设备绑定记录");
+      renderEmptyState(tbody, 9, "该授权码暂无设备绑定记录");
       renderMobileEmptyState(mobileList, "该授权码暂无设备绑定记录");
       return;
     }
@@ -691,10 +691,14 @@ async function loadLicenseActivations(licenseId, { silent = false } = {}) {
     (data.items || []).forEach((item) => {
       const tr = document.createElement("tr");
       const active = !item.revoked_at;
+      const itemIp = getActivationDisplayIp(item);
+      const itemRegion = getActivationDisplayIpRegion(item);
       tr.innerHTML = `
         <td class="font-monospace" title="${escapeHtml(item.machine_id || "")}">${escapeHtml(truncateText(item.machine_id || "-", 18))}</td>
         <td>${escapeHtml(item.app_name || "-")}</td>
         <td>${escapeHtml(item.app_version || "-")}</td>
+        <td class="font-monospace small">${escapeHtml(itemIp)}</td>
+        <td>${escapeHtml(itemRegion)}</td>
         <td>${escapeHtml(item.activated_at || "-")}</td>
         <td>${escapeHtml(item.last_verified_at || "-")}</td>
         <td>${active ? '<span class="badge bg-success">已绑定</span>' : '<span class="badge bg-secondary">已解绑</span>'}</td>
@@ -716,7 +720,17 @@ async function loadLicenseActivations(licenseId, { silent = false } = {}) {
   }
 }
 
+function getActivationDisplayIp(item) {
+  return item?.last_ip || item?.login_ip || "-";
+}
+
+function getActivationDisplayIpRegion(item) {
+  return item?.last_ip_region || item?.login_ip_region || "-";
+}
+
 function buildActivationMobileCard(item, active, license) {
+  const itemIp = getActivationDisplayIp(item);
+  const itemRegion = getActivationDisplayIpRegion(item);
   const card = document.createElement("article");
   card.className = "mobile-record-card";
   card.innerHTML = `
@@ -727,6 +741,8 @@ function buildActivationMobileCard(item, active, license) {
     <div class="mobile-record-grid">
       <div><span>应用</span><strong>${escapeHtml(item.app_name || "-")}</strong></div>
       <div><span>版本</span><strong>${escapeHtml(item.app_version || "-")}</strong></div>
+      <div><span>IP</span><strong>${escapeHtml(itemIp)}</strong></div>
+      <div><span>IP归属地</span><strong>${escapeHtml(itemRegion)}</strong></div>
       <div><span>激活时间</span><strong>${escapeHtml(item.activated_at || "-")}</strong></div>
       <div><span>最近校验</span><strong>${escapeHtml(item.last_verified_at || "-")}</strong></div>
     </div>

@@ -1610,10 +1610,14 @@ async function loadLicenseActivations(licenseId) {
     (data.items || []).forEach((item) => {
       const tr = document.createElement("tr");
       const active = !item.revoked_at;
+      const itemIp = item.last_ip || item.login_ip || "-";
+      const itemRegion = item.last_ip_region || item.login_ip_region || "-";
       tr.innerHTML = `
         <td class="font-monospace" title="${escapeHtml(item.machine_id || "")}">${escapeHtml(truncateText(item.machine_id, 18))}</td>
         <td>${escapeHtml(item.app_name || "-")}</td>
         <td>${escapeHtml(item.app_version || "-")}</td>
+        <td class="font-monospace small">${escapeHtml(itemIp)}</td>
+        <td>${escapeHtml(itemRegion)}</td>
         <td>${escapeHtml(item.activated_at || "-")}</td>
         <td>${escapeHtml(item.last_verified_at || "-")}</td>
         <td>${active ? '<span class="badge bg-success">已绑定</span>' : '<span class="badge bg-secondary">已解绑</span>'}</td>
