@@ -6,6 +6,8 @@ let editingUserId = null;
 let usersCache = [];
 let currentDevicesUserId = null;
 let userEditorModal = null;
+let userPasswordModal = null;
+let userDevicesModal = null;
 let userPageConfig = {
   apiBase: "/api/users",
   emptyText: "暂无用户",
@@ -31,6 +33,8 @@ document.addEventListener("DOMContentLoaded", () => {
 function initUsersPage() {
   userPageConfig = { ...userPageConfig, ...(window.userPageConfig || {}) };
   userEditorModal = new bootstrap.Modal(document.getElementById("userEditorModal"));
+  userPasswordModal = new bootstrap.Modal(document.getElementById("userPasswordModal"));
+  userDevicesModal = new bootstrap.Modal(document.getElementById("userDevicesModal"));
   document.getElementById("addUserBtn")?.addEventListener("click", showUserEditor);
   document.getElementById("createUserBtn")?.addEventListener("click", saveUser);
   document.getElementById("cancelPasswordEditBtn")?.addEventListener("click", hidePasswordEditor);
@@ -43,6 +47,8 @@ function initUsersPage() {
   document.getElementById("userDevicesTableBody")?.addEventListener("click", handleUserDevicesTableClick);
   document.getElementById("userDevicesMobileList")?.addEventListener("click", handleUserDevicesTableClick);
   document.getElementById("userEditorModal")?.addEventListener("hidden.bs.modal", resetUserForm);
+  document.getElementById("userPasswordModal")?.addEventListener("hidden.bs.modal", resetPasswordModal);
+  document.getElementById("userDevicesModal")?.addEventListener("hidden.bs.modal", resetDevicesModal);
   loadUsers();
 }
 
@@ -192,11 +198,16 @@ function showPasswordEditor(userId, username) {
   document.getElementById("passwordResetValue").textContent = "";
   document.getElementById("passwordResetResult").hidden = true;
   clearFormValidation(document.getElementById("userPasswordPanel"));
-  document.getElementById("userPasswordPanel").hidden = false;
+  userPasswordModal?.show();
   document.getElementById("resetPasswordInput")?.focus();
 }
 
 function hidePasswordEditor() {
+  userPasswordModal?.hide();
+  resetPasswordModal();
+}
+
+function resetPasswordModal() {
   passwordTargetUserId = null;
   const panel = document.getElementById("userPasswordPanel");
   if (!panel) return;
@@ -204,7 +215,6 @@ function hidePasswordEditor() {
   document.getElementById("passwordResetValue").textContent = "";
   document.getElementById("passwordResetResult").hidden = true;
   clearFormValidation(panel);
-  panel.hidden = true;
 }
 
 function fillGeneratedPassword() {
@@ -385,7 +395,7 @@ async function loadUserDevices(userId, username = "") {
         mobileList?.appendChild(buildUserDeviceMobileCard(device, revoked));
       });
     }
-    document.getElementById("userDevicesPanel").hidden = false;
+    userDevicesModal?.show();
   } catch (error) {
     showToast(error.message, "danger");
   }
@@ -413,9 +423,12 @@ function buildUserDeviceMobileCard(device, revoked) {
 }
 
 function hideDevicesPanel() {
+  userDevicesModal?.hide();
+  resetDevicesModal();
+}
+
+function resetDevicesModal() {
   currentDevicesUserId = null;
-  const panel = document.getElementById("userDevicesPanel");
-  if (panel) panel.hidden = true;
 }
 
 async function handleUserDevicesTableClick(event) {

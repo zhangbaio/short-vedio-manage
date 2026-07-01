@@ -48,61 +48,6 @@
                 </div>
               </div>
 
-              <div class="inline-editor" id="userPasswordPanel" hidden>
-                <div class="inline-editor-header">
-                  <div>
-                    <h3 class="h6 mb-1">重置密码</h3>
-                    <div class="text-muted small">当前用户：<span id="passwordTargetUser">-</span></div>
-                  </div>
-                  <button type="button" class="btn btn-sm btn-outline-secondary" id="cancelPasswordEditBtn">取消</button>
-                </div>
-                <div class="row g-3 align-items-end">
-                  <div class="col-lg-6">
-                    <label class="form-label" for="resetPasswordInput">新密码</label>
-                    <input type="text" class="form-control font-monospace" id="resetPasswordInput" autocomplete="off" />
-                    <div class="invalid-feedback">新密码至少6位</div>
-                  </div>
-                  <div class="col-lg-3">
-                    <button type="button" class="btn btn-outline-secondary w-100" id="generatePasswordBtn">生成密码</button>
-                  </div>
-                  <div class="col-lg-3">
-                    <button type="button" class="btn btn-primary w-100" id="savePasswordBtn">保存新密码</button>
-                  </div>
-                </div>
-                <div class="alert alert-success mt-3 mb-0" id="passwordResetResult" hidden>
-                  <div class="fw-semibold mb-1">新密码已设置</div>
-                  <div class="font-monospace" id="passwordResetValue"></div>
-                </div>
-                <div class="form-text mt-2">系统只保存加密后的密码哈希，旧密码无法查看；这里显示的是本次重置后的新密码。</div>
-              </div>
-
-              <div class="inline-editor" id="userDevicesPanel" hidden>
-                <div class="inline-editor-header">
-                  <div>
-                    <h3 class="h6 mb-1">登录设备</h3>
-                    <div class="text-muted small" id="userDevicesTitle">请选择用户查看设备</div>
-                  </div>
-                  <button type="button" class="btn btn-sm btn-outline-secondary" id="cancelDevicesBtn">关闭</button>
-                </div>
-                <div class="table-responsive desktop-table mobile-switchable">
-                  <table class="table table-sm align-middle mb-0">
-                    <thead>
-                      <tr>
-                        <th>设备名</th>
-                        <th>本机码</th>
-                        <th>应用</th>
-                        <th>登录时间</th>
-                        <th>最近校验</th>
-                        <th>状态</th>
-                        <th class="text-end">操作</th>
-                      </tr>
-                    </thead>
-                    <tbody id="userDevicesTableBody"></tbody>
-                  </table>
-                </div>
-                <div class="mobile-card-list" id="userDevicesMobileList" aria-live="polite"></div>
-              </div>
-
               <div class="table-responsive desktop-table mobile-switchable">
                 <table class="table table-hover align-middle mb-0">
                   <thead>
@@ -195,6 +140,76 @@
           <div class="modal-footer">
             <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">取消</button>
             <button class="btn btn-primary" id="createUserBtn">保存</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal fade" id="userPasswordModal" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+          <div class="modal-header">
+            <div>
+              <h2 class="modal-title h5 mb-1">重置密码</h2>
+              <div class="text-muted small">当前用户：<span id="passwordTargetUser">-</span></div>
+            </div>
+            <button type="button" class="btn-close" id="cancelPasswordEditBtn" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div>
+          <div class="modal-body">
+            <div id="userPasswordPanel">
+              <div class="row g-3 align-items-end">
+                <div class="col-lg-7">
+                  <label class="form-label" for="resetPasswordInput">新密码</label>
+                  <input type="text" class="form-control font-monospace" id="resetPasswordInput" autocomplete="off" />
+                  <div class="invalid-feedback">新密码至少6位</div>
+                </div>
+                <div class="col-lg-5">
+                  <button type="button" class="btn btn-outline-secondary w-100" id="generatePasswordBtn">生成密码</button>
+                </div>
+              </div>
+              <div class="alert alert-success mt-3 mb-0" id="passwordResetResult" hidden>
+                <div class="fw-semibold mb-1">新密码已设置</div>
+                <div class="font-monospace" id="passwordResetValue"></div>
+              </div>
+              <div class="form-text mt-2">系统只保存加密后的密码哈希，旧密码无法查看；这里显示的是本次重置后的新密码。</div>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">取消</button>
+            <button type="button" class="btn btn-primary" id="savePasswordBtn">保存新密码</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal fade" id="userDevicesModal" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-xl modal-dialog-scrollable">
+        <div class="modal-content">
+          <div class="modal-header">
+            <div>
+              <h2 class="modal-title h5 mb-1">登录设备</h2>
+              <div class="text-muted small" id="userDevicesTitle">请选择用户查看设备</div>
+            </div>
+            <button type="button" class="btn-close" id="cancelDevicesBtn" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div>
+          <div class="modal-body">
+            <div class="table-responsive desktop-table mobile-switchable">
+              <table class="table table-sm align-middle mb-0">
+                <thead>
+                  <tr>
+                    <th>设备名</th>
+                    <th>本机码</th>
+                    <th>应用</th>
+                    <th>登录时间</th>
+                    <th>最近校验</th>
+                    <th>状态</th>
+                    <th class="text-end">操作</th>
+                  </tr>
+                </thead>
+                <tbody id="userDevicesTableBody"></tbody>
+              </table>
+            </div>
+            <div class="mobile-card-list" id="userDevicesMobileList" aria-live="polite"></div>
           </div>
         </div>
       </div>
