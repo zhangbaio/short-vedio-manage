@@ -108,8 +108,27 @@ IP_REGION_LOOKUP_URL = os.environ.get(
     "IP_REGION_LOOKUP_URL",
     "http://ip-api.com/json/{ip}?lang=zh-CN&fields=status,country,regionName,city,isp,query,message",
 ).strip()
-IP_REGION_LOOKUP_TIMEOUT_SECONDS = max(0.2, _float_env("IP_REGION_LOOKUP_TIMEOUT_SECONDS", 1.5))
+IP_REGION_LOOKUP_TIMEOUT_SECONDS = max(0.2, _float_env("IP_REGION_LOOKUP_TIMEOUT_SECONDS", 4.0))
 IP_REGION_CACHE_DAYS = max(1, _int_env("IP_REGION_CACHE_DAYS", 30))
+UNKNOWN_IP_REGION_TEXT = "未知"
+IP_REGION_TEXT_REPLACEMENTS = (
+    ("China Mobile communications corporation", "中国移动"),
+    ("China Mobile Communications Corporation", "中国移动"),
+    ("China Mobile", "中国移动"),
+    ("CMNET", "中国移动"),
+    ("China Telecom", "中国电信"),
+    ("Chinanet", "中国电信"),
+    ("ChinaNet", "中国电信"),
+    ("China Unicom", "中国联通"),
+    ("UNICOM", "中国联通"),
+    ("CNCGROUP", "中国联通"),
+    ("China Education and Research Network Center", "中国教育网"),
+    ("CERNET", "中国教育网"),
+    ("China", "中国"),
+    ("Hong Kong", "中国香港"),
+    ("Taiwan", "中国台湾"),
+    ("Macau", "中国澳门"),
+)
 USERNAME_RE = re.compile(r"^(?:[A-Za-z0-9_]{2,30}|[^@\s]+@[^@\s]+\.[^@\s]+)$")
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 REMOTE_MESSAGE_STATUS_VALUES = {"pending", "sent", "running", "success", "failed", "canceled", "stopped"}
@@ -344,6 +363,20 @@ def _special_ip_region(ip: str) -> str:
     return ""
 
 
+def normalize_ip_region_text(value: object) -> str:
+    text = re.sub(r"\s+", " ", str(value or "").strip())
+    if not text:
+        return ""
+    for source, target in IP_REGION_TEXT_REPLACEMENTS:
+        text = re.sub(re.escape(source), target, text, flags=re.IGNORECASE)
+    # Collapse duplicate adjacent segments after replacements such as "中国 中国".
+    parts: list[str] = []
+    for part in text.split(" "):
+        if part and part not in parts:
+            parts.append(part)
+    return " ".join(parts)
+
+
 def _format_ip_region_payload(payload: dict[str, Any]) -> str:
     if str(payload.get("status") or "").lower() in {"fail", "failed", "error"}:
         return ""
@@ -356,7 +389,7 @@ def _format_ip_region_payload(payload: dict[str, Any]) -> str:
         text = str(value or "").strip()
         if text and text not in parts:
             parts.append(text)
-    return " ".join(parts)
+    return normalize_ip_region_text(" ".join(parts))
 
 
 def _lookup_ip_region_online(ip: str) -> str:
@@ -400,9 +433,19 @@ def resolve_ip_region(db: sqlite3.Connection, ip: str) -> str:
         if cached_region and updated_value:
             expires_at = updated_value + datetime.timedelta(days=IP_REGION_CACHE_DAYS)
             if datetime.datetime.now() < expires_at:
-                return cached_region
+                normalized_cached_region = normalize_ip_region_text(cached_region)
+                if normalized_cached_region != cached_region:
+                    db.execute(
+                        "UPDATE ip_region_cache SET region = ?, updated_at = ? WHERE ip = ?",
+                        (
+                            normalized_cached_region,
+                            datetime.datetime.now().isoformat(timespec="seconds"),
+                            normalized_ip,
+                        ),
+                    )
+                return normalized_cached_region
 
-    region = _lookup_ip_region_online(normalized_ip)
+    region = normalize_ip_region_text(_lookup_ip_region_online(normalized_ip))
     if region:
         db.execute(
             """
@@ -412,12 +455,81 @@ def resolve_ip_region(db: sqlite3.Connection, ip: str) -> str:
             """,
             (normalized_ip, region, datetime.datetime.now().isoformat(timespec="seconds")),
         )
-    return region or (str(row["region"] or "").strip() if row else "未知")
+    return region or (str(row["region"] or "").strip() if row else UNKNOWN_IP_REGION_TEXT)
 
 
 def get_request_ip_context(db: sqlite3.Connection) -> tuple[str, str]:
     ip = get_request_client_ip()
     return ip, resolve_ip_region(db, ip) if ip else ""
+
+
+def _is_unknown_ip_region(value: object) -> bool:
+    text = str(value or "").strip()
+    return not text or text == UNKNOWN_IP_REGION_TEXT
+
+
+def enrich_device_ip_region(
+    db: sqlite3.Connection,
+    table_name: str,
+    row: sqlite3.Row,
+) -> tuple[dict[str, Any], bool]:
+    if table_name not in {"user_devices", "tt_user_devices", "license_activations"}:
+        return dict(row), False
+
+    item = dict(row)
+    updates: dict[str, str] = {}
+    for ip_key, region_key in (("last_ip", "last_ip_region"), ("login_ip", "login_ip_region")):
+        ip = normalize_ip_address(item.get(ip_key))
+        raw_region = str(item.get(region_key) or "").strip()
+        normalized_region = normalize_ip_region_text(raw_region)
+        if normalized_region and normalized_region != raw_region:
+            item[region_key] = normalized_region
+            updates[region_key] = normalized_region
+        if not ip or not _is_unknown_ip_region(item.get(region_key)):
+            continue
+        region = normalize_ip_region_text(resolve_ip_region(db, ip))
+        if _is_unknown_ip_region(region):
+            continue
+        item[region_key] = region
+        updates[region_key] = region
+
+    if not updates:
+        return item, False
+
+    set_sql = ", ".join([f"{column} = ?" for column in updates])
+    params: list[object] = list(updates.values()) + [item["id"]]
+    db.execute(f"UPDATE {table_name} SET {set_sql} WHERE id = ?", params)
+    return item, True
+
+
+def latest_user_device_ip_region(
+    db: sqlite3.Connection,
+    *,
+    table_name: str,
+    owner_column: str,
+    owner_id: int,
+) -> tuple[str, bool]:
+    allowed = {
+        ("user_devices", "user_id"),
+        ("tt_user_devices", "tt_user_id"),
+    }
+    if (table_name, owner_column) not in allowed:
+        return "", False
+    row = db.execute(
+        f"""
+        SELECT id, login_ip, login_ip_region, last_ip, last_ip_region
+        FROM {table_name}
+        WHERE {owner_column} = ?
+          AND (revoked_at IS NULL OR revoked_at = '')
+        ORDER BY COALESCE(last_verified_at, logged_in_at, '') DESC, id DESC
+        LIMIT 1
+        """,
+        (owner_id,),
+    ).fetchone()
+    if not row:
+        return "", False
+    item, changed = enrich_device_ip_region(db, table_name, row)
+    return normalize_ip_region_text(item.get("last_ip_region") or item.get("login_ip_region") or ""), changed
 
 
 def close_db(_: Exception | None = None) -> None:
@@ -5098,7 +5210,22 @@ def list_users():
         ORDER BY CASE WHEN u.role = 'admin' THEN 0 ELSE 1 END, u.created_at DESC, u.id DESC
         """
     ).fetchall()
-    return jsonify([dict(row) for row in rows])
+    items = []
+    changed = False
+    for row in rows:
+        item = dict(row)
+        region, row_changed = latest_user_device_ip_region(
+            db,
+            table_name="user_devices",
+            owner_column="user_id",
+            owner_id=int(item["id"]),
+        )
+        item["ip_region"] = region
+        items.append(item)
+        changed = changed or row_changed
+    if changed:
+        db.commit()
+    return jsonify(items)
 
 
 @app.route("/api/users", methods=["POST"])
@@ -5199,7 +5326,15 @@ def list_user_devices(user_id: int):
         """,
         (user_id,),
     ).fetchall()
-    return jsonify({"user": dict(user), "devices": [dict(row) for row in rows]})
+    devices = []
+    changed = False
+    for row in rows:
+        item, row_changed = enrich_device_ip_region(db, "user_devices", row)
+        devices.append(item)
+        changed = changed or row_changed
+    if changed:
+        db.commit()
+    return jsonify({"user": dict(user), "devices": devices})
 
 
 @app.route("/api/users/<int:user_id>/devices/<int:device_id>/revoke", methods=["POST"])
@@ -5271,7 +5406,22 @@ def list_tt_users():
         ORDER BY u.created_at DESC
         """
     ).fetchall()
-    return jsonify([dict(row) for row in rows])
+    items = []
+    changed = False
+    for row in rows:
+        item = dict(row)
+        region, row_changed = latest_user_device_ip_region(
+            db,
+            table_name="tt_user_devices",
+            owner_column="tt_user_id",
+            owner_id=int(item["id"]),
+        )
+        item["ip_region"] = region
+        items.append(item)
+        changed = changed or row_changed
+    if changed:
+        db.commit()
+    return jsonify(items)
 
 
 @app.route("/api/tt-users", methods=["POST"])
@@ -5365,7 +5515,15 @@ def list_tt_user_devices(user_id: int):
         """,
         (user_id,),
     ).fetchall()
-    return jsonify({"user": dict(user), "devices": [dict(row) for row in rows]})
+    devices = []
+    changed = False
+    for row in rows:
+        item, row_changed = enrich_device_ip_region(db, "tt_user_devices", row)
+        devices.append(item)
+        changed = changed or row_changed
+    if changed:
+        db.commit()
+    return jsonify({"user": dict(user), "devices": devices})
 
 
 @app.route("/api/tt-users/<int:user_id>/devices/<int:device_id>/revoke", methods=["POST"])
@@ -5442,9 +5600,17 @@ def list_user_devices_legacy(user_id: int):
         """,
         (user_id,),
     ).fetchall()
+    items = []
+    changed = False
+    for row in rows:
+        item, row_changed = enrich_device_ip_region(db, "user_devices", row)
+        items.append(item)
+        changed = changed or row_changed
+    if changed:
+        db.commit()
     return jsonify({
         "user": dict(user),
-        "items": [dict(row) for row in rows],
+        "items": items,
     })
 
 
@@ -5647,10 +5813,18 @@ def list_license_activations(license_id: int):
         """,
         (license_id,),
     ).fetchall()
+    items = []
+    changed = False
+    for row in rows:
+        item, row_changed = enrich_device_ip_region(db, "license_activations", row)
+        items.append(item)
+        changed = changed or row_changed
+    if changed:
+        db.commit()
     return jsonify(
         {
             "license": serialize_license_row(db, license_row),
-            "items": [serialize_activation_row(row) for row in rows],
+            "items": items,
         }
     )
 
