@@ -96,6 +96,10 @@ def test_ip_region_text_normalizes_common_isp_to_chinese() -> None:
     )
     assert manage_app.normalize_ip_region_text("中国 湖北 武汉 China Telecom") == "中国 湖北 武汉 中国电信"
     assert manage_app.normalize_ip_region_text("中国 湖北 武汉 China Unicom") == "中国 湖北 武汉 中国联通"
+    assert (
+        manage_app.normalize_ip_region_text("中国 上海市 上海 中国联通 Shanghai Province Network")
+        == "中国 上海市 上海 中国联通 上海市网络"
+    )
 
 
 def test_user_device_list_backfills_unknown_ip_region(tmp_path, monkeypatch) -> None:
@@ -274,8 +278,10 @@ def test_user_and_tt_lists_include_latest_ip_region(tmp_path, monkeypatch) -> No
 
     users = client.get("/api/users").get_json()
     user_item = next(item for item in users if item["id"] == user_id)
+    assert user_item["ip"] == "117.152.1.139"
     assert user_item["ip_region"] == "中国 湖北 武汉 中国移动"
 
     tt_users = client.get("/api/tt-users").get_json()
     tt_item = next(item for item in tt_users if item["id"] == tt_user_id)
+    assert tt_item["ip"] == "27.17.224.43"
     assert tt_item["ip_region"] == "中国 湖北 武汉 中国电信"

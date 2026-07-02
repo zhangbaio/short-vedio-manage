@@ -129,6 +129,42 @@ IP_REGION_TEXT_REPLACEMENTS = (
     ("Taiwan", "中国台湾"),
     ("Macau", "中国澳门"),
 )
+IP_REGION_ENGLISH_REGION_NAMES = {
+    "Beijing": "北京",
+    "Shanghai": "上海",
+    "Tianjin": "天津",
+    "Chongqing": "重庆",
+    "Hebei": "河北",
+    "Shanxi": "山西",
+    "Liaoning": "辽宁",
+    "Jilin": "吉林",
+    "Heilongjiang": "黑龙江",
+    "Jiangsu": "江苏",
+    "Zhejiang": "浙江",
+    "Anhui": "安徽",
+    "Fujian": "福建",
+    "Jiangxi": "江西",
+    "Shandong": "山东",
+    "Henan": "河南",
+    "Hubei": "湖北",
+    "Hunan": "湖南",
+    "Guangdong": "广东",
+    "Hainan": "海南",
+    "Sichuan": "四川",
+    "Guizhou": "贵州",
+    "Yunnan": "云南",
+    "Shaanxi": "陕西",
+    "Gansu": "甘肃",
+    "Qinghai": "青海",
+    "Taiwan": "台湾",
+    "Inner Mongolia": "内蒙古",
+    "Guangxi": "广西",
+    "Tibet": "西藏",
+    "Ningxia": "宁夏",
+    "Xinjiang": "新疆",
+    "Hong Kong": "香港",
+    "Macau": "澳门",
+}
 USERNAME_RE = re.compile(r"^(?:[A-Za-z0-9_]{2,30}|[^@\s]+@[^@\s]+\.[^@\s]+)$")
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 REMOTE_MESSAGE_STATUS_VALUES = {"pending", "sent", "running", "success", "failed", "canceled", "stopped"}
@@ -369,6 +405,19 @@ def normalize_ip_region_text(value: object) -> str:
         return ""
     for source, target in IP_REGION_TEXT_REPLACEMENTS:
         text = re.sub(re.escape(source), target, text, flags=re.IGNORECASE)
+    for source, target in sorted(IP_REGION_ENGLISH_REGION_NAMES.items(), key=lambda item: len(item[0]), reverse=True):
+        text = re.sub(
+            rf"\b{re.escape(source)}\s+(?:Province|City|Municipality)\s+Network\b",
+            f"{target}市网络" if target in {"北京", "上海", "天津", "重庆"} else f"{target}网络",
+            text,
+            flags=re.IGNORECASE,
+        )
+        text = re.sub(
+            rf"\b{re.escape(source)}\s+Network\b",
+            f"{target}网络",
+            text,
+            flags=re.IGNORECASE,
+        )
     # Collapse duplicate adjacent segments after replacements such as "中国 中国".
     parts: list[str] = []
     for part in text.split(" "):
@@ -502,19 +551,19 @@ def enrich_device_ip_region(
     return item, True
 
 
-def latest_user_device_ip_region(
+def latest_user_device_ip_context(
     db: sqlite3.Connection,
     *,
     table_name: str,
     owner_column: str,
     owner_id: int,
-) -> tuple[str, bool]:
+) -> tuple[str, str, bool]:
     allowed = {
         ("user_devices", "user_id"),
         ("tt_user_devices", "tt_user_id"),
     }
     if (table_name, owner_column) not in allowed:
-        return "", False
+        return "", "", False
     row = db.execute(
         f"""
         SELECT id, login_ip, login_ip_region, last_ip, last_ip_region
@@ -527,9 +576,11 @@ def latest_user_device_ip_region(
         (owner_id,),
     ).fetchone()
     if not row:
-        return "", False
+        return "", "", False
     item, changed = enrich_device_ip_region(db, table_name, row)
-    return normalize_ip_region_text(item.get("last_ip_region") or item.get("login_ip_region") or ""), changed
+    ip = normalize_ip_address(item.get("last_ip") or item.get("login_ip") or "")
+    region = normalize_ip_region_text(item.get("last_ip_region") or item.get("login_ip_region") or "")
+    return ip, region, changed
 
 
 def close_db(_: Exception | None = None) -> None:
@@ -5214,12 +5265,13 @@ def list_users():
     changed = False
     for row in rows:
         item = dict(row)
-        region, row_changed = latest_user_device_ip_region(
+        ip, region, row_changed = latest_user_device_ip_context(
             db,
             table_name="user_devices",
             owner_column="user_id",
             owner_id=int(item["id"]),
         )
+        item["ip"] = ip
         item["ip_region"] = region
         items.append(item)
         changed = changed or row_changed
@@ -5410,12 +5462,13 @@ def list_tt_users():
     changed = False
     for row in rows:
         item = dict(row)
-        region, row_changed = latest_user_device_ip_region(
+        ip, region, row_changed = latest_user_device_ip_context(
             db,
             table_name="tt_user_devices",
             owner_column="tt_user_id",
             owner_id=int(item["id"]),
         )
+        item["ip"] = ip
         item["ip_region"] = region
         items.append(item)
         changed = changed or row_changed
