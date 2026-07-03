@@ -62,8 +62,8 @@
                   <input id="statusInput" class="form-control" placeholder="成功 / 失败" />
                 </div>
                 <div class="col-md-2">
-                  <label class="form-label" for="uploaderInput">上传者</label>
-                  <input id="uploaderInput" class="form-control" placeholder="按上传者筛选" />
+                  <label class="form-label" for="uploaderInput">账号昵称</label>
+                  <input id="uploaderInput" class="form-control" placeholder="按账号昵称 / TIKTOK账号用户名筛选" />
                 </div>
                 <div class="col-md-2" id="ownerFilterWrap" hidden>
                   <label class="form-label" for="ownerSelect">所属用户</label>
@@ -104,7 +104,8 @@
                   <th>审核状态</th>
                   <th>审核未通过原因</th>
                   <th>上架状态</th>
-                  <th><button class="sortable-col" type="button" data-sort="uploader">上传者 <span class="sort-icon">↕</span></button></th>
+                  <th><button class="sortable-col" type="button" data-sort="uploader">账号昵称 <span class="sort-icon">↕</span></button></th>
+                  <th><button class="sortable-col" type="button" data-sort="tiktok_username">TIKTOK账号用户名 <span class="sort-icon">↕</span></button></th>
                 </tr>
               </thead>
               <tbody id="dramaTableBody"></tbody>

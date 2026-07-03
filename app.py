@@ -221,7 +221,8 @@ PLATFORM_DRAMA_SORTABLE_FIELDS = {
     "new_name": "COALESCE(ur.new_name, d.new_name, '')",
     "episodes": "COALESCE(ur.episodes, d.episodes, 0)",
     "uploaded": "COALESCE(ur.upload_status, '')",
-    "uploader": "COALESCE(ur.uploader_display, ur.owner_username, '')",
+    "uploader": "COALESCE(ur.uploader_display, ur.account_profile_name, ur.owner_username, '')",
+    "tiktok_username": "COALESCE(ur.tiktok_username, '')",
     "company": "COALESCE(d.company, '')",
     "owner_username": "COALESCE(ur.owner_username, '')",
 }
@@ -640,6 +641,7 @@ def _migrate_upload_records_owner_tt(db: sqlite3.Connection) -> None:
                 uploader_display TEXT,
                 account_profile_id TEXT,
                 account_profile_name TEXT,
+                tiktok_username TEXT,
                 device_name TEXT,
                 failure_reason TEXT,
                 extra_info TEXT,
@@ -970,6 +972,7 @@ def init_db() -> None:
                 uploader_display TEXT,
                 account_profile_id TEXT,
                 account_profile_name TEXT,
+                tiktok_username TEXT,
                 device_name TEXT,
                 failure_reason TEXT,
                 extra_info TEXT,
@@ -1054,6 +1057,7 @@ def init_db() -> None:
             "ALTER TABLE upload_records ADD COLUMN audit_reject_detail TEXT DEFAULT NULL",
             "ALTER TABLE upload_records ADD COLUMN online_status TEXT DEFAULT NULL",
             "ALTER TABLE upload_records ADD COLUMN online_at TEXT DEFAULT NULL",
+            "ALTER TABLE upload_records ADD COLUMN tiktok_username TEXT DEFAULT NULL",
             "ALTER TABLE upload_records ADD COLUMN distribution_status TEXT DEFAULT NULL",
             "ALTER TABLE upload_records ADD COLUMN distribution_at TEXT DEFAULT NULL",
             "ALTER TABLE upload_records ADD COLUMN distribution_detail TEXT DEFAULT NULL",
@@ -2654,6 +2658,14 @@ def sanitize_upload_record_payload(data: dict[str, Any]) -> tuple[dict[str, Any]
         "uploader_display": _upload_record_text(merged, "uploader_display", "uploader", "channel_nickname", limit=200),
         "account_profile_id": _upload_record_text(merged, "account_profile_id", limit=100),
         "account_profile_name": _upload_record_text(merged, "account_profile_name", "account_profile", limit=200),
+        "tiktok_username": _upload_record_text(
+            merged,
+            "tiktok_username",
+            "tiktok_account_username",
+            "tiktok_account",
+            "tiktok_login_email",
+            limit=200,
+        ),
         "device_name": _upload_record_text(merged, "device_name", limit=200),
         "failure_reason": _upload_record_text(merged, "failure_reason", "error_message", "error", limit=1000),
         "extra_info": _upload_record_text(merged, "extra_info", "details", limit=2000),
@@ -4787,9 +4799,9 @@ def list_upload_records():
     if search:
         like = f"%{search}%"
         clauses.append(
-            "(ur.original_name LIKE ? OR ur.new_name LIKE ? OR ur.project_name LIKE ? OR ur.uploader_display LIKE ?)"
+            "(ur.original_name LIKE ? OR ur.new_name LIKE ? OR ur.project_name LIKE ? OR ur.uploader_display LIKE ? OR ur.tiktok_username LIKE ?)"
         )
-        params.extend([like, like, like, like])
+        params.extend([like, like, like, like, like])
     date_from = str(request.args.get("date_from") or "").strip()
     if date_from:
         clauses.append("COALESCE(ur.date, substr(ur.record_time, 1, 10)) >= ?")
@@ -4887,8 +4899,10 @@ def list_platform_dramas():
         params.append(f"%{status}%")
     uploader = str(request.args.get("uploader") or "").strip()
     if uploader:
-        clauses.append("(ur.uploader_display LIKE ? OR ur.account_profile_name LIKE ? OR ur.owner_username LIKE ?)")
-        params.extend([f"%{uploader}%", f"%{uploader}%", f"%{uploader}%"])
+        clauses.append(
+            "(ur.uploader_display LIKE ? OR ur.account_profile_name LIKE ? OR ur.tiktok_username LIKE ? OR ur.owner_username LIKE ?)"
+        )
+        params.extend([f"%{uploader}%", f"%{uploader}%", f"%{uploader}%", f"%{uploader}%"])
     date_from = str(request.args.get("date_from") or "").strip()
     if date_from:
         clauses.append("COALESCE(ur.date, substr(ur.record_time, 1, 10), d.date) >= ?")
@@ -4939,6 +4953,7 @@ def list_platform_dramas():
             ur.uploader_display,
             ur.account_profile_id,
             ur.account_profile_name,
+            ur.tiktok_username,
             ur.device_name,
             ur.failure_reason,
             ur.extra_info,
