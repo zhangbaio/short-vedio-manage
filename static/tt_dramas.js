@@ -1,6 +1,6 @@
 (() => {
   const PLATFORM = "tt";
-  const EMPTY_COLSPAN = 14;
+  const EMPTY_COLSPAN = 10;
   const state = {
     page: 1,
     pageSize: 20,
@@ -168,11 +168,7 @@
         <td>${escapeHtml(item.original_name || "-")}</td>
         <td>${escapeHtml(item.new_name || "-")}</td>
         <td>${escapeHtml(item.episodes || "-")}</td>
-        <td>${escapeHtml(progressText(item))}</td>
         <td>${statusBadge(item.upload_status)}</td>
-        <td>${escapeHtml(item.series_id || item.mini_series_id || "-")}</td>
-        <td>${escapeHtml(item.audit_status || "-")}</td>
-        <td class="text-truncate" style="max-width: 260px">${escapeHtml(item.audit_reject_detail || item.audit_reject_reason || "-")}</td>
         <td>${statusTextBadge(item.online_status)}</td>
         <td>${escapeHtml(accountNickname(item))}</td>
         <td>${escapeHtml(tiktokUsername(item))}</td>
@@ -191,11 +187,9 @@
         </div>
         <div class="mobile-record-grid">
           <div><span>用户</span><strong>${escapeHtml(item.owner_username || "-")}</strong></div>
-          <div><span>TT ID</span><strong>${escapeHtml(item.series_id || item.mini_series_id || "-")}</strong></div>
           <div><span>上架</span><strong>${escapeHtml(item.online_status || "-")}</strong></div>
           <div><span>账号昵称</span><strong>${escapeHtml(accountNickname(item))}</strong></div>
           <div><span>TIKTOK用户名</span><strong>${escapeHtml(tiktokUsername(item))}</strong></div>
-          <div><span>审核原因</span><strong>${escapeHtml(item.audit_reject_detail || item.audit_reject_reason || "-")}</strong></div>
         </div>
       `;
       mobileList.appendChild(card);
@@ -232,18 +226,14 @@
   }
 
   function downloadCsv(filename, rows) {
-    const header = ["记录时间", "用户", "原剧名", "新剧名", "集数", "上传进度", "上传状态", "TT剧集ID", "审核状态", "审核未通过原因", "上架状态", "账号昵称", "TIKTOK账号用户名"];
+    const header = ["记录时间", "用户", "原剧名", "新剧名", "集数", "上传状态", "上架状态", "账号昵称", "TIKTOK用户名"];
     const body = rows.map((item) => [
       item.record_time || item.date || "",
       item.owner_username || "",
       item.original_name || "",
       item.new_name || "",
       item.episodes || "",
-      progressText(item),
       item.upload_status || "",
-      item.series_id || item.mini_series_id || "",
-      item.audit_status || "",
-      item.audit_reject_detail || item.audit_reject_reason || "",
       item.online_status || "",
       accountNickname(item),
       tiktokUsername(item),
@@ -255,14 +245,6 @@
     link.download = filename;
     link.click();
     URL.revokeObjectURL(link.href);
-  }
-
-  function progressText(item) {
-    const uploaded = Number(item.uploaded_video_count || 0);
-    const total = Number(item.video_file_count || 0);
-    if (total > 0) return `${uploaded}/${total}`;
-    if (uploaded > 0) return String(uploaded);
-    return "-";
   }
 
   function statusBadge(status) {
