@@ -2554,6 +2554,25 @@ def normalize_upload_record_platform(value: object) -> str:
     return aliases.get(normalized, normalized)
 
 
+def normalize_upload_record_dedupe_scope(value: object) -> str:
+    normalized = str(value or "").strip().lower()
+    aliases = {
+        "tiktok": "tiktok_username",
+        "tiktok_account": "tiktok_username",
+        "tiktok_account_username": "tiktok_username",
+        "tt_account": "tiktok_username",
+        "account_username": "tiktok_username",
+        "software": "software_user",
+        "software_user": "software_user",
+        "login_user": "software_user",
+        "owner": "software_user",
+        "owner_user": "software_user",
+    }
+    if normalized in {"tiktok_username", "software_user"}:
+        return normalized
+    return aliases.get(normalized, "software_user")
+
+
 def _upload_record_text(data: dict[str, Any], *keys: str, limit: int = 500) -> str:
     for key in keys:
         value = data.get(key)
@@ -4745,6 +4764,7 @@ def client_check_upload_duplicates():
     if not isinstance(raw_names, list):
         return jsonify({"ok": False, "message": "original_names 必须是数组"}), 400
     platform = normalize_upload_record_platform(data.get("platform") or "tt")
+    dedupe_scope = normalize_upload_record_dedupe_scope(data.get("dedupe_scope") or data.get("scope"))
 
     seen: set[str] = set()
     names: list[str] = []
@@ -4757,13 +4777,30 @@ def client_check_upload_duplicates():
         return jsonify({"ok": True, "data": {"duplicates": []}})
 
     placeholders = ",".join(["?"] * len(names))
-    rows = db.execute(
-        f"SELECT DISTINCT original_name FROM upload_records "
-        f"WHERE {owner_field} = ? AND platform = ? AND original_name IN ({placeholders})",
-        [owner_id, platform, *names],
-    ).fetchall()
+    if dedupe_scope == "tiktok_username":
+        tiktok_username = _upload_record_text(
+            data,
+            "tiktok_username",
+            "tiktok_account_username",
+            "tiktok_account",
+            "tiktok_login_email",
+            limit=200,
+        )
+        if not tiktok_username:
+            return jsonify({"ok": False, "message": "按 TIKTOK用户名 去重时缺少 tiktok_username"}), 400
+        rows = db.execute(
+            f"SELECT DISTINCT original_name FROM upload_records "
+            f"WHERE platform = ? AND tiktok_username = ? AND original_name IN ({placeholders})",
+            [platform, tiktok_username, *names],
+        ).fetchall()
+    else:
+        rows = db.execute(
+            f"SELECT DISTINCT original_name FROM upload_records "
+            f"WHERE {owner_field} = ? AND platform = ? AND original_name IN ({placeholders})",
+            [owner_id, platform, *names],
+        ).fetchall()
     duplicates = [str(r["original_name"]) for r in rows if r["original_name"]]
-    return jsonify({"ok": True, "data": {"duplicates": duplicates}})
+    return jsonify({"ok": True, "data": {"duplicates": duplicates, "dedupe_scope": dedupe_scope}})
 
 
 @app.route("/api/upload-records", methods=["GET"])
