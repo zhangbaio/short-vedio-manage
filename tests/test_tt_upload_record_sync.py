@@ -89,6 +89,7 @@ def test_tt_upload_record_sync_splits_account_nickname_and_username(tmp_path, mo
                     "uploader_display": "测试1",
                     "account_profile_name": "测试1",
                     "tiktok_username": "2720937754@qq.com",
+                    "remark": "需要人工复核封面",
                 }
             ]
         },
@@ -99,6 +100,7 @@ def test_tt_upload_record_sync_splits_account_nickname_and_username(tmp_path, mo
     assert sync_item["uploader_display"] == "测试1"
     assert sync_item["account_profile_name"] == "测试1"
     assert sync_item["tiktok_username"] == "2720937754@qq.com"
+    assert sync_item["remark"] == "需要人工复核封面"
 
     with client.session_transaction() as session:
         session["user_id"] = 1
@@ -113,6 +115,7 @@ def test_tt_upload_record_sync_splits_account_nickname_and_username(tmp_path, mo
     assert item["uploader_display"] == "测试1"
     assert item["account_profile_name"] == "测试1"
     assert item["tiktok_username"] == "2720937754@qq.com"
+    assert item["remark"] == "需要人工复核封面"
 
 
 def test_tt_duplicate_check_supports_tiktok_username_scope(tmp_path, monkeypatch) -> None:

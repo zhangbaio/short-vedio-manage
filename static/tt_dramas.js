@@ -1,6 +1,6 @@
 (() => {
   const PLATFORM = "tt";
-  const EMPTY_COLSPAN = 10;
+  const EMPTY_COLSPAN = 11;
   const state = {
     page: 1,
     pageSize: 20,
@@ -167,6 +167,7 @@
         <td>${escapeHtml(item.owner_username || "-")}</td>
         <td>${escapeHtml(item.original_name || "-")}</td>
         <td>${escapeHtml(item.new_name || "-")}</td>
+        <td>${escapeHtml(item.remark || "-")}</td>
         <td>${escapeHtml(item.episodes || "-")}</td>
         <td>${statusBadge(item.upload_status)}</td>
         <td>${statusTextBadge(item.online_status)}</td>
@@ -187,6 +188,7 @@
         </div>
         <div class="mobile-record-grid">
           <div><span>用户</span><strong>${escapeHtml(item.owner_username || "-")}</strong></div>
+          <div><span>备注</span><strong>${escapeHtml(item.remark || "-")}</strong></div>
           <div><span>上架</span><strong>${escapeHtml(item.online_status || "-")}</strong></div>
           <div><span>账号昵称</span><strong>${escapeHtml(accountNickname(item))}</strong></div>
           <div><span>TIKTOK用户名</span><strong>${escapeHtml(tiktokUsername(item))}</strong></div>
@@ -226,12 +228,13 @@
   }
 
   function downloadCsv(filename, rows) {
-    const header = ["记录时间", "用户", "原剧名", "新剧名", "集数", "上传状态", "上架状态", "账号昵称", "TIKTOK用户名"];
+    const header = ["记录时间", "用户", "原剧名", "新剧名", "备注", "集数", "上传状态", "上架状态", "账号昵称", "TIKTOK用户名"];
     const body = rows.map((item) => [
       item.record_time || item.date || "",
       item.owner_username || "",
       item.original_name || "",
       item.new_name || "",
+      item.remark || "",
       item.episodes || "",
       item.upload_status || "",
       item.online_status || "",

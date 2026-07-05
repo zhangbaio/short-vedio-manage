@@ -223,6 +223,7 @@ PLATFORM_DRAMA_SORTABLE_FIELDS = {
     "uploaded": "COALESCE(ur.upload_status, '')",
     "uploader": "COALESCE(ur.uploader_display, ur.account_profile_name, ur.owner_username, '')",
     "tiktok_username": "COALESCE(ur.tiktok_username, '')",
+    "remark": "COALESCE(ur.remark, '')",
     "company": "COALESCE(d.company, '')",
     "owner_username": "COALESCE(ur.owner_username, '')",
 }
@@ -644,6 +645,7 @@ def _migrate_upload_records_owner_tt(db: sqlite3.Connection) -> None:
                 tiktok_username TEXT,
                 device_name TEXT,
                 failure_reason TEXT,
+                remark TEXT,
                 extra_info TEXT,
                 series_id TEXT,
                 mini_series_id TEXT,
@@ -975,6 +977,7 @@ def init_db() -> None:
                 tiktok_username TEXT,
                 device_name TEXT,
                 failure_reason TEXT,
+                remark TEXT,
                 extra_info TEXT,
                 series_id TEXT,
                 mini_series_id TEXT,
@@ -1058,6 +1061,7 @@ def init_db() -> None:
             "ALTER TABLE upload_records ADD COLUMN online_status TEXT DEFAULT NULL",
             "ALTER TABLE upload_records ADD COLUMN online_at TEXT DEFAULT NULL",
             "ALTER TABLE upload_records ADD COLUMN tiktok_username TEXT DEFAULT NULL",
+            "ALTER TABLE upload_records ADD COLUMN remark TEXT DEFAULT NULL",
             "ALTER TABLE upload_records ADD COLUMN distribution_status TEXT DEFAULT NULL",
             "ALTER TABLE upload_records ADD COLUMN distribution_at TEXT DEFAULT NULL",
             "ALTER TABLE upload_records ADD COLUMN distribution_detail TEXT DEFAULT NULL",
@@ -2687,6 +2691,7 @@ def sanitize_upload_record_payload(data: dict[str, Any]) -> tuple[dict[str, Any]
         ),
         "device_name": _upload_record_text(merged, "device_name", limit=200),
         "failure_reason": _upload_record_text(merged, "failure_reason", "error_message", "error", limit=1000),
+        "remark": _upload_record_text(merged, "remark", "remarks", "note", "notes", limit=1000),
         "extra_info": _upload_record_text(merged, "extra_info", "details", limit=2000),
         "series_id": _upload_record_text(merged, "series_id", limit=100),
         "mini_series_id": _upload_record_text(merged, "mini_series_id", limit=100),
@@ -4915,11 +4920,11 @@ def list_platform_dramas():
             """
             (
                 ur.original_name LIKE ? OR ur.new_name LIKE ? OR ur.project_name LIKE ?
-                OR d.original_name LIKE ? OR d.new_name LIKE ?
+                OR ur.remark LIKE ? OR d.original_name LIKE ? OR d.new_name LIKE ?
             )
             """
         )
-        params.extend([like, like, like, like, like])
+        params.extend([like, like, like, like, like, like])
     company = str(request.args.get("company") or "").strip()
     if company:
         clauses.append("d.company = ?")
@@ -4993,6 +4998,7 @@ def list_platform_dramas():
             ur.tiktok_username,
             ur.device_name,
             ur.failure_reason,
+            ur.remark,
             ur.extra_info,
             ur.series_id,
             ur.mini_series_id,
