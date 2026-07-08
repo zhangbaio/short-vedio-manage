@@ -118,6 +118,67 @@ def test_tt_upload_record_sync_splits_account_nickname_and_username(tmp_path, mo
     assert item["remark"] == "需要人工复核封面"
 
 
+def test_tt_platform_dramas_filter_uses_tt_user_owner_id(tmp_path, monkeypatch) -> None:
+    client = _setup_test_app(tmp_path, monkeypatch)
+    with manage_app.app.app_context():
+        zhaoke_token = _create_tt_user_with_token(
+            username="zhaoke",
+            email="zhaoke@example.test",
+            machine_id="machine-zhaoke",
+        )
+        other_token = _create_tt_user_with_token(
+            username="other",
+            email="other@example.test",
+            machine_id="machine-other",
+        )
+        db = manage_app.get_db()
+        zhaoke_id = int(db.execute("SELECT id FROM tt_users WHERE username = ?", ("zhaoke",)).fetchone()["id"])
+        other_id = int(db.execute("SELECT id FROM tt_users WHERE username = ?", ("other",)).fetchone()["id"])
+
+    for account, machine_id, token, original_name in (
+        ("zhaoke", "machine-zhaoke", zhaoke_token, "玉镯莲心"),
+        ("other", "machine-other", other_token, "别人的短剧"),
+    ):
+        response = client.post(
+            "/client-api/upload-records/batch",
+            headers={
+                "X-TT-Account": account,
+                "X-TT-Machine-Id": machine_id,
+                "X-TT-Token": token,
+            },
+            json={
+                "records": [
+                    {
+                        "platform": "tt",
+                        "sync_key": f"record-{account}",
+                        "record_time": "2026-07-08T18:59:43+08:00",
+                        "original_name": original_name,
+                        "new_name": original_name,
+                        "upload_status": "成功",
+                    }
+                ]
+            },
+        )
+        assert response.status_code == 200
+
+    with client.session_transaction() as session:
+        session["user_id"] = 1
+        session["username"] = "admin"
+        session["role"] = "admin"
+        session["user_type"] = "user"
+
+    zhaoke_response = client.get(f"/api/platform-dramas?platform=tt&user_id={zhaoke_id}")
+    assert zhaoke_response.status_code == 200
+    zhaoke_items = zhaoke_response.get_json()["items"]
+    assert [item["owner_username"] for item in zhaoke_items] == ["zhaoke"]
+    assert zhaoke_items[0]["original_name"] == "玉镯莲心"
+
+    other_response = client.get(f"/api/platform-dramas?platform=tt&user_id={other_id}")
+    assert other_response.status_code == 200
+    other_items = other_response.get_json()["items"]
+    assert [item["owner_username"] for item in other_items] == ["other"]
+
+
 def test_tt_duplicate_check_supports_tiktok_username_scope(tmp_path, monkeypatch) -> None:
     client = _setup_test_app(tmp_path, monkeypatch)
     with manage_app.app.app_context():

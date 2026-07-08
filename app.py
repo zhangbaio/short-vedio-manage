@@ -701,6 +701,21 @@ def _owner_visibility_filter(alias: str = "ur") -> tuple[str | None, list]:
     return None, []
 
 
+def append_requested_owner_filter(
+    clauses: list[str],
+    params: list[object],
+    *,
+    platform: str,
+    requested_user_id: str,
+    alias: str = "ur",
+) -> None:
+    if not str(requested_user_id or "").strip().isdigit():
+        return
+    owner_column = "owner_tt_user_id" if platform == "tt" else "owner_user_id"
+    clauses.append(f"{alias}.{owner_column} = ?")
+    params.append(int(requested_user_id))
+
+
 def init_db() -> None:
     ensure_data_dir()
     with app.app_context():
@@ -4816,6 +4831,7 @@ def list_upload_records():
     role = str(session.get("role") or "user").strip().lower()
     page = max(1, int(request.args.get("page", 1) or 1))
     page_size = min(100, max(1, int(request.args.get("page_size", 20) or 20)))
+    platform = normalize_upload_record_platform(request.args.get("platform"))
 
     clauses = ["1=1"]
     params: list[object] = []
@@ -4824,12 +4840,13 @@ def list_upload_records():
         clauses.append(owner_clause)
         params.extend(owner_params)
     else:
-        requested_user_id = str(request.args.get("user_id") or "").strip()
-        if requested_user_id.isdigit():
-            clauses.append("ur.owner_user_id = ?")
-            params.append(int(requested_user_id))
+        append_requested_owner_filter(
+            clauses,
+            params,
+            platform=platform,
+            requested_user_id=str(request.args.get("user_id") or "").strip(),
+        )
 
-    platform = normalize_upload_record_platform(request.args.get("platform"))
     if platform in UPLOAD_RECORD_PLATFORMS:
         clauses.append("ur.platform = ?")
         params.append(platform)
@@ -4908,10 +4925,12 @@ def list_platform_dramas():
         clauses.append(owner_clause)
         params.extend(owner_params)
     else:
-        requested_user_id = str(request.args.get("user_id") or "").strip()
-        if requested_user_id.isdigit():
-            clauses.append("ur.owner_user_id = ?")
-            params.append(int(requested_user_id))
+        append_requested_owner_filter(
+            clauses,
+            params,
+            platform=platform,
+            requested_user_id=str(request.args.get("user_id") or "").strip(),
+        )
 
     search = str(request.args.get("search") or "").strip()
     if search:

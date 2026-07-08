@@ -135,7 +135,7 @@
     if (state.ownerOptionsLoaded) return;
     state.ownerOptionsLoaded = true;
     try {
-      const users = await requestJSON("/api/users");
+      const users = await requestJSON("/api/tt-users");
       const select = document.getElementById("ownerSelect");
       for (const user of users || []) {
         const option = document.createElement("option");
