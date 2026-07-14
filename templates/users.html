@@ -53,6 +53,7 @@
                   <thead>
                     <tr>
                       <th>用户名</th>
+                      {% if is_tt_users %}<th>TIKTOK用户名</th>{% endif %}
                       <th>姓名</th>
                       <th>邮箱</th>
                       <th>{{ '类型' if is_tt_users else '角色' }}</th>
@@ -227,6 +228,7 @@
       window.adminPage = {{ ('tt_users' if is_tt_users else 'users')|tojson }};
       window.userPageConfig = {
         apiBase: {{ ('/api/tt-users' if is_tt_users else '/api/users')|tojson }},
+        showTikTokAccounts: {{ is_tt_users|tojson }},
         emptyText: {{ ('暂无TT用户' if is_tt_users else '暂无用户')|tojson }},
         entityLabel: {{ ('TT用户' if is_tt_users else '用户')|tojson }},
         roleText: {{ ('TT授权用户' if is_tt_users else '')|tojson }},

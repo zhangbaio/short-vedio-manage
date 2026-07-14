@@ -10,6 +10,7 @@ import re
 import secrets
 import sqlite3
 import threading
+import unicodedata
 import uuid
 from functools import wraps
 from io import BytesIO
@@ -839,6 +840,19 @@ def init_db() -> None:
                 UNIQUE(tt_user_id, machine_id)
             );
 
+            CREATE TABLE IF NOT EXISTS tt_client_accounts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                owner_tt_user_id INTEGER NOT NULL,
+                machine_id TEXT NOT NULL,
+                client_account_id TEXT NOT NULL,
+                tiktok_username TEXT NOT NULL,
+                username_key TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (owner_tt_user_id) REFERENCES tt_users(id) ON DELETE CASCADE,
+                UNIQUE(owner_tt_user_id, machine_id, client_account_id)
+            );
+
             CREATE TABLE IF NOT EXISTS ip_region_cache (
                 ip TEXT PRIMARY KEY,
                 region TEXT,
@@ -1116,6 +1130,13 @@ def init_db() -> None:
         )
         db.execute(
             "CREATE INDEX IF NOT EXISTS idx_tt_user_devices_machine_id ON tt_user_devices(machine_id)"
+        )
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_tt_client_accounts_owner ON tt_client_accounts(owner_tt_user_id)"
+        )
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_tt_client_accounts_owner_machine "
+            "ON tt_client_accounts(owner_tt_user_id, machine_id)"
         )
         db.execute(
             "CREATE INDEX IF NOT EXISTS idx_remote_clients_owner_user_id ON remote_clients(owner_user_id)"
@@ -2519,7 +2540,8 @@ def _authenticate_tt_account_from_request(db: sqlite3.Connection) -> sqlite3.Row
     校验 token 签名、machine_id 一致、tt_users 存在、tt_user_devices 设备有效且 token 哈希匹配。
     成功返回 tt_users 行，否则返回 None。
     """
-    data = request.get_json(silent=True) or {}
+    raw_data = request.get_json(silent=True)
+    data = raw_data if isinstance(raw_data, dict) else {}
     token = str(request.headers.get("X-TT-Token") or data.get("tt_token") or "").strip()
     machine_id = str(request.headers.get("X-TT-Machine-Id") or data.get("tt_machine_id") or "").strip()
     account = str(request.headers.get("X-TT-Account") or data.get("tt_account") or "").strip()
@@ -2552,6 +2574,75 @@ def _authenticate_tt_account_from_request(db: sqlite3.Connection) -> sqlite3.Row
     if not device_row or device_row["token_hash"] != hash_token(token):
         return None
     return user_row
+
+
+def normalize_tt_client_username(value: object) -> tuple[str, str]:
+    username = unicodedata.normalize("NFC", str(value or "").strip())
+    return username, username.casefold()
+
+
+def sanitize_tt_client_account_snapshot(
+    data: dict[str, Any],
+) -> tuple[list[dict[str, str]], str | None]:
+    raw_accounts = data.get("accounts")
+    if not isinstance(raw_accounts, list):
+        return [], "accounts 必须是数组"
+    if len(raw_accounts) > 200:
+        return [], "单次最多同步 200 个 TikTok 账号"
+
+    accounts: list[dict[str, str]] = []
+    seen_account_ids: set[str] = set()
+    for index, raw_account in enumerate(raw_accounts, start=1):
+        if not isinstance(raw_account, dict):
+            return [], f"第 {index} 个账号必须是对象"
+        if "client_account_id" in raw_account:
+            raw_account_id = raw_account["client_account_id"]
+        else:
+            raw_account_id = raw_account.get("profile_id")
+        if not isinstance(raw_account_id, str):
+            return [], f"第 {index} 个账号的 client_account_id 必须是字符串"
+        account_id = raw_account_id.strip()
+        if not account_id:
+            return [], f"第 {index} 个账号缺少 client_account_id"
+        if len(account_id) > 128 or "\n" in account_id or "\r" in account_id:
+            return [], f"第 {index} 个账号的 client_account_id 无效"
+        if account_id in seen_account_ids:
+            return [], f"client_account_id 重复：{account_id}"
+
+        raw_username = raw_account.get("tiktok_username")
+        if not isinstance(raw_username, str):
+            return [], f"第 {index} 个账号的 tiktok_username 必须是字符串"
+        username, username_key = normalize_tt_client_username(raw_username)
+        if not username:
+            return [], f"第 {index} 个账号缺少 tiktok_username"
+        if len(username) > 200 or "\n" in username or "\r" in username:
+            return [], f"第 {index} 个账号的 tiktok_username 无效"
+
+        seen_account_ids.add(account_id)
+        accounts.append(
+            {
+                "client_account_id": account_id,
+                "tiktok_username": username,
+                "username_key": username_key,
+            }
+        )
+    return accounts, None
+
+
+def delete_tt_client_accounts_for_machine(
+    db: sqlite3.Connection,
+    *,
+    owner_tt_user_id: int,
+    machine_id: str,
+) -> int:
+    result = db.execute(
+        """
+        DELETE FROM tt_client_accounts
+        WHERE owner_tt_user_id = ? AND machine_id = ?
+        """,
+        (owner_tt_user_id, machine_id),
+    )
+    return max(0, int(result.rowcount or 0))
 
 
 def normalize_upload_record_platform(value: object) -> str:
@@ -3373,7 +3464,7 @@ def activate_tt_account_for_machine(
                 raise ValueError("TT账号已在其他电脑登录")
             old_rows = db.execute(
                 """
-                SELECT id
+                SELECT id, machine_id
                 FROM tt_user_devices
                 WHERE tt_user_id = ?
                   AND machine_id != ?
@@ -3391,6 +3482,11 @@ def activate_tt_account_for_machine(
                     WHERE id = ? AND (revoked_at IS NULL OR revoked_at = '')
                     """,
                     (now_value, old_row["id"]),
+                )
+                delete_tt_client_accounts_for_machine(
+                    db,
+                    owner_tt_user_id=int(user_row["id"]),
+                    machine_id=str(old_row["machine_id"]),
                 )
             replaced_device_count = len(old_rows)
 
@@ -4177,24 +4273,35 @@ def client_logout_tt_account():
     if account and account not in {user_row["username"], user_row["email"] or ""}:
         return jsonify({"ok": False, "message": "登录凭证与当前TT账号不匹配"}), 400
 
-    result = db.execute(
-        """
-        UPDATE tt_user_devices
-        SET revoked_at = ?
-        WHERE tt_user_id = ?
-          AND machine_id = ?
-          AND token_hash = ?
-          AND (revoked_at IS NULL OR revoked_at = '')
-        """,
-        (now_iso(), user_row["id"], machine_id, hash_token(token)),
-    )
-    db.execute(
-        "UPDATE tt_users SET updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-        (user_row["id"],),
-    )
-    db.commit()
-    if result.rowcount == 0:
-        return jsonify({"ok": False, "message": "当前机器未登录或登录凭证已失效"}), 400
+    try:
+        db.execute("BEGIN IMMEDIATE")
+        result = db.execute(
+            """
+            UPDATE tt_user_devices
+            SET revoked_at = ?
+            WHERE tt_user_id = ?
+              AND machine_id = ?
+              AND token_hash = ?
+              AND (revoked_at IS NULL OR revoked_at = '')
+            """,
+            (now_iso(), user_row["id"], machine_id, hash_token(token)),
+        )
+        if result.rowcount == 0:
+            db.rollback()
+            return jsonify({"ok": False, "message": "当前机器未登录或登录凭证已失效"}), 400
+        delete_tt_client_accounts_for_machine(
+            db,
+            owner_tt_user_id=int(user_row["id"]),
+            machine_id=machine_id,
+        )
+        db.execute(
+            "UPDATE tt_users SET updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (user_row["id"],),
+        )
+        db.commit()
+    except sqlite3.Error:
+        db.rollback()
+        raise
     return jsonify(
         {
             "ok": True,
@@ -4697,6 +4804,115 @@ def set_upload_state(drama_id: int):
     )
     db.commit()
     return jsonify({"id": drama_id, "uploaded": uploaded_value, "uploader": uploader_value})
+
+
+@app.route("/client-api/tt/accounts/snapshot", methods=["PUT"])
+def client_sync_tt_account_snapshot():
+    raw_data = request.get_json(silent=True)
+    if not isinstance(raw_data, dict):
+        return jsonify({"ok": False, "message": "请求体必须是 JSON 对象"}), 400
+    data = raw_data
+
+    accounts, error = sanitize_tt_client_account_snapshot(data)
+    if error:
+        return jsonify({"ok": False, "message": error}), 400
+
+    machine_id = str(
+        request.headers.get("X-TT-Machine-Id")
+        or data.get("tt_machine_id")
+        or ""
+    ).strip()
+    account_ids = [item["client_account_id"] for item in accounts]
+    now_value = now_iso()
+    db = get_db()
+
+    try:
+        db.execute("BEGIN IMMEDIATE")
+        tt_user_row = _authenticate_tt_account_from_request(db)
+        if tt_user_row is None:
+            db.rollback()
+            return jsonify({"ok": False, "message": "鉴权失败：TT 登录态无效"}), 401
+        owner_tt_user_id = int(tt_user_row["id"])
+        existing_rows = db.execute(
+            """
+            SELECT client_account_id, tiktok_username, username_key
+            FROM tt_client_accounts
+            WHERE owner_tt_user_id = ? AND machine_id = ?
+            """,
+            (owner_tt_user_id, machine_id),
+        ).fetchall()
+        existing_by_id = {str(row["client_account_id"]): row for row in existing_rows}
+
+        created_count = 0
+        updated_count = 0
+        for item in accounts:
+            existing = existing_by_id.get(item["client_account_id"])
+            if existing is None:
+                created_count += 1
+            elif (
+                str(existing["tiktok_username"] or "") != item["tiktok_username"]
+                or str(existing["username_key"] or "") != item["username_key"]
+            ):
+                updated_count += 1
+            db.execute(
+                """
+                INSERT INTO tt_client_accounts (
+                    owner_tt_user_id, machine_id, client_account_id,
+                    tiktok_username, username_key, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(owner_tt_user_id, machine_id, client_account_id)
+                DO UPDATE SET
+                    tiktok_username = excluded.tiktok_username,
+                    username_key = excluded.username_key,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    owner_tt_user_id,
+                    machine_id,
+                    item["client_account_id"],
+                    item["tiktok_username"],
+                    item["username_key"],
+                    now_value,
+                    now_value,
+                ),
+            )
+
+        if account_ids:
+            placeholders = ", ".join("?" for _ in account_ids)
+            delete_result = db.execute(
+                f"""
+                DELETE FROM tt_client_accounts
+                WHERE owner_tt_user_id = ? AND machine_id = ?
+                  AND client_account_id NOT IN ({placeholders})
+                """,
+                (owner_tt_user_id, machine_id, *account_ids),
+            )
+        else:
+            delete_result = db.execute(
+                """
+                DELETE FROM tt_client_accounts
+                WHERE owner_tt_user_id = ? AND machine_id = ?
+                """,
+                (owner_tt_user_id, machine_id),
+            )
+        deleted_count = max(0, int(delete_result.rowcount or 0))
+        db.commit()
+    except sqlite3.Error:
+        db.rollback()
+        app.logger.exception("同步客户端 TikTok 账号快照失败")
+        return jsonify({"ok": False, "message": "同步客户端 TikTok 账号失败"}), 500
+
+    return jsonify(
+        {
+            "ok": True,
+            "data": {
+                "total": len(accounts),
+                "created": created_count,
+                "updated": updated_count,
+                "deleted": deleted_count,
+            },
+        }
+    )
 
 
 @app.route("/client-api/upload-records/batch", methods=["POST"])
@@ -5535,10 +5751,35 @@ def list_tt_users():
         ORDER BY u.created_at DESC
         """
     ).fetchall()
+    account_rows = db.execute(
+        """
+        SELECT owner_tt_user_id, tiktok_username, username_key, updated_at
+        FROM tt_client_accounts
+        ORDER BY owner_tt_user_id, updated_at DESC, id DESC
+        """
+    ).fetchall()
+    usernames_by_owner: dict[int, list[str]] = {}
+    username_keys_by_owner: dict[int, set[str]] = {}
+    for account_row in account_rows:
+        owner_id = int(account_row["owner_tt_user_id"])
+        username = str(account_row["tiktok_username"] or "").strip()
+        username_key = str(account_row["username_key"] or "").strip()
+        if not username or not username_key:
+            continue
+        seen_keys = username_keys_by_owner.setdefault(owner_id, set())
+        if username_key in seen_keys:
+            continue
+        seen_keys.add(username_key)
+        usernames_by_owner.setdefault(owner_id, []).append(username)
+
     items = []
     changed = False
     for row in rows:
         item = dict(row)
+        item["tiktok_usernames"] = sorted(
+            usernames_by_owner.get(int(item["id"]), []),
+            key=str.casefold,
+        )
         ip, region, row_changed = latest_user_device_ip_context(
             db,
             table_name="tt_user_devices",
@@ -5661,17 +5902,36 @@ def list_tt_user_devices(user_id: int):
 @admin_required
 def revoke_tt_user_device(user_id: int, device_id: int):
     db = get_db()
-    result = db.execute(
-        """
-        UPDATE tt_user_devices
-        SET revoked_at = ?
-        WHERE id = ? AND tt_user_id = ? AND (revoked_at IS NULL OR revoked_at = '')
-        """,
-        (now_iso(), device_id, user_id),
-    )
-    db.commit()
-    if result.rowcount == 0:
-        return jsonify({"error": "未找到可解绑的TT设备"}), 404
+    try:
+        db.execute("BEGIN IMMEDIATE")
+        device_row = db.execute(
+            """
+            SELECT machine_id
+            FROM tt_user_devices
+            WHERE id = ? AND tt_user_id = ? AND (revoked_at IS NULL OR revoked_at = '')
+            """,
+            (device_id, user_id),
+        ).fetchone()
+        if device_row is None:
+            db.rollback()
+            return jsonify({"error": "未找到可解绑的TT设备"}), 404
+        db.execute(
+            """
+            UPDATE tt_user_devices
+            SET revoked_at = ?
+            WHERE id = ? AND tt_user_id = ? AND (revoked_at IS NULL OR revoked_at = '')
+            """,
+            (now_iso(), device_id, user_id),
+        )
+        delete_tt_client_accounts_for_machine(
+            db,
+            owner_tt_user_id=user_id,
+            machine_id=str(device_row["machine_id"]),
+        )
+        db.commit()
+    except sqlite3.Error:
+        db.rollback()
+        raise
     return jsonify({"message": "TT设备已解绑"})
 
 

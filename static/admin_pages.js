@@ -10,6 +10,7 @@ let userPasswordModal = null;
 let userDevicesModal = null;
 let userPageConfig = {
   apiBase: "/api/users",
+  showTikTokAccounts: false,
   emptyText: "暂无用户",
   entityLabel: "用户",
   roleText: "",
@@ -89,7 +90,8 @@ async function loadUsers() {
     tbody.innerHTML = "";
     if (mobileList) mobileList.innerHTML = "";
     if (!users.length) {
-      tbody.innerHTML = `<tr><td colspan="11" class="text-center text-muted py-4">${escapeHtml(userPageConfig.emptyText)}</td></tr>`;
+      const columnCount = userPageConfig.showTikTokAccounts ? 12 : 11;
+      tbody.innerHTML = `<tr><td colspan="${columnCount}" class="text-center text-muted py-4">${escapeHtml(userPageConfig.emptyText)}</td></tr>`;
       renderMobileEmptyState(mobileList, userPageConfig.emptyText);
       return;
     }
@@ -101,6 +103,7 @@ async function loadUsers() {
       const actionButtons = buildUserActionButtons(user, isSelf);
       tr.innerHTML = `
         <td>${escapeHtml(user.username)}</td>
+        ${userPageConfig.showTikTokAccounts ? `<td>${buildTikTokUsernameList(user.tiktok_usernames)}</td>` : ""}
         <td>${escapeHtml(user.full_name || "-")}</td>
         <td>${escapeHtml(user.email || "-")}</td>
         <td>${buildUserRoleBadge(user)}</td>
@@ -118,6 +121,17 @@ async function loadUsers() {
   } catch (error) {
     showToast(error.message, "danger");
   }
+}
+
+function buildTikTokUsernameList(usernames) {
+  if (!Array.isArray(usernames)) return '<span class="text-muted">-</span>';
+  const values = usernames
+    .map((value) => String(value || "").trim())
+    .filter(Boolean);
+  if (!values.length) return '<span class="text-muted">-</span>';
+  return values
+    .map((value) => `<span class="font-monospace small">${escapeHtml(value)}</span>`)
+    .join("<br>");
 }
 
 function getUserRoleText(user) {
@@ -152,6 +166,7 @@ function buildUserMobileCard(user, actionButtons, statusText, statusClass) {
     </div>
     <div class="mobile-record-subtitle">${escapeHtml([user.full_name, user.email].filter(Boolean).join(" · ") || "未填写姓名/邮箱")}</div>
     <div class="mobile-record-grid">
+      ${userPageConfig.showTikTokAccounts ? `<div><span>TIKTOK用户名</span><strong>${buildTikTokUsernameList(user.tiktok_usernames)}</strong></div>` : ""}
       <div><span>姓名</span><strong>${escapeHtml(user.full_name || "-")}</strong></div>
       <div><span>角色</span><strong>${buildUserRoleBadge(user)}</strong></div>
       <div><span>授权</span><strong>${escapeHtml(user.edition || "pro")}</strong></div>
