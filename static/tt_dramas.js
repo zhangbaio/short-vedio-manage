@@ -1,6 +1,6 @@
 (() => {
   const PLATFORM = "tt";
-  const EMPTY_COLSPAN = 11;
+  const EMPTY_COLSPAN = 12;
   const state = {
     page: 1,
     pageSize: 20,
@@ -169,6 +169,7 @@
         <td>${escapeHtml(item.new_name || "-")}</td>
         <td>${escapeHtml(item.remark || "-")}</td>
         <td>${escapeHtml(item.episodes || "-")}</td>
+        <td>${escapeHtml(formatPlayCount(item.play_count))}</td>
         <td>${statusBadge(item.upload_status)}</td>
         <td>${statusTextBadge(item.online_status)}</td>
         <td>${escapeHtml(accountNickname(item))}</td>
@@ -189,6 +190,7 @@
         <div class="mobile-record-grid">
           <div><span>用户</span><strong>${escapeHtml(item.owner_username || "-")}</strong></div>
           <div><span>备注</span><strong>${escapeHtml(item.remark || "-")}</strong></div>
+          <div><span>播放量</span><strong>${escapeHtml(formatPlayCount(item.play_count))}</strong></div>
           <div><span>上架</span><strong>${escapeHtml(item.online_status || "-")}</strong></div>
           <div><span>账号昵称</span><strong>${escapeHtml(accountNickname(item))}</strong></div>
           <div><span>TIKTOK用户名</span><strong>${escapeHtml(tiktokUsername(item))}</strong></div>
@@ -228,7 +230,7 @@
   }
 
   function downloadCsv(filename, rows) {
-    const header = ["记录时间", "用户", "原剧名", "新剧名", "备注", "集数", "上传状态", "上架状态", "账号昵称", "TIKTOK用户名"];
+    const header = ["记录时间", "用户", "原剧名", "新剧名", "备注", "集数", "播放量", "上传状态", "上架状态", "账号昵称", "TIKTOK用户名"];
     const body = rows.map((item) => [
       item.record_time || item.date || "",
       item.owner_username || "",
@@ -236,6 +238,7 @@
       item.new_name || "",
       item.remark || "",
       item.episodes || "",
+      item.play_count ?? "",
       item.upload_status || "",
       item.online_status || "",
       accountNickname(item),
@@ -278,6 +281,13 @@
 
   function tiktokUsername(item) {
     return item.tiktok_username || item.tiktok_account_username || item.tiktok_account || "-";
+  }
+
+  function formatPlayCount(value) {
+    if (value === null || value === undefined || value === "") return "-";
+    const number = Number(value);
+    if (!Number.isFinite(number)) return value;
+    return Math.trunc(number).toLocaleString("zh-CN");
   }
 
   function csvCell(value) {
