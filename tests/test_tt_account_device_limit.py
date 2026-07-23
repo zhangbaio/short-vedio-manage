@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime
 
 import app as manage_app
+import pytest
 from werkzeug.security import generate_password_hash
 
 
@@ -105,4 +106,17 @@ def test_tt_account_verify_rejects_device_outside_current_limit(tmp_path, monkey
         },
     )
     assert accepted.status_code == 200
-    assert accepted.get_json()["ok"] is True
+    response = accepted.get_json()
+    assert response["ok"] is True
+    ticket = response["data"]["authorization_ticket"]
+    claims = manage_app.verify_tt_authorization_ticket(ticket)
+    assert claims["subject"] == "zhangbiao"
+    assert claims["machine_id"] == "machine-b"
+    assert claims["app_name"] == "TikTok Uploader"
+    assert claims["app_version"] == "1.0"
+    assert claims["token_sha256"] == manage_app.hash_token(response["data"]["token"])
+
+    parts = ticket.split(".")
+    parts[2] = ("A" if parts[2][0] != "A" else "B") + parts[2][1:]
+    with pytest.raises(ValueError):
+        manage_app.verify_tt_authorization_ticket(".".join(parts))

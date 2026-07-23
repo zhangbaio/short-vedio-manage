@@ -60,6 +60,14 @@ def test_account_device_records_login_and_last_ip(tmp_path, monkeypatch) -> None
     )
     assert login_response.status_code == 200
     login_data = login_response.get_json()["data"]
+    login_claims = manage_app.verify_tt_authorization_ticket(
+        login_data["authorization_ticket"]
+    )
+    assert login_claims["subject"] == "ipuser"
+    assert login_claims["machine_id"] == "machine-ip"
+    assert login_claims["token_sha256"] == manage_app.hash_token(login_data["token"])
+    assert login_claims["app_name"] == "shortdrama"
+    assert login_claims["app_version"] == "1.0"
 
     verify_response = client.post(
         "/account/verify",
@@ -74,6 +82,13 @@ def test_account_device_records_login_and_last_ip(tmp_path, monkeypatch) -> None
         },
     )
     assert verify_response.status_code == 200
+    verify_data = verify_response.get_json()["data"]
+    verify_claims = manage_app.verify_tt_authorization_ticket(
+        verify_data["authorization_ticket"]
+    )
+    assert verify_claims["subject"] == "ipuser"
+    assert verify_claims["machine_id"] == "machine-ip"
+    assert verify_claims["token_sha256"] == manage_app.hash_token(verify_data["token"])
 
     with manage_app.app.app_context():
         row = manage_app.get_db().execute(

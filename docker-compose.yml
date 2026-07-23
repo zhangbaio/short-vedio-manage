@@ -10,6 +10,7 @@ services:
       TZ: ${TZ:-Asia/Shanghai}
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required}
       LICENSE_SIGNING_KEY: ${LICENSE_SIGNING_KEY:?LICENSE_SIGNING_KEY is required}
+      LICENSE_TICKET_TTL_SECONDS: ${LICENSE_TICKET_TTL_SECONDS:-4200}
       WX_MINIDRAMA_APPID: ${WX_MINIDRAMA_APPID:-}
       WX_MINIDRAMA_APPSECRET: ${WX_MINIDRAMA_APPSECRET:-}
       # 红果签名后端(本地 sign_server, 经 SSH 隧道映射到宿主机端口); 值在 .env 配置

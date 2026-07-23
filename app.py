@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import datetime
 import hashlib
 import ipaddress
@@ -30,6 +31,10 @@ from flask import (
     session,
     url_for,
 )
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from openpyxl import Workbook, load_workbook
 from itsdangerous import BadSignature, BadTimeSignature, SignatureExpired, URLSafeTimedSerializer
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -95,7 +100,13 @@ LICENSE_TOKEN_MAX_AGE_SECONDS = 60 * 60 * 24 * 30
 ACCOUNT_TOKEN_SALT = "desktop-account"
 TT_ACCOUNT_TOKEN_SALT = "tiktok-account"
 ACCOUNT_TOKEN_MAX_AGE_SECONDS = _int_env("ACCOUNT_TOKEN_MAX_AGE_SECONDS", 60 * 60 * 24)
-ACCOUNT_OFFLINE_GRACE_HOURS = _int_env("ACCOUNT_OFFLINE_GRACE_HOURS", 72)
+LICENSE_TICKET_VERSION = "v1"
+LICENSE_TICKET_TTL_SECONDS = _int_env("LICENSE_TICKET_TTL_SECONDS", 70 * 60)
+LICENSE_TICKET_KDF_INFO = b"short-vedio-manage/license-ticket/v1"
+SECP256R1_ORDER = int(
+    "FFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551",
+    16,
+)
 ACCOUNT_DEFAULT_MAX_DEVICES = 1
 TRUSTED_PROXY_CIDRS = tuple(
     part.strip()
@@ -1356,6 +1367,162 @@ def verify_tt_account_token(token: str) -> dict:
         )
     except (BadSignature, BadTimeSignature, SignatureExpired):
         raise ValueError("TT账号登录凭证无效或已过期")
+
+
+def _base64url_encode(value: bytes) -> str:
+    return base64.urlsafe_b64encode(value).rstrip(b"=").decode("ascii")
+
+
+def _base64url_decode(value: str) -> bytes:
+    padding = "=" * (-len(value) % 4)
+    return base64.urlsafe_b64decode(value + padding)
+
+
+def get_license_ticket_private_key() -> ec.EllipticCurvePrivateKey:
+    secret = str(app.config["LICENSE_SIGNING_KEY"] or "").encode("utf-8")
+    if not secret:
+        raise RuntimeError("LICENSE_SIGNING_KEY must not be empty")
+    key_material = HKDF(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=None,
+        info=LICENSE_TICKET_KDF_INFO,
+    ).derive(secret)
+    private_value = (int.from_bytes(key_material, "big") % (SECP256R1_ORDER - 1)) + 1
+    return ec.derive_private_key(private_value, ec.SECP256R1())
+
+
+def get_license_ticket_key_id() -> str:
+    public_der = get_license_ticket_private_key().public_key().public_bytes(
+        serialization.Encoding.DER,
+        serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+    return hashlib.sha256(public_der).hexdigest()[:16]
+
+
+def issue_tt_authorization_ticket(
+    *,
+    user_row: sqlite3.Row,
+    machine_id: str,
+    token: str,
+    app_name: str,
+    app_version: str,
+    verified_at: str,
+) -> str:
+    now = datetime.datetime.now(datetime.timezone.utc)
+    key_id = get_license_ticket_key_id()
+    account_expiry = parse_iso_datetime(str(user_row["expires_at"] or ""))
+    if account_expiry is not None:
+        if account_expiry.tzinfo is None:
+            account_expiry = account_expiry.astimezone()
+        account_expires_at = account_expiry.astimezone(datetime.timezone.utc).isoformat(
+            timespec="seconds"
+        )
+    else:
+        account_expires_at = ""
+    payload = {
+        "version": 1,
+        "key_id": key_id,
+        "subject": str(user_row["username"] or ""),
+        "email": str(user_row["email"] or ""),
+        "machine_id": machine_id,
+        "token_sha256": hash_token(token),
+        "edition": str(user_row["edition"] or ""),
+        "licensee": str(user_row["username"] or ""),
+        "account_expires_at": account_expires_at,
+        "app_name": app_name,
+        "app_version": app_version,
+        "verified_at": verified_at,
+        "issued_at": now.isoformat(timespec="seconds"),
+        "not_after": (
+            now + datetime.timedelta(seconds=LICENSE_TICKET_TTL_SECONDS)
+        ).isoformat(timespec="seconds"),
+    }
+    payload_json = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    payload_segment = _base64url_encode(payload_json)
+    signed_value = f"{LICENSE_TICKET_VERSION}.{key_id}.{payload_segment}".encode("ascii")
+    signature = get_license_ticket_private_key().sign(
+        signed_value,
+        ec.ECDSA(hashes.SHA256()),
+    )
+    return f"{signed_value.decode('ascii')}.{_base64url_encode(signature)}"
+
+
+def issue_license_authorization_ticket(
+    *,
+    license_row: sqlite3.Row,
+    machine_id: str,
+    token: str,
+    app_name: str,
+    app_version: str,
+    verified_at: str,
+) -> str:
+    now = datetime.datetime.now(datetime.timezone.utc)
+    key_id = get_license_ticket_key_id()
+    account_expiry = parse_iso_datetime(str(license_row["expires_at"] or ""))
+    if account_expiry is not None:
+        if account_expiry.tzinfo is None:
+            account_expiry = account_expiry.astimezone()
+        account_expires_at = account_expiry.astimezone(datetime.timezone.utc).isoformat(
+            timespec="seconds"
+        )
+    else:
+        account_expires_at = ""
+    payload = {
+        "version": 1,
+        "key_id": key_id,
+        "subject": str(license_row["license_key"] or ""),
+        "email": "",
+        "machine_id": machine_id,
+        "token_sha256": hash_token(token),
+        "edition": str(license_row["edition"] or ""),
+        "licensee": str(license_row["licensee"] or ""),
+        "account_expires_at": account_expires_at,
+        "app_name": app_name,
+        "app_version": app_version,
+        "verified_at": verified_at,
+        "issued_at": now.isoformat(timespec="seconds"),
+        "not_after": (
+            now + datetime.timedelta(seconds=LICENSE_TICKET_TTL_SECONDS)
+        ).isoformat(timespec="seconds"),
+    }
+    payload_json = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    payload_segment = _base64url_encode(payload_json)
+    signed_value = f"{LICENSE_TICKET_VERSION}.{key_id}.{payload_segment}".encode("ascii")
+    signature = get_license_ticket_private_key().sign(
+        signed_value,
+        ec.ECDSA(hashes.SHA256()),
+    )
+    return f"{signed_value.decode('ascii')}.{_base64url_encode(signature)}"
+
+
+def verify_tt_authorization_ticket(ticket: str) -> dict:
+    try:
+        version, key_id, payload_segment, signature_segment = str(ticket or "").split(".")
+        if version != LICENSE_TICKET_VERSION or key_id != get_license_ticket_key_id():
+            raise ValueError("authorization ticket version or key id is invalid")
+        signed_value = f"{version}.{key_id}.{payload_segment}".encode("ascii")
+        get_license_ticket_private_key().public_key().verify(
+            _base64url_decode(signature_segment),
+            signed_value,
+            ec.ECDSA(hashes.SHA256()),
+        )
+        payload = json.loads(_base64url_decode(payload_segment).decode("utf-8"))
+    except (InvalidSignature, ValueError, TypeError, json.JSONDecodeError) as exc:
+        raise ValueError("authorization ticket signature is invalid") from exc
+    if not isinstance(payload, dict) or payload.get("key_id") != key_id:
+        raise ValueError("authorization ticket payload is invalid")
+    return payload
 
 
 def parse_iso_datetime(value: str | None) -> datetime.datetime | None:
@@ -3206,28 +3373,36 @@ def build_account_auth_response(
     logged_in_at: str | None = None,
     last_verified_at: str | None = None,
     replaced_device_count: int = 0,
+    app_name: str = "",
+    app_version: str = "",
 ) -> dict:
     now_iso = datetime.datetime.now().isoformat(timespec="seconds")
-    offline_grace_until = (
-        datetime.datetime.now() + datetime.timedelta(hours=ACCOUNT_OFFLINE_GRACE_HOURS)
-    ).isoformat(timespec="seconds")
+    verified_at = last_verified_at or now_iso
     username = str(user_row["username"] or "")
-    return {
+    response = {
         "username": username,
         "account_username": username,
         "email": user_row["email"] or "",
         "license_key_masked": username,
         "machine_id": machine_id,
         "token": token,
-        "activated_at": logged_in_at or last_verified_at or now_iso,
-        "last_verified_at": last_verified_at or now_iso,
-        "offline_grace_until": offline_grace_until,
+        "activated_at": logged_in_at or verified_at,
+        "last_verified_at": verified_at,
         "expires_at": user_row["expires_at"] or "",
         "edition": user_row["edition"],
         "licensee": username,
         "max_devices": int(user_row["max_devices"] or ACCOUNT_DEFAULT_MAX_DEVICES),
         "replaced_device_count": int(replaced_device_count or 0),
     }
+    response["authorization_ticket"] = issue_tt_authorization_ticket(
+        user_row=user_row,
+        machine_id=machine_id,
+        token=token,
+        app_name=app_name,
+        app_version=app_version,
+        verified_at=verified_at,
+    )
+    return response
 
 
 def ensure_account_can_login(user_row: sqlite3.Row) -> tuple[bool, str]:
@@ -3375,6 +3550,8 @@ def activate_account_for_machine(
         ),
         last_verified_at=now_iso,
         replaced_device_count=replaced_device_count,
+        app_name=app_name,
+        app_version=app_version,
     )
 
 
@@ -3386,29 +3563,36 @@ def build_tt_account_auth_response(
     logged_in_at: str | None = None,
     last_verified_at: str | None = None,
     replaced_device_count: int = 0,
+    app_name: str = "",
+    app_version: str = "",
 ) -> dict:
-    now_value = datetime.datetime.now()
-    now_iso_value = now_value.isoformat(timespec="seconds")
-    offline_grace_until = (
-        now_value + datetime.timedelta(hours=ACCOUNT_OFFLINE_GRACE_HOURS)
-    ).isoformat(timespec="seconds")
+    now_iso_value = datetime.datetime.now().isoformat(timespec="seconds")
+    verified_at = last_verified_at or now_iso_value
     username = str(user_row["username"] or "")
-    return {
+    response = {
         "username": username,
         "account_username": username,
         "email": user_row["email"] or "",
         "license_key_masked": username,
         "machine_id": machine_id,
         "token": token,
-        "activated_at": logged_in_at or last_verified_at or now_iso_value,
-        "last_verified_at": last_verified_at or now_iso_value,
-        "offline_grace_until": offline_grace_until,
+        "activated_at": logged_in_at or verified_at,
+        "last_verified_at": verified_at,
         "expires_at": user_row["expires_at"] or "",
         "edition": user_row["edition"],
         "licensee": username,
         "max_devices": int(user_row["max_devices"] or ACCOUNT_DEFAULT_MAX_DEVICES),
         "replaced_device_count": int(replaced_device_count or 0),
     }
+    response["authorization_ticket"] = issue_tt_authorization_ticket(
+        user_row=user_row,
+        machine_id=machine_id,
+        token=token,
+        app_name=app_name,
+        app_version=app_version,
+        verified_at=verified_at,
+    )
+    return response
 
 
 def ensure_tt_account_can_login(user_row: sqlite3.Row) -> tuple[bool, str]:
@@ -3569,6 +3753,8 @@ def activate_tt_account_for_machine(
         ),
         last_verified_at=now_value,
         replaced_device_count=replaced_device_count,
+        app_name=app_name,
+        app_version=app_version,
     )
 
 
@@ -3579,18 +3765,30 @@ def build_client_license_response(
     token: str,
     activated_at: str | None = None,
     last_verified_at: str | None = None,
+    app_name: str = "",
+    app_version: str = "",
 ) -> dict:
     now_iso = datetime.datetime.now().isoformat(timespec="seconds")
-    return {
+    verified_at = last_verified_at or now_iso
+    response = {
         "license_key_masked": license_row["license_key_masked"],
         "machine_id": machine_id,
         "token": token,
-        "activated_at": activated_at or last_verified_at or now_iso,
-        "last_verified_at": last_verified_at or now_iso,
+        "activated_at": activated_at or verified_at,
+        "last_verified_at": verified_at,
         "expires_at": license_row["expires_at"] or "",
         "edition": license_row["edition"],
         "licensee": license_row["licensee"] or "",
     }
+    response["authorization_ticket"] = issue_license_authorization_ticket(
+        license_row=license_row,
+        machine_id=machine_id,
+        token=token,
+        app_name=app_name,
+        app_version=app_version,
+        verified_at=verified_at,
+    )
+    return response
 
 
 def activate_license_for_machine(
@@ -3685,6 +3883,8 @@ def activate_license_for_machine(
             else now_iso
         ),
         last_verified_at=now_iso,
+        app_name=app_name,
+        app_version=app_version,
     )
 
 
