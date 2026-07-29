@@ -837,6 +837,20 @@ def init_db() -> None:
                 UNIQUE(user_id, machine_id)
             );
 
+            CREATE TABLE IF NOT EXISTS user_video_channel_profiles (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                machine_id TEXT NOT NULL,
+                profile_id TEXT NOT NULL,
+                profile_name TEXT,
+                video_channel_name TEXT,
+                review_org_name TEXT,
+                is_active INTEGER NOT NULL DEFAULT 0,
+                last_synced_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                UNIQUE(user_id, machine_id, profile_id)
+            );
+
             CREATE TABLE IF NOT EXISTS tt_user_devices (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 tt_user_id INTEGER NOT NULL,
@@ -1087,6 +1101,7 @@ def init_db() -> None:
             "ALTER TABLE users ADD COLUMN subject_company TEXT DEFAULT NULL",
             "ALTER TABLE users ADD COLUMN responsible_person TEXT DEFAULT NULL",
             "ALTER TABLE users ADD COLUMN video_channel_name TEXT DEFAULT NULL",
+            "ALTER TABLE user_video_channel_profiles ADD COLUMN review_org_name TEXT DEFAULT NULL",
             "ALTER TABLE users ADD COLUMN status TEXT NOT NULL DEFAULT 'active'",
             "ALTER TABLE users ADD COLUMN max_devices INTEGER NOT NULL DEFAULT 1",
             "ALTER TABLE users ADD COLUMN edition TEXT NOT NULL DEFAULT 'pro'",
@@ -1151,6 +1166,12 @@ def init_db() -> None:
         )
         db.execute(
             "CREATE INDEX IF NOT EXISTS idx_user_devices_machine_id ON user_devices(machine_id)"
+        )
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_user_video_channel_profiles_user_id ON user_video_channel_profiles(user_id)"
+        )
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_user_video_channel_profiles_machine_id ON user_video_channel_profiles(machine_id)"
         )
         db.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_tt_users_email_unique ON tt_users(lower(email)) WHERE email IS NOT NULL AND email != ''"
@@ -1740,6 +1761,157 @@ def resolve_user_from_account_token_payload(
     if device_row["token_hash"] != hash_token(payload["token"]):
         return None, payload, (jsonify({"ok": False, "message": "登录凭证已失效，请重新登录"}), 400)
     return user_row, payload, None
+
+
+def sanitize_video_channel_profile_payload(
+    data: dict[str, Any],
+) -> tuple[list[dict[str, Any]], str, str | None]:
+    raw_profiles = data.get("profiles")
+    if not isinstance(raw_profiles, list):
+        return [], "", "profiles 必须是数组"
+    active_profile_id = str(data.get("active_profile_id") or "").strip()[:120]
+    profiles: list[dict[str, Any]] = []
+    seen_profile_ids: set[str] = set()
+    for index, raw_item in enumerate(raw_profiles[:200]):
+        if not isinstance(raw_item, dict):
+            continue
+        profile_id = str(raw_item.get("profile_id") or raw_item.get("id") or "").strip()[:120]
+        profile_name = str(raw_item.get("profile_name") or raw_item.get("name") or "").strip()[:120]
+        video_channel_name = (
+            str(
+                raw_item.get("video_channel_name")
+                or raw_item.get("cost_report_default_channel_nickname")
+                or ""
+            )
+            .strip()
+            [:120]
+        )
+        review_org_name = (
+            str(
+                raw_item.get("review_org_name")
+                or raw_item.get("cost_report_company_name")
+                or ""
+            )
+            .strip()
+            [:120]
+        )
+        if not profile_id:
+            profile_id = f"profile-{index + 1}"
+        if profile_id in seen_profile_ids:
+            continue
+        seen_profile_ids.add(profile_id)
+        profiles.append(
+            {
+                "profile_id": profile_id,
+                "profile_name": profile_name,
+                "video_channel_name": video_channel_name,
+                "review_org_name": review_org_name,
+                "is_active": 1 if profile_id == active_profile_id else 0,
+            }
+        )
+    return profiles, active_profile_id, None
+
+
+def refresh_user_video_channel_name_summary(db: sqlite3.Connection, *, user_id: int) -> str:
+    rows = db.execute(
+        """
+        SELECT video_channel_name
+        FROM user_video_channel_profiles
+        WHERE user_id = ?
+          AND video_channel_name IS NOT NULL
+          AND trim(video_channel_name) != ''
+        ORDER BY is_active DESC, last_synced_at DESC, id DESC
+        """,
+        (user_id,),
+    ).fetchall()
+    names: list[str] = []
+    seen: set[str] = set()
+    for row in rows:
+        name = str(row["video_channel_name"] or "").strip()
+        key = name.casefold()
+        if not name or key in seen:
+            continue
+        seen.add(key)
+        names.append(name)
+    summary = "、".join(names)
+    db.execute(
+        "UPDATE users SET video_channel_name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+        (summary or None, user_id),
+    )
+    return summary
+
+
+def refresh_user_subject_company_summary(db: sqlite3.Connection, *, user_id: int) -> str:
+    rows = db.execute(
+        """
+        SELECT review_org_name
+        FROM user_video_channel_profiles
+        WHERE user_id = ?
+          AND review_org_name IS NOT NULL
+          AND trim(review_org_name) != ''
+        ORDER BY is_active DESC, last_synced_at DESC, id DESC
+        """,
+        (user_id,),
+    ).fetchall()
+    names: list[str] = []
+    seen: set[str] = set()
+    for row in rows:
+        name = str(row["review_org_name"] or "").strip()
+        key = name.casefold()
+        if not name or key in seen:
+            continue
+        seen.add(key)
+        names.append(name)
+    summary = "、".join(names)
+    db.execute(
+        "UPDATE users SET subject_company = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+        (summary or None, user_id),
+    )
+    return summary
+
+
+def refresh_user_video_channel_profile_summaries(
+    db: sqlite3.Connection, *, user_id: int
+) -> dict[str, str]:
+    return {
+        "video_channel_name": refresh_user_video_channel_name_summary(db, user_id=user_id),
+        "subject_company": refresh_user_subject_company_summary(db, user_id=user_id),
+    }
+
+
+def sync_user_video_channel_profiles(
+    db: sqlite3.Connection,
+    *,
+    user_id: int,
+    machine_id: str,
+    profiles: list[dict[str, Any]],
+) -> int:
+    now_value = datetime.datetime.now().isoformat(timespec="seconds")
+    db.execute(
+        "DELETE FROM user_video_channel_profiles WHERE user_id = ? AND machine_id = ?",
+        (user_id, machine_id),
+    )
+    for profile in profiles:
+        db.execute(
+            """
+            INSERT INTO user_video_channel_profiles (
+                user_id, machine_id, profile_id, profile_name, video_channel_name,
+                review_org_name, is_active, last_synced_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                user_id,
+                machine_id,
+                profile["profile_id"],
+                profile["profile_name"] or None,
+                profile["video_channel_name"] or None,
+                profile["review_org_name"] or None,
+                int(profile["is_active"] or 0),
+                now_value,
+            ),
+        )
+    refresh_user_video_channel_profile_summaries(db, user_id=user_id)
+    return len(profiles)
 
 
 def current_total_activation_count(db: sqlite3.Connection, license_id: int) -> int:
@@ -4676,6 +4848,37 @@ def client_create_management_session_from_account():
                 "user_id": user_row["id"],
                 "username": user_row["username"],
                 "role": user_row["role"] or "user",
+            },
+        }
+    )
+
+
+@app.route("/client-api/account/video-channel-profiles/sync", methods=["POST"])
+def client_sync_video_channel_profiles():
+    data = request.get_json(silent=True) or {}
+    user_row, payload, error_response = resolve_user_from_account_token_payload(data)
+    if error_response is not None:
+        return error_response
+
+    profiles, _active_profile_id, error = sanitize_video_channel_profile_payload(data)
+    if error:
+        return jsonify({"ok": False, "message": error}), 400
+
+    db = get_db()
+    synced_count = sync_user_video_channel_profiles(
+        db,
+        user_id=int(user_row["id"]),
+        machine_id=payload["machine_id"],
+        profiles=profiles,
+    )
+    summaries = refresh_user_video_channel_profile_summaries(db, user_id=int(user_row["id"]))
+    db.commit()
+    return jsonify(
+        {
+            "ok": True,
+            "data": {
+                "synced_count": synced_count,
+                **summaries,
             },
         }
     )

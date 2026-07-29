@@ -102,3 +102,94 @@ def test_user_management_page_shows_business_field_controls(tmp_path, monkeypatc
     assert "主体公司" in html
     assert "负责人" in html
     assert "视频号名称" in html
+
+
+def test_client_syncs_video_channel_profile_names(tmp_path, monkeypatch) -> None:
+    client = _setup_test_app(tmp_path, monkeypatch)
+    _login_admin(client)
+
+    create_response = client.post(
+        "/api/users",
+        json={
+            "username": "sync_user",
+            "password": "secret123",
+            "role": "user",
+            "status": "active",
+            "edition": "pro",
+            "max_devices": 1,
+        },
+    )
+    assert create_response.status_code == 201
+
+    login_response = client.post(
+        "/account/login",
+        json={
+            "account": "sync_user",
+            "password": "secret123",
+            "machine_id": "machine-sync",
+            "device_name": "desktop",
+            "app_name": "shortdrama",
+            "app_version": "1.0",
+        },
+    )
+    assert login_response.status_code == 200
+    token = login_response.get_json()["data"]["token"]
+
+    sync_response = client.post(
+        "/client-api/account/video-channel-profiles/sync",
+        json={
+            "account": "sync_user",
+            "machine_id": "machine-sync",
+            "token": token,
+            "active_profile_id": "profile-b",
+            "profiles": [
+                {
+                    "profile_id": "profile-a",
+                    "profile_name": "账号A",
+                    "video_channel_name": "峥嵘信息",
+                    "review_org_name": "北京星河传媒有限公司",
+                },
+                {
+                    "profile_id": "profile-b",
+                    "profile_name": "账号B",
+                    "video_channel_name": "格佳信息",
+                    "review_org_name": "武汉岛御科技有限公司",
+                },
+                {
+                    "profile_id": "profile-empty",
+                    "profile_name": "空昵称",
+                    "video_channel_name": "",
+                    "review_org_name": "",
+                },
+            ],
+        },
+    )
+    assert sync_response.status_code == 200
+    assert sync_response.get_json()["data"]["synced_count"] == 3
+    assert sync_response.get_json()["data"]["video_channel_name"] == "格佳信息、峥嵘信息"
+    assert sync_response.get_json()["data"]["subject_company"] == "武汉岛御科技有限公司、北京星河传媒有限公司"
+
+    list_response = client.get("/api/users?page=1&page_size=10&search=格佳&subject_company=岛御")
+    assert list_response.status_code == 200
+    item = next(user for user in list_response.get_json()["items"] if user["username"] == "sync_user")
+    assert item["video_channel_name"] == "格佳信息、峥嵘信息"
+    assert item["subject_company"] == "武汉岛御科技有限公司、北京星河传媒有限公司"
+
+    with manage_app.app.app_context():
+        db = manage_app.get_db()
+        rows = db.execute(
+            """
+            SELECT profile_id, profile_name, video_channel_name, review_org_name, is_active
+            FROM user_video_channel_profiles
+            WHERE user_id = ?
+            ORDER BY profile_id
+            """,
+            (item["id"],),
+        ).fetchall()
+    assert [row["profile_id"] for row in rows] == ["profile-a", "profile-b", "profile-empty"]
+    assert [row["review_org_name"] for row in rows] == [
+        "北京星河传媒有限公司",
+        "武汉岛御科技有限公司",
+        None,
+    ]
+    assert [int(row["is_active"]) for row in rows] == [0, 1, 0]
