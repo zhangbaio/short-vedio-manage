@@ -4,6 +4,18 @@ let currentRemoteConversationId = null;
 let passwordTargetUserId = null;
 let editingUserId = null;
 let usersCache = [];
+let userListState = {
+  page: 1,
+  pageSize: 20,
+  total: 0,
+  pages: 1,
+  filters: {
+    search: "",
+    subject_company: "",
+    responsible_person: "",
+    video_channel_name: "",
+  },
+};
 let currentDevicesUserId = null;
 let userEditorModal = null;
 let userPasswordModal = null;
@@ -11,6 +23,8 @@ let userDevicesModal = null;
 let userPageConfig = {
   apiBase: "/api/users",
   showTikTokAccounts: false,
+  showBusinessFields: false,
+  enablePagination: false,
   emptyText: "暂无用户",
   entityLabel: "用户",
   roleText: "",
@@ -42,6 +56,29 @@ function initUsersPage() {
   document.getElementById("generatePasswordBtn")?.addEventListener("click", fillGeneratedPassword);
   document.getElementById("savePasswordBtn")?.addEventListener("click", resetUserPassword);
   document.getElementById("refreshUsersBtn")?.addEventListener("click", loadUsers);
+  document.getElementById("userQueryBtn")?.addEventListener("click", () => {
+    updateUserFiltersFromInputs();
+    userListState.page = 1;
+    loadUsers();
+  });
+  document.getElementById("userResetBtn")?.addEventListener("click", () => {
+    resetUserFilters();
+    userListState.page = 1;
+    loadUsers();
+  });
+  document.getElementById("userKeywordInput")?.addEventListener("keydown", handleUserFilterKeydown);
+  document.getElementById("userSubjectCompanyFilter")?.addEventListener("keydown", handleUserFilterKeydown);
+  document.getElementById("userResponsiblePersonFilter")?.addEventListener("keydown", handleUserFilterKeydown);
+  document.getElementById("userVideoChannelNameFilter")?.addEventListener("keydown", handleUserFilterKeydown);
+  document.getElementById("userPageSizeSelect")?.addEventListener("change", (event) => {
+    userListState.pageSize = Number.parseInt(event.target.value || "20", 10);
+    userListState.page = 1;
+    loadUsers();
+  });
+  document.getElementById("userFirstPageBtn")?.addEventListener("click", () => changeUserPage(1));
+  document.getElementById("userPrevPageBtn")?.addEventListener("click", () => changeUserPage(userListState.page - 1));
+  document.getElementById("userNextPageBtn")?.addEventListener("click", () => changeUserPage(userListState.page + 1));
+  document.getElementById("userLastPageBtn")?.addEventListener("click", () => changeUserPage(userListState.pages));
   document.getElementById("userTableBody")?.addEventListener("click", handleUserTableClick);
   document.getElementById("userMobileList")?.addEventListener("click", handleUserTableClick);
   document.getElementById("cancelDevicesBtn")?.addEventListener("click", hideDevicesPanel);
@@ -80,19 +117,69 @@ async function initRemotePage() {
   await loadRemoteClients();
 }
 
+function handleUserFilterKeydown(event) {
+  if (event.key !== "Enter") return;
+  event.preventDefault();
+  document.getElementById("userQueryBtn")?.click();
+}
+
+function updateUserFiltersFromInputs() {
+  userListState.filters.search = document.getElementById("userKeywordInput")?.value.trim() || "";
+  userListState.filters.subject_company = document.getElementById("userSubjectCompanyFilter")?.value.trim() || "";
+  userListState.filters.responsible_person = document.getElementById("userResponsiblePersonFilter")?.value.trim() || "";
+  userListState.filters.video_channel_name = document.getElementById("userVideoChannelNameFilter")?.value.trim() || "";
+}
+
+function resetUserFilters() {
+  document.getElementById("userKeywordInput") && (document.getElementById("userKeywordInput").value = "");
+  document.getElementById("userSubjectCompanyFilter") && (document.getElementById("userSubjectCompanyFilter").value = "");
+  document.getElementById("userResponsiblePersonFilter") && (document.getElementById("userResponsiblePersonFilter").value = "");
+  document.getElementById("userVideoChannelNameFilter") && (document.getElementById("userVideoChannelNameFilter").value = "");
+  updateUserFiltersFromInputs();
+}
+
+function changeUserPage(target) {
+  if (target < 1 || target > userListState.pages || target === userListState.page) return;
+  userListState.page = target;
+  loadUsers();
+}
+
+function buildUserListUrl() {
+  if (!userPageConfig.enablePagination) return userPageConfig.apiBase;
+  const params = new URLSearchParams({
+    page: String(userListState.page),
+    page_size: String(userListState.pageSize),
+  });
+  Object.entries(userListState.filters).forEach(([key, value]) => {
+    if (value) params.set(key, value);
+  });
+  return `${userPageConfig.apiBase}?${params.toString()}`;
+}
+
 async function loadUsers() {
   try {
-    const users = await requestJSON(userPageConfig.apiBase);
-    if (!users) return;
+    const data = await requestJSON(buildUserListUrl());
+    if (!data) return;
+    const users = Array.isArray(data) ? data : data.items || [];
+    if (!Array.isArray(data)) {
+      userListState.total = Number(data.total || 0);
+      userListState.pages = Number(data.pages || data.total_pages || 1);
+      if (userListState.page > userListState.pages) {
+        userListState.page = userListState.pages;
+        await loadUsers();
+        return;
+      }
+    }
     usersCache = users;
     const tbody = document.getElementById("userTableBody");
     const mobileList = document.getElementById("userMobileList");
     tbody.innerHTML = "";
     if (mobileList) mobileList.innerHTML = "";
     if (!users.length) {
-      const columnCount = userPageConfig.showTikTokAccounts ? 12 : 11;
+      const columnCount = 11 + (userPageConfig.showTikTokAccounts ? 1 : 0) + (userPageConfig.showBusinessFields ? 3 : 0);
       tbody.innerHTML = `<tr><td colspan="${columnCount}" class="text-center text-muted py-4">${escapeHtml(userPageConfig.emptyText)}</td></tr>`;
       renderMobileEmptyState(mobileList, userPageConfig.emptyText);
+      updateUserPaginationInfo();
       return;
     }
     users.forEach((user) => {
@@ -106,6 +193,9 @@ async function loadUsers() {
         ${userPageConfig.showTikTokAccounts ? `<td>${buildTikTokUsernameList(user.tiktok_usernames)}</td>` : ""}
         <td>${escapeHtml(user.full_name || "-")}</td>
         <td>${escapeHtml(user.email || "-")}</td>
+        ${userPageConfig.showBusinessFields ? `<td>${escapeHtml(user.subject_company || "-")}</td>` : ""}
+        ${userPageConfig.showBusinessFields ? `<td>${escapeHtml(user.responsible_person || "-")}</td>` : ""}
+        ${userPageConfig.showBusinessFields ? `<td>${escapeHtml(user.video_channel_name || "-")}</td>` : ""}
         <td>${buildUserRoleBadge(user)}</td>
         <td><span class="badge ${statusClass}">${statusText}</span> <span class="text-muted small">${escapeHtml(user.edition || "pro")}</span></td>
         <td>${Number(user.active_devices || 0)}/${Number(user.max_devices || 0)}</td>
@@ -118,9 +208,29 @@ async function loadUsers() {
       tbody.appendChild(tr);
       mobileList?.appendChild(buildUserMobileCard(user, actionButtons, statusText, statusClass));
     });
+    updateUserPaginationInfo();
   } catch (error) {
     showToast(error.message, "danger");
   }
+}
+
+function updateUserPaginationInfo() {
+  if (!userPageConfig.enablePagination) return;
+  document.getElementById("userPageInfo").textContent =
+    `第 ${userListState.page} 页 / 共 ${userListState.pages} 页，共 ${userListState.total} 条`;
+  document.getElementById("userPageSizeSelect").value = String(userListState.pageSize);
+  document.getElementById("userFirstPageBtn").disabled = userListState.page <= 1;
+  document.getElementById("userPrevPageBtn").disabled = userListState.page <= 1;
+  document.getElementById("userNextPageBtn").disabled = userListState.page >= userListState.pages;
+  document.getElementById("userLastPageBtn").disabled = userListState.page >= userListState.pages;
+}
+
+function userBusinessSubtitle(user) {
+  return [
+    user.subject_company,
+    user.responsible_person ? `负责人：${user.responsible_person}` : "",
+    user.video_channel_name ? `视频号：${user.video_channel_name}` : "",
+  ].filter(Boolean).join(" · ");
 }
 
 function buildTikTokUsernameList(usernames) {
@@ -164,10 +274,13 @@ function buildUserMobileCard(user, actionButtons, statusText, statusClass) {
       <div class="mobile-record-title">${escapeHtml(user.username)}</div>
       <span class="badge ${statusClass}">${statusText}</span>
     </div>
-    <div class="mobile-record-subtitle">${escapeHtml([user.full_name, user.email].filter(Boolean).join(" · ") || "未填写姓名/邮箱")}</div>
+    <div class="mobile-record-subtitle">${escapeHtml(userBusinessSubtitle(user) || [user.full_name, user.email].filter(Boolean).join(" · ") || "未填写姓名/邮箱")}</div>
     <div class="mobile-record-grid">
       ${userPageConfig.showTikTokAccounts ? `<div><span>TIKTOK用户名</span><strong>${buildTikTokUsernameList(user.tiktok_usernames)}</strong></div>` : ""}
       <div><span>姓名</span><strong>${escapeHtml(user.full_name || "-")}</strong></div>
+      ${userPageConfig.showBusinessFields ? `<div><span>主体公司</span><strong>${escapeHtml(user.subject_company || "-")}</strong></div>` : ""}
+      ${userPageConfig.showBusinessFields ? `<div><span>负责人</span><strong>${escapeHtml(user.responsible_person || "-")}</strong></div>` : ""}
+      ${userPageConfig.showBusinessFields ? `<div><span>视频号名称</span><strong>${escapeHtml(user.video_channel_name || "-")}</strong></div>` : ""}
       <div><span>角色</span><strong>${buildUserRoleBadge(user)}</strong></div>
       <div><span>授权</span><strong>${escapeHtml(user.edition || "pro")}</strong></div>
       <div><span>设备</span><strong>${Number(user.active_devices || 0)}/${Number(user.max_devices || 0)}</strong></div>
@@ -191,6 +304,11 @@ function showUserEditor(user = null) {
   document.getElementById("userNameInput").value = user?.username || "";
   document.getElementById("userFullNameInput").value = user?.full_name || "";
   document.getElementById("userEmailInput").value = user?.email || "";
+  if (userPageConfig.showBusinessFields) {
+    document.getElementById("userSubjectCompanyInput").value = user?.subject_company || "";
+    document.getElementById("userResponsiblePersonInput").value = user?.responsible_person || "";
+    document.getElementById("userVideoChannelNameInput").value = user?.video_channel_name || "";
+  }
   document.getElementById("userPasswordInput").value = "";
   document.getElementById("userPasswordInput").disabled = Boolean(editingUserId);
   document.getElementById("userPasswordInput").placeholder = editingUserId ? "\u8bf7\u4f7f\u7528\u91cd\u7f6e\u5bc6\u7801\u5165\u53e3\u4fee\u6539" : "\u8bf7\u8f93\u5165\u5bc6\u7801";
@@ -258,6 +376,9 @@ async function saveUser() {
     username: usernameInput.value.trim(),
     full_name: fullNameInput.value.trim(),
     email: emailInput.value.trim(),
+    subject_company: document.getElementById("userSubjectCompanyInput")?.value.trim() || "",
+    responsible_person: document.getElementById("userResponsiblePersonInput")?.value.trim() || "",
+    video_channel_name: document.getElementById("userVideoChannelNameInput")?.value.trim() || "",
     password: passwordInput.value.trim(),
     role: document.getElementById("userRoleInput").value,
     status: document.getElementById("userStatusInput").value,
@@ -279,6 +400,17 @@ async function saveUser() {
   if (!validateField(emailInput, () => !payload.email || /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(payload.email))) {
     isValid = false;
     firstInvalid = firstInvalid || emailInput;
+  }
+  for (const [fieldId, value] of [
+    ["userSubjectCompanyInput", payload.subject_company],
+    ["userResponsiblePersonInput", payload.responsible_person],
+    ["userVideoChannelNameInput", payload.video_channel_name],
+  ]) {
+    const field = document.getElementById(fieldId);
+    if (field && !validateField(field, () => value.length <= 100)) {
+      isValid = false;
+      firstInvalid = firstInvalid || field;
+    }
   }
   if (!editingUserId && !validateField(passwordInput, () => payload.password.length >= 6)) {
     isValid = false;
@@ -368,6 +500,11 @@ function resetUserForm() {
   document.getElementById("userNameInput").value = "";
   document.getElementById("userFullNameInput").value = "";
   document.getElementById("userEmailInput").value = "";
+  if (userPageConfig.showBusinessFields) {
+    document.getElementById("userSubjectCompanyInput").value = "";
+    document.getElementById("userResponsiblePersonInput").value = "";
+    document.getElementById("userVideoChannelNameInput").value = "";
+  }
   document.getElementById("userPasswordInput").value = "";
   document.getElementById("userPasswordInput").disabled = false;
   document.getElementById("userPasswordInput").placeholder = "\u8bf7\u8f93\u5165\u5bc6\u7801";

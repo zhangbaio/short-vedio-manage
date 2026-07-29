@@ -48,6 +48,51 @@
                 </div>
               </div>
 
+              {% if not is_tt_users %}
+              <div class="user-filter-panel border rounded-3 p-3 my-3 bg-light-subtle">
+                <div class="row g-3 align-items-end">
+                  <div class="col-xl-4 col-lg-6">
+                    <label class="form-label" for="userKeywordInput">搜索</label>
+                    <input type="text" class="form-control" id="userKeywordInput" placeholder="用户名 / 姓名 / 邮箱 / 业务信息" />
+                  </div>
+                  <div class="col-xl-2 col-lg-6">
+                    <label class="form-label" for="userSubjectCompanyFilter">主体公司</label>
+                    <input type="text" class="form-control" id="userSubjectCompanyFilter" placeholder="按主体公司筛选" />
+                  </div>
+                  <div class="col-xl-2 col-lg-6">
+                    <label class="form-label" for="userResponsiblePersonFilter">负责人</label>
+                    <input type="text" class="form-control" id="userResponsiblePersonFilter" placeholder="按负责人筛选" />
+                  </div>
+                  <div class="col-xl-2 col-lg-6">
+                    <label class="form-label" for="userVideoChannelNameFilter">视频号名称</label>
+                    <input type="text" class="form-control" id="userVideoChannelNameFilter" placeholder="按视频号筛选" />
+                  </div>
+                  <div class="col-xl-2 col-lg-6">
+                    <label class="form-label" for="userPageSizeSelect">每页</label>
+                    <select class="form-select" id="userPageSizeSelect">
+                      <option value="10">10 条</option>
+                      <option value="20" selected>20 条</option>
+                      <option value="50">50 条</option>
+                      <option value="100">100 条</option>
+                    </select>
+                  </div>
+                  <div class="col-12 d-flex justify-content-end gap-2">
+                    <button class="btn btn-primary" id="userQueryBtn">查询</button>
+                    <button class="btn btn-outline-secondary" id="userResetBtn">重置</button>
+                  </div>
+                </div>
+              </div>
+              <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-3" id="userPaginationBar">
+                <div class="text-muted small" id="userPageInfo">第 1 页 / 共 1 页，共 0 条</div>
+                <div class="btn-group" role="group" aria-label="用户分页">
+                  <button class="btn btn-outline-secondary" id="userFirstPageBtn">首页</button>
+                  <button class="btn btn-outline-secondary" id="userPrevPageBtn">上一页</button>
+                  <button class="btn btn-outline-secondary" id="userNextPageBtn">下一页</button>
+                  <button class="btn btn-outline-secondary" id="userLastPageBtn">末页</button>
+                </div>
+              </div>
+              {% endif %}
+
               <div class="table-responsive desktop-table mobile-switchable">
                 <table class="table table-hover align-middle mb-0">
                   <thead>
@@ -55,6 +100,11 @@
                       <th>用户名</th>
                       <th>姓名</th>
                       <th>邮箱</th>
+                      {% if not is_tt_users %}
+                      <th>主体公司</th>
+                      <th>负责人</th>
+                      <th>视频号名称</th>
+                      {% endif %}
                       <th>{{ '类型' if is_tt_users else '角色' }}</th>
                       <th>授权</th>
                       <th>设备</th>
@@ -100,6 +150,23 @@
                   <input type="email" class="form-control" id="userEmailInput" autocomplete="off" />
                   <div class="invalid-feedback">邮箱格式不正确</div>
                 </div>
+                {% if not is_tt_users %}
+                <div class="col-lg-4">
+                  <label class="form-label" for="userSubjectCompanyInput">主体公司</label>
+                  <input type="text" class="form-control" id="userSubjectCompanyInput" maxlength="100" autocomplete="off" />
+                  <div class="invalid-feedback">主体公司最多100个字符</div>
+                </div>
+                <div class="col-lg-4">
+                  <label class="form-label" for="userResponsiblePersonInput">负责人</label>
+                  <input type="text" class="form-control" id="userResponsiblePersonInput" maxlength="100" autocomplete="off" />
+                  <div class="invalid-feedback">负责人最多100个字符</div>
+                </div>
+                <div class="col-lg-4">
+                  <label class="form-label" for="userVideoChannelNameInput">视频号名称</label>
+                  <input type="text" class="form-control" id="userVideoChannelNameInput" maxlength="100" autocomplete="off" />
+                  <div class="invalid-feedback">视频号名称最多100个字符</div>
+                </div>
+                {% endif %}
                 <div class="col-lg-6">
                   <label class="form-label" for="userPasswordInput">密码</label>
                   <input type="password" class="form-control" id="userPasswordInput" autocomplete="new-password" />
@@ -228,6 +295,8 @@
       window.userPageConfig = {
         apiBase: {{ ('/api/tt-users' if is_tt_users else '/api/users')|tojson }},
         showTikTokAccounts: false,
+        showBusinessFields: {{ (not is_tt_users)|tojson }},
+        enablePagination: {{ (not is_tt_users)|tojson }},
         emptyText: {{ ('暂无TT用户' if is_tt_users else '暂无用户')|tojson }},
         entityLabel: {{ ('TT用户' if is_tt_users else '用户')|tojson }},
         roleText: {{ ('TT授权用户' if is_tt_users else '')|tojson }},

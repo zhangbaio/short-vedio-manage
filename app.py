@@ -741,6 +741,9 @@ def init_db() -> None:
                 username TEXT UNIQUE NOT NULL,
                 full_name TEXT,
                 email TEXT,
+                subject_company TEXT,
+                responsible_person TEXT,
+                video_channel_name TEXT,
                 password_hash TEXT NOT NULL,
                 role TEXT NOT NULL DEFAULT 'user',
                 status TEXT NOT NULL DEFAULT 'active',
@@ -1081,6 +1084,9 @@ def init_db() -> None:
             "ALTER TABLE licenses ADD COLUMN deleted_by INTEGER DEFAULT NULL",
             "ALTER TABLE users ADD COLUMN full_name TEXT DEFAULT NULL",
             "ALTER TABLE users ADD COLUMN email TEXT DEFAULT NULL",
+            "ALTER TABLE users ADD COLUMN subject_company TEXT DEFAULT NULL",
+            "ALTER TABLE users ADD COLUMN responsible_person TEXT DEFAULT NULL",
+            "ALTER TABLE users ADD COLUMN video_channel_name TEXT DEFAULT NULL",
             "ALTER TABLE users ADD COLUMN status TEXT NOT NULL DEFAULT 'active'",
             "ALTER TABLE users ADD COLUMN max_devices INTEGER NOT NULL DEFAULT 1",
             "ALTER TABLE users ADD COLUMN edition TEXT NOT NULL DEFAULT 'pro'",
@@ -1130,6 +1136,15 @@ def init_db() -> None:
         )
         db.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_unique ON users(lower(email)) WHERE email IS NOT NULL AND email != ''"
+        )
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_users_subject_company ON users(subject_company)"
+        )
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_users_responsible_person ON users(responsible_person)"
+        )
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_users_video_channel_name ON users(video_channel_name)"
         )
         db.execute(
             "CREATE INDEX IF NOT EXISTS idx_user_devices_user_id ON user_devices(user_id)"
@@ -5699,6 +5714,9 @@ def sanitize_user_payload(data: dict, *, require_password: bool = False) -> tupl
     username = str(data.get("username") or "").strip()
     full_name = str(data.get("full_name") or data.get("name") or "").strip()
     email = normalize_email(str(data.get("email") or ""))
+    subject_company = str(data.get("subject_company") or "").strip()
+    responsible_person = str(data.get("responsible_person") or "").strip()
+    video_channel_name = str(data.get("video_channel_name") or "").strip()
     password = str(data.get("password") or "")
     role = str(data.get("role") or "user").strip().lower()
     status = str(data.get("status") or "active").strip().lower()
@@ -5712,6 +5730,12 @@ def sanitize_user_payload(data: dict, *, require_password: bool = False) -> tupl
         return {}, "用户名需为 2-30 位字母数字下划线，或使用邮箱格式"
     if len(full_name) > 80:
         return {}, "姓名最多80个字符"
+    if len(subject_company) > 100:
+        return {}, "主体公司最多100个字符"
+    if len(responsible_person) > 100:
+        return {}, "负责人最多100个字符"
+    if len(video_channel_name) > 100:
+        return {}, "视频号名称最多100个字符"
     if require_password and len(password) < 6:
         return {}, "密码至少6位"
     if email and not EMAIL_RE.match(email):
@@ -5733,6 +5757,9 @@ def sanitize_user_payload(data: dict, *, require_password: bool = False) -> tupl
         "username": username,
         "full_name": full_name or None,
         "email": email,
+        "subject_company": subject_company or None,
+        "responsible_person": responsible_person or None,
+        "video_channel_name": video_channel_name or None,
         "password": password,
         "role": role,
         "status": status,
@@ -5755,18 +5782,72 @@ def sanitize_tt_user_payload(data: dict, *, require_password: bool = False) -> t
 @admin_required
 def list_users():
     db = get_db()
+    paginated = any(
+        key in request.args
+        for key in (
+            "page",
+            "page_size",
+            "search",
+            "keyword",
+            "subject_company",
+            "responsible_person",
+            "video_channel_name",
+        )
+    )
+    page = max(1, int(request.args.get("page", 1) or 1))
+    page_size = min(100, max(1, int(request.args.get("page_size", 20) or 20)))
+    clauses = []
+    params = []
+    search = str(request.args.get("search") or request.args.get("keyword") or "").strip()
+    if search:
+        like = f"%{search}%"
+        clauses.append(
+            """
+            (
+                u.username LIKE ?
+                OR COALESCE(u.full_name, '') LIKE ?
+                OR COALESCE(u.email, '') LIKE ?
+                OR COALESCE(u.subject_company, '') LIKE ?
+                OR COALESCE(u.responsible_person, '') LIKE ?
+                OR COALESCE(u.video_channel_name, '') LIKE ?
+            )
+            """
+        )
+        params.extend([like] * 6)
+    for field in ("subject_company", "responsible_person", "video_channel_name"):
+        value = str(request.args.get(field) or "").strip()
+        if value:
+            clauses.append(f"COALESCE(u.{field}, '') LIKE ?")
+            params.append(f"%{value}%")
+    where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    limit_sql = ""
+    page_params = []
+    if paginated:
+        offset = (page - 1) * page_size
+        limit_sql = "LIMIT ? OFFSET ?"
+        page_params = [page_size, offset]
     rows = db.execute(
-        """
+        f"""
         SELECT
-            u.id, u.username, u.full_name, u.email, u.role, u.status, u.max_devices,
+            u.id, u.username, u.full_name, u.email, u.subject_company,
+            u.responsible_person, u.video_channel_name, u.role, u.status, u.max_devices,
             u.edition, u.expires_at, u.created_at,
             (SELECT COUNT(*) FROM user_devices d WHERE d.user_id = u.id AND (d.revoked_at IS NULL OR d.revoked_at = '')) AS active_devices,
             (SELECT COUNT(*) FROM user_devices d WHERE d.user_id = u.id) AS total_devices,
             (SELECT COALESCE(MAX(d.last_verified_at), '') FROM user_devices d WHERE d.user_id = u.id) AS last_verified_at
         FROM users u
+        {where_sql}
         ORDER BY CASE WHEN u.role = 'admin' THEN 0 ELSE 1 END, u.created_at DESC, u.id DESC
-        """
+        {limit_sql}
+        """,
+        params + page_params,
     ).fetchall()
+    total = None
+    if paginated:
+        total = db.execute(
+            f"SELECT COUNT(*) FROM users u {where_sql}",
+            params,
+        ).fetchone()[0]
     items = []
     changed = False
     for row in rows:
@@ -5783,6 +5864,18 @@ def list_users():
         changed = changed or row_changed
     if changed:
         db.commit()
+    if paginated:
+        pages = math.ceil(total / page_size) if total else 1
+        return jsonify(
+            {
+                "items": items,
+                "total": total,
+                "page": page,
+                "page_size": page_size,
+                "pages": pages,
+                "total_pages": pages,
+            }
+        )
     return jsonify(items)
 
 
@@ -5799,14 +5892,18 @@ def create_user():
         db.execute(
             """
             INSERT INTO users (
-                username, full_name, email, password_hash, role, status,
-                max_devices, edition, expires_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                username, full_name, email, subject_company, responsible_person,
+                video_channel_name, password_hash, role, status, max_devices, edition,
+                expires_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             """,
             (
                 payload["username"],
                 payload["full_name"],
                 payload["email"] or None,
+                payload["subject_company"],
+                payload["responsible_person"],
+                payload["video_channel_name"],
                 generate_password_hash(payload["password"]),
                 payload["role"],
                 payload["status"],
@@ -5839,14 +5936,18 @@ def update_user(user_id: int):
         result = db.execute(
             """
             UPDATE users
-            SET username = ?, full_name = ?, email = ?, role = ?, status = ?, max_devices = ?,
-                edition = ?, expires_at = ?, updated_at = CURRENT_TIMESTAMP
+            SET username = ?, full_name = ?, email = ?, subject_company = ?,
+                responsible_person = ?, video_channel_name = ?, role = ?, status = ?,
+                max_devices = ?, edition = ?, expires_at = ?, updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
             """,
             (
                 payload["username"],
                 payload["full_name"],
                 payload["email"] or None,
+                payload["subject_company"],
+                payload["responsible_person"],
+                payload["video_channel_name"],
                 payload["role"],
                 payload["status"],
                 payload["max_devices"],
