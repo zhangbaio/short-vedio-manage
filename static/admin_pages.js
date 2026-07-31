@@ -176,7 +176,7 @@ async function loadUsers() {
     tbody.innerHTML = "";
     if (mobileList) mobileList.innerHTML = "";
     if (!users.length) {
-      const columnCount = 11 + (userPageConfig.showTikTokAccounts ? 1 : 0) + (userPageConfig.showBusinessFields ? 3 : 0);
+      const columnCount = 10 + (userPageConfig.showTikTokAccounts ? 1 : 0) + (userPageConfig.showBusinessFields ? 3 : 0);
       tbody.innerHTML = `<tr><td colspan="${columnCount}" class="text-center text-muted py-4">${escapeHtml(userPageConfig.emptyText)}</td></tr>`;
       renderMobileEmptyState(mobileList, userPageConfig.emptyText);
       updateUserPaginationInfo();
@@ -201,7 +201,6 @@ async function loadUsers() {
         <td>${Number(user.active_devices || 0)}/${Number(user.max_devices || 0)}</td>
         <td>${escapeHtml(user.expires_at || "永久")}</td>
         <td><span class="text-muted small">已加密保存</span></td>
-        <td>${escapeHtml(user.ip || "-")}</td>
         <td>${escapeHtml(user.ip_region || "-")}</td>
         <td class="text-end">${actionButtons.join("")}</td>
       `;
@@ -286,7 +285,6 @@ function buildUserMobileCard(user, actionButtons, statusText, statusClass) {
       <div><span>设备</span><strong>${Number(user.active_devices || 0)}/${Number(user.max_devices || 0)}</strong></div>
       <div><span>到期</span><strong>${escapeHtml(user.expires_at || "永久")}</strong></div>
       <div><span>密码</span><strong>已加密保存</strong></div>
-      <div><span>IP地址</span><strong>${escapeHtml(user.ip || "-")}</strong></div>
       <div><span>IP归属地</span><strong>${escapeHtml(user.ip_region || "-")}</strong></div>
     </div>
     <div class="mobile-record-actions">${actionButtons.join("")}</div>
