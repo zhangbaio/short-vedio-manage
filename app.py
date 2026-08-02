@@ -1876,6 +1876,71 @@ def refresh_user_subject_company_summary(db: sqlite3.Connection, *, user_id: int
     return summary
 
 
+def split_user_summary_values(value: Any) -> list[str]:
+    text = str(value or "").strip()
+    if not text:
+        return []
+    values: list[str] = []
+    seen: set[str] = set()
+    for part in re.split(r"[、，,\r\n]+", text):
+        item = part.strip()
+        key = item.casefold()
+        if not item or key in seen:
+            continue
+        seen.add(key)
+        values.append(item)
+    return values
+
+
+def attach_user_video_channel_profile_lists(
+    db: sqlite3.Connection, items: list[dict[str, Any]]
+) -> None:
+    user_ids = [int(item["id"]) for item in items if item.get("id") is not None]
+    value_map = {
+        user_id: {"subject_companies": [], "video_channel_names": []}
+        for user_id in user_ids
+    }
+    seen_map = {
+        user_id: {"subject_companies": set(), "video_channel_names": set()}
+        for user_id in user_ids
+    }
+    if user_ids:
+        placeholders = ",".join("?" for _ in user_ids)
+        rows = db.execute(
+            f"""
+            SELECT user_id, video_channel_name, review_org_name
+            FROM user_video_channel_profiles
+            WHERE user_id IN ({placeholders})
+            ORDER BY user_id, is_active DESC, last_synced_at DESC, id DESC
+            """,
+            user_ids,
+        ).fetchall()
+        for row in rows:
+            user_id = int(row["user_id"])
+            pairs = (
+                ("subject_companies", row["review_org_name"]),
+                ("video_channel_names", row["video_channel_name"]),
+            )
+            for key, raw_value in pairs:
+                value = str(raw_value or "").strip()
+                seen_key = value.casefold()
+                if not value or seen_key in seen_map[user_id][key]:
+                    continue
+                seen_map[user_id][key].add(seen_key)
+                value_map[user_id][key].append(value)
+
+    for item in items:
+        user_id = int(item["id"])
+        subject_companies = value_map.get(user_id, {}).get("subject_companies") or split_user_summary_values(
+            item.get("subject_company")
+        )
+        video_channel_names = value_map.get(user_id, {}).get("video_channel_names") or split_user_summary_values(
+            item.get("video_channel_name")
+        )
+        item["subject_companies"] = subject_companies
+        item["video_channel_names"] = video_channel_names
+
+
 def refresh_user_video_channel_profile_summaries(
     db: sqlite3.Connection, *, user_id: int
 ) -> dict[str, str]:
@@ -6079,6 +6144,7 @@ def list_users():
         item["ip_region"] = region
         items.append(item)
         changed = changed or row_changed
+    attach_user_video_channel_profile_lists(db, items)
     if changed:
         db.commit()
     if paginated:

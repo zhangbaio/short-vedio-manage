@@ -193,14 +193,14 @@ async function loadUsers() {
       const actionButtons = buildUserActionButtons(user, isSelf);
       tr.innerHTML = `
         <td>${escapeHtml(user.username)}</td>
-        ${userPageConfig.showTikTokAccounts ? `<td>${buildTikTokUsernameList(user.tiktok_usernames)}</td>` : ""}
+        ${userPageConfig.showTikTokAccounts ? `<td>${buildTTTikTokUsernameList(user)}</td>` : ""}
         <td>${escapeHtml(user.full_name || "-")}</td>
         <td>${escapeHtml(user.email || "-")}</td>
         ${userPageConfig.showTTBusinessFields ? `<td>${buildTTSubjectCompanyList(user)}</td>` : ""}
         ${userPageConfig.showTTBusinessFields ? `<td>${escapeHtml(user.responsible_person || "-")}</td>` : ""}
-        ${userPageConfig.showBusinessFields ? `<td>${escapeHtml(user.subject_company || "-")}</td>` : ""}
+        ${userPageConfig.showBusinessFields ? `<td>${buildPlainValueList(user.subject_companies, user.subject_company)}</td>` : ""}
         ${userPageConfig.showBusinessFields ? `<td>${escapeHtml(user.responsible_person || "-")}</td>` : ""}
-        ${userPageConfig.showBusinessFields ? `<td>${escapeHtml(user.video_channel_name || "-")}</td>` : ""}
+        ${userPageConfig.showBusinessFields ? `<td>${buildPlainValueList(user.video_channel_names, user.video_channel_name)}</td>` : ""}
         <td>${buildUserRoleBadge(user)}</td>
         <td><span class="badge ${statusClass}">${statusText}</span> <span class="text-muted small">${escapeHtml(user.edition || "pro")}</span></td>
         <td>${Number(user.active_devices || 0)}/${Number(user.max_devices || 0)}</td>
@@ -243,13 +243,32 @@ function userBusinessSubtitle(user) {
   ].filter(Boolean).join(" · ");
 }
 
-function buildTikTokUsernameList(usernames) {
-  if (!Array.isArray(usernames)) return '<span class="text-muted">-</span>';
-  const values = usernames
+function splitDisplayListValue(value) {
+  return String(value || "")
+    .split(/[、，,\r\n]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function buildPlainValueList(primaryValues, fallbackValue) {
+  const sourceValues = Array.isArray(primaryValues) ? primaryValues : splitDisplayListValue(fallbackValue);
+  const values = sourceValues
     .map((value) => String(value || "").trim())
     .filter(Boolean);
   if (!values.length) return '<span class="text-muted">-</span>';
-  return values
+  return values.map((value) => escapeHtml(value)).join("<br>");
+}
+
+function buildTTTikTokUsernameList(user) {
+  const accounts = Array.isArray(user?.tiktok_accounts) ? user.tiktok_accounts : [];
+  const values = accounts.length
+    ? accounts.map((account) => String(account?.tiktok_username || "").trim())
+    : (Array.isArray(user?.tiktok_usernames) ? user.tiktok_usernames : []);
+  const usernames = values
+    .map((value) => String(value || "").trim())
+    .filter(Boolean);
+  if (!usernames.length) return '<span class="text-muted">-</span>';
+  return usernames
     .map((value) => `<span class="font-monospace small">${escapeHtml(value)}</span>`)
     .join("<br>");
 }
@@ -258,8 +277,7 @@ function buildTTSubjectCompanyList(user) {
   const accounts = Array.isArray(user?.tiktok_accounts) ? user.tiktok_accounts : [];
   const values = accounts.map((account) => String(account?.subject_company || "").trim());
   if (!values.some(Boolean)) {
-    const fallback = String(user?.subject_company || "").trim();
-    return fallback ? escapeHtml(fallback) : '<span class="text-muted">-</span>';
+    return buildPlainValueList(null, user?.subject_company);
   }
   return values
     .map((value) => value ? escapeHtml(value) : '<span class="text-muted">-</span>')
@@ -300,11 +318,11 @@ function buildUserMobileCard(user, actionButtons, statusText, statusClass) {
     <div class="mobile-record-grid">
       ${userPageConfig.showTTBusinessFields ? `<div><span>主体公司</span><strong>${buildTTSubjectCompanyList(user)}</strong></div>` : ""}
       ${userPageConfig.showTTBusinessFields ? `<div><span>负责人</span><strong>${escapeHtml(user.responsible_person || "-")}</strong></div>` : ""}
-      ${userPageConfig.showTikTokAccounts ? `<div><span>TIKTOK用户名</span><strong>${buildTikTokUsernameList(user.tiktok_usernames)}</strong></div>` : ""}
+      ${userPageConfig.showTikTokAccounts ? `<div><span>TIKTOK用户名</span><strong>${buildTTTikTokUsernameList(user)}</strong></div>` : ""}
       <div><span>姓名</span><strong>${escapeHtml(user.full_name || "-")}</strong></div>
-      ${userPageConfig.showBusinessFields ? `<div><span>主体公司</span><strong>${escapeHtml(user.subject_company || "-")}</strong></div>` : ""}
+      ${userPageConfig.showBusinessFields ? `<div><span>主体公司</span><strong>${buildPlainValueList(user.subject_companies, user.subject_company)}</strong></div>` : ""}
       ${userPageConfig.showBusinessFields ? `<div><span>负责人</span><strong>${escapeHtml(user.responsible_person || "-")}</strong></div>` : ""}
-      ${userPageConfig.showBusinessFields ? `<div><span>视频号名称</span><strong>${escapeHtml(user.video_channel_name || "-")}</strong></div>` : ""}
+      ${userPageConfig.showBusinessFields ? `<div><span>视频号名称</span><strong>${buildPlainValueList(user.video_channel_names, user.video_channel_name)}</strong></div>` : ""}
       <div><span>角色</span><strong>${buildUserRoleBadge(user)}</strong></div>
       <div><span>授权</span><strong>${escapeHtml(user.edition || "pro")}</strong></div>
       <div><span>设备</span><strong>${Number(user.active_devices || 0)}/${Number(user.max_devices || 0)}</strong></div>

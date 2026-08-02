@@ -56,8 +56,10 @@ def test_user_business_fields_create_update_filter_and_paginate(tmp_path, monkey
     assert list_data["pages"] == 1
     item = list_data["items"][0]
     assert item["subject_company"] == "Alpha Media"
+    assert item["subject_companies"] == ["Alpha Media"]
     assert item["responsible_person"] == "Alice"
     assert item["video_channel_name"] == "Alpha Video"
+    assert item["video_channel_names"] == ["Alpha Video"]
 
     update_response = client.put(
         f"/api/users/{item['id']}",
@@ -90,6 +92,7 @@ def test_user_business_fields_create_update_filter_and_paginate(tmp_path, monkey
     assert isinstance(legacy_data, list)
     legacy_item = next(user for user in legacy_data if user["username"] == "business_user")
     assert legacy_item["subject_company"] == "Beta Media"
+    assert legacy_item["subject_companies"] == ["Beta Media"]
 
 
 def test_user_management_page_shows_business_field_controls(tmp_path, monkeypatch) -> None:
@@ -174,6 +177,8 @@ def test_client_syncs_video_channel_profile_names(tmp_path, monkeypatch) -> None
     item = next(user for user in list_response.get_json()["items"] if user["username"] == "sync_user")
     assert item["video_channel_name"] == "格佳信息、峥嵘信息"
     assert item["subject_company"] == "武汉岛御科技有限公司、北京星河传媒有限公司"
+    assert item["video_channel_names"] == ["格佳信息", "峥嵘信息"]
+    assert item["subject_companies"] == ["武汉岛御科技有限公司", "北京星河传媒有限公司"]
 
     with manage_app.app.app_context():
         db = manage_app.get_db()
