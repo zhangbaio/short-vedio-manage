@@ -95,8 +95,16 @@ def test_tt_account_snapshot_is_idempotent_and_reconciles_admin_list(tmp_path, m
     headers = _headers(account="zhangbiao", machine_id="machine-a", token=token)
     first_payload = {
         "accounts": [
-            {"client_account_id": "acct-a", "tiktok_username": "1544722162@qq.com"},
-            {"client_account_id": "acct-b", "tiktok_username": "2720937754@qq.com"},
+            {
+                "client_account_id": "acct-a",
+                "tiktok_username": "1544722162@qq.com",
+                "subject_company": "武汉速视科技有限公司",
+            },
+            {
+                "client_account_id": "acct-b",
+                "tiktok_username": "2720937754@qq.com",
+                "subject_company": "湖北云漫科技有限公司",
+            },
         ]
     }
     first = client.put("/client-api/tt/accounts/snapshot", headers=headers, json=first_payload)
@@ -122,8 +130,16 @@ def test_tt_account_snapshot_is_idempotent_and_reconciles_admin_list(tmp_path, m
         headers=headers,
         json={
             "accounts": [
-                {"client_account_id": "acct-a", "tiktok_username": "renamed@example.test"},
-                {"client_account_id": "acct-c", "tiktok_username": "15327086817@163.com"},
+                {
+                    "client_account_id": "acct-a",
+                    "tiktok_username": "renamed@example.test",
+                    "subject_company": "武汉速视科技有限公司2",
+                },
+                {
+                    "client_account_id": "acct-c",
+                    "tiktok_username": "15327086817@163.com",
+                    "subject_company": "湖北云漫科技有限公司",
+                },
             ]
         },
     )
@@ -138,14 +154,17 @@ def test_tt_account_snapshot_is_idempotent_and_reconciles_admin_list(tmp_path, m
     with manage_app.app.app_context():
         rows = manage_app.get_db().execute(
             """
-            SELECT client_account_id, tiktok_username
+            SELECT client_account_id, tiktok_username, subject_company
             FROM tt_client_accounts
             ORDER BY client_account_id
             """
         ).fetchall()
-        assert [(row["client_account_id"], row["tiktok_username"]) for row in rows] == [
-            ("acct-a", "renamed@example.test"),
-            ("acct-c", "15327086817@163.com"),
+        assert [
+            (row["client_account_id"], row["tiktok_username"], row["subject_company"])
+            for row in rows
+        ] == [
+            ("acct-a", "renamed@example.test", "武汉速视科技有限公司2"),
+            ("acct-c", "15327086817@163.com", "湖北云漫科技有限公司"),
         ]
 
     with client.session_transaction() as session:
@@ -161,6 +180,17 @@ def test_tt_account_snapshot_is_idempotent_and_reconciles_admin_list(tmp_path, m
     assert users_response.status_code == 200
     tt_user = next(item for item in users_response.get_json() if item["username"] == "zhangbiao")
     assert tt_user["tiktok_usernames"] == ["15327086817@163.com", "renamed@example.test"]
+    assert tt_user["tiktok_accounts"] == [
+        {
+            "tiktok_username": "15327086817@163.com",
+            "subject_company": "湖北云漫科技有限公司",
+        },
+        {
+            "tiktok_username": "renamed@example.test",
+            "subject_company": "武汉速视科技有限公司2",
+        },
+    ]
+    assert tt_user["subject_company"] == "湖北云漫科技有限公司、武汉速视科技有限公司2"
 
     cleared = client.put(
         "/client-api/tt/accounts/snapshot",

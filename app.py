@@ -759,6 +759,8 @@ def init_db() -> None:
                 username TEXT UNIQUE NOT NULL,
                 full_name TEXT,
                 email TEXT,
+                subject_company TEXT,
+                responsible_person TEXT,
                 password_hash TEXT NOT NULL,
                 status TEXT NOT NULL DEFAULT 'active',
                 max_devices INTEGER NOT NULL DEFAULT 1,
@@ -877,6 +879,7 @@ def init_db() -> None:
                 client_account_id TEXT NOT NULL,
                 tiktok_username TEXT NOT NULL,
                 username_key TEXT NOT NULL,
+                subject_company TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 FOREIGN KEY (owner_tt_user_id) REFERENCES tt_users(id) ON DELETE CASCADE,
@@ -1108,6 +1111,9 @@ def init_db() -> None:
             "ALTER TABLE users ADD COLUMN expires_at TEXT DEFAULT NULL",
             "ALTER TABLE users ADD COLUMN updated_at TEXT DEFAULT NULL",
             "ALTER TABLE tt_users ADD COLUMN full_name TEXT DEFAULT NULL",
+            "ALTER TABLE tt_users ADD COLUMN subject_company TEXT DEFAULT NULL",
+            "ALTER TABLE tt_users ADD COLUMN responsible_person TEXT DEFAULT NULL",
+            "ALTER TABLE tt_client_accounts ADD COLUMN subject_company TEXT DEFAULT NULL",
             "ALTER TABLE license_activations ADD COLUMN login_ip TEXT DEFAULT NULL",
             "ALTER TABLE license_activations ADD COLUMN login_ip_region TEXT DEFAULT NULL",
             "ALTER TABLE license_activations ADD COLUMN last_ip TEXT DEFAULT NULL",
@@ -2976,12 +2982,17 @@ def sanitize_tt_client_account_snapshot(
         if len(username) > 200 or "\n" in username or "\r" in username:
             return [], f"第 {index} 个账号的 tiktok_username 无效"
 
+        subject_company = str(raw_account.get("subject_company") or "").strip()
+        if len(subject_company) > 100 or "\n" in subject_company or "\r" in subject_company:
+            return [], f"第 {index} 个账号的 subject_company 无效"
+
         seen_account_ids.add(account_id)
         accounts.append(
             {
                 "client_account_id": account_id,
                 "tiktok_username": username,
                 "username_key": username_key,
+                "subject_company": subject_company,
             }
         )
     return accounts, None
@@ -5265,7 +5276,7 @@ def client_sync_tt_account_snapshot():
         owner_tt_user_id = int(tt_user_row["id"])
         existing_rows = db.execute(
             """
-            SELECT client_account_id, tiktok_username, username_key
+            SELECT client_account_id, tiktok_username, username_key, subject_company
             FROM tt_client_accounts
             WHERE owner_tt_user_id = ? AND machine_id = ?
             """,
@@ -5282,18 +5293,20 @@ def client_sync_tt_account_snapshot():
             elif (
                 str(existing["tiktok_username"] or "") != item["tiktok_username"]
                 or str(existing["username_key"] or "") != item["username_key"]
+                or str(existing["subject_company"] or "") != item["subject_company"]
             ):
                 updated_count += 1
             db.execute(
                 """
                 INSERT INTO tt_client_accounts (
                     owner_tt_user_id, machine_id, client_account_id,
-                    tiktok_username, username_key, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    tiktok_username, username_key, subject_company, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(owner_tt_user_id, machine_id, client_account_id)
                 DO UPDATE SET
                     tiktok_username = excluded.tiktok_username,
                     username_key = excluded.username_key,
+                    subject_company = excluded.subject_company,
                     updated_at = excluded.updated_at
                 """,
                 (
@@ -5302,6 +5315,7 @@ def client_sync_tt_account_snapshot():
                     item["client_account_id"],
                     item["tiktok_username"],
                     item["username_key"],
+                    item["subject_company"] or None,
                     now_value,
                     now_value,
                 ),
@@ -6259,7 +6273,8 @@ def list_tt_users():
     rows = db.execute(
         """
         SELECT
-            u.id, u.username, u.full_name, u.email, 'tt_user' AS role, u.status, u.max_devices,
+            u.id, u.username, u.full_name, u.email, u.subject_company, u.responsible_person,
+            'tt_user' AS role, u.status, u.max_devices,
             u.edition, u.expires_at, u.created_at,
             (SELECT COUNT(*) FROM tt_user_devices d WHERE d.tt_user_id = u.id AND (d.revoked_at IS NULL OR d.revoked_at = '')) AS active_devices,
             (SELECT COUNT(*) FROM tt_user_devices d WHERE d.tt_user_id = u.id) AS total_devices,
@@ -6270,12 +6285,12 @@ def list_tt_users():
     ).fetchall()
     account_rows = db.execute(
         """
-        SELECT owner_tt_user_id, tiktok_username, username_key, updated_at
+        SELECT owner_tt_user_id, tiktok_username, username_key, subject_company, updated_at
         FROM tt_client_accounts
         ORDER BY owner_tt_user_id, updated_at DESC, id DESC
         """
     ).fetchall()
-    usernames_by_owner: dict[int, list[str]] = {}
+    account_profiles_by_owner: dict[int, list[dict[str, str]]] = {}
     username_keys_by_owner: dict[int, set[str]] = {}
     for account_row in account_rows:
         owner_id = int(account_row["owner_tt_user_id"])
@@ -6287,16 +6302,33 @@ def list_tt_users():
         if username_key in seen_keys:
             continue
         seen_keys.add(username_key)
-        usernames_by_owner.setdefault(owner_id, []).append(username)
+        account_profiles_by_owner.setdefault(owner_id, []).append(
+            {
+                "tiktok_username": username,
+                "subject_company": str(account_row["subject_company"] or "").strip(),
+            }
+        )
 
     items = []
     changed = False
     for row in rows:
         item = dict(row)
-        item["tiktok_usernames"] = sorted(
-            usernames_by_owner.get(int(item["id"]), []),
-            key=str.casefold,
+        account_profiles = sorted(
+            account_profiles_by_owner.get(int(item["id"]), []),
+            key=lambda value: value["tiktok_username"].casefold(),
         )
+        item["tiktok_usernames"] = [
+            account_profile["tiktok_username"] for account_profile in account_profiles
+        ]
+        item["tiktok_accounts"] = account_profiles
+        if not item.get("subject_company"):
+            item["subject_company"] = "、".join(
+                dict.fromkeys(
+                    account_profile["subject_company"]
+                    for account_profile in account_profiles
+                    if account_profile["subject_company"]
+                )
+            ) or None
         ip, region, row_changed = latest_user_device_ip_context(
             db,
             table_name="tt_user_devices",
@@ -6325,14 +6357,16 @@ def create_tt_user():
         db.execute(
             """
             INSERT INTO tt_users (
-                username, full_name, email, password_hash, status,
+                username, full_name, email, subject_company, responsible_person, password_hash, status,
                 max_devices, edition, expires_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             """,
             (
                 payload["username"],
                 payload["full_name"],
                 payload["email"] or None,
+                payload["subject_company"],
+                payload["responsible_person"],
                 generate_password_hash(payload["password"]),
                 payload["status"],
                 payload["max_devices"],
@@ -6359,7 +6393,8 @@ def update_tt_user(user_id: int):
         result = db.execute(
             """
             UPDATE tt_users
-            SET username = ?, full_name = ?, email = ?, status = ?, max_devices = ?,
+            SET username = ?, full_name = ?, email = ?, subject_company = ?, responsible_person = ?,
+                status = ?, max_devices = ?,
                 edition = ?, expires_at = ?, updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
             """,
@@ -6367,6 +6402,8 @@ def update_tt_user(user_id: int):
                 payload["username"],
                 payload["full_name"],
                 payload["email"] or None,
+                payload["subject_company"],
+                payload["responsible_person"],
                 payload["status"],
                 payload["max_devices"],
                 payload["edition"],

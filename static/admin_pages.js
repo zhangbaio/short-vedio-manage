@@ -176,7 +176,10 @@ async function loadUsers() {
     tbody.innerHTML = "";
     if (mobileList) mobileList.innerHTML = "";
     if (!users.length) {
-      const columnCount = 10 + (userPageConfig.showTikTokAccounts ? 1 : 0) + (userPageConfig.showBusinessFields ? 3 : 0);
+      const columnCount = 10
+        + (userPageConfig.showTikTokAccounts ? 1 : 0)
+        + (userPageConfig.showTTBusinessFields ? 2 : 0)
+        + (userPageConfig.showBusinessFields ? 3 : 0);
       tbody.innerHTML = `<tr><td colspan="${columnCount}" class="text-center text-muted py-4">${escapeHtml(userPageConfig.emptyText)}</td></tr>`;
       renderMobileEmptyState(mobileList, userPageConfig.emptyText);
       updateUserPaginationInfo();
@@ -193,6 +196,8 @@ async function loadUsers() {
         ${userPageConfig.showTikTokAccounts ? `<td>${buildTikTokUsernameList(user.tiktok_usernames)}</td>` : ""}
         <td>${escapeHtml(user.full_name || "-")}</td>
         <td>${escapeHtml(user.email || "-")}</td>
+        ${userPageConfig.showTTBusinessFields ? `<td>${buildTTSubjectCompanyList(user)}</td>` : ""}
+        ${userPageConfig.showTTBusinessFields ? `<td>${escapeHtml(user.responsible_person || "-")}</td>` : ""}
         ${userPageConfig.showBusinessFields ? `<td>${escapeHtml(user.subject_company || "-")}</td>` : ""}
         ${userPageConfig.showBusinessFields ? `<td>${escapeHtml(user.responsible_person || "-")}</td>` : ""}
         ${userPageConfig.showBusinessFields ? `<td>${escapeHtml(user.video_channel_name || "-")}</td>` : ""}
@@ -225,6 +230,12 @@ function updateUserPaginationInfo() {
 }
 
 function userBusinessSubtitle(user) {
+  if (userPageConfig.showTTBusinessFields) {
+    return [
+      user.subject_company,
+      user.responsible_person ? `负责人：${user.responsible_person}` : "",
+    ].filter(Boolean).join(" · ");
+  }
   return [
     user.subject_company,
     user.responsible_person ? `负责人：${user.responsible_person}` : "",
@@ -240,6 +251,18 @@ function buildTikTokUsernameList(usernames) {
   if (!values.length) return '<span class="text-muted">-</span>';
   return values
     .map((value) => `<span class="font-monospace small">${escapeHtml(value)}</span>`)
+    .join("<br>");
+}
+
+function buildTTSubjectCompanyList(user) {
+  const accounts = Array.isArray(user?.tiktok_accounts) ? user.tiktok_accounts : [];
+  const values = accounts.map((account) => String(account?.subject_company || "").trim());
+  if (!values.some(Boolean)) {
+    const fallback = String(user?.subject_company || "").trim();
+    return fallback ? escapeHtml(fallback) : '<span class="text-muted">-</span>';
+  }
+  return values
+    .map((value) => value ? escapeHtml(value) : '<span class="text-muted">-</span>')
     .join("<br>");
 }
 
@@ -275,6 +298,8 @@ function buildUserMobileCard(user, actionButtons, statusText, statusClass) {
     </div>
     <div class="mobile-record-subtitle">${escapeHtml(userBusinessSubtitle(user) || [user.full_name, user.email].filter(Boolean).join(" · ") || "未填写姓名/邮箱")}</div>
     <div class="mobile-record-grid">
+      ${userPageConfig.showTTBusinessFields ? `<div><span>主体公司</span><strong>${buildTTSubjectCompanyList(user)}</strong></div>` : ""}
+      ${userPageConfig.showTTBusinessFields ? `<div><span>负责人</span><strong>${escapeHtml(user.responsible_person || "-")}</strong></div>` : ""}
       ${userPageConfig.showTikTokAccounts ? `<div><span>TIKTOK用户名</span><strong>${buildTikTokUsernameList(user.tiktok_usernames)}</strong></div>` : ""}
       <div><span>姓名</span><strong>${escapeHtml(user.full_name || "-")}</strong></div>
       ${userPageConfig.showBusinessFields ? `<div><span>主体公司</span><strong>${escapeHtml(user.subject_company || "-")}</strong></div>` : ""}
@@ -306,6 +331,8 @@ function showUserEditor(user = null) {
     document.getElementById("userSubjectCompanyInput").value = user?.subject_company || "";
     document.getElementById("userResponsiblePersonInput").value = user?.responsible_person || "";
     document.getElementById("userVideoChannelNameInput").value = user?.video_channel_name || "";
+  } else if (userPageConfig.showTTBusinessFields) {
+    document.getElementById("userResponsiblePersonInput").value = user?.responsible_person || "";
   }
   document.getElementById("userPasswordInput").value = "";
   document.getElementById("userPasswordInput").disabled = Boolean(editingUserId);

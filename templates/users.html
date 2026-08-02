@@ -101,6 +101,10 @@
                       {% if is_tt_users %}<th>TIKTOK用户名</th>{% endif %}
                       <th>姓名</th>
                       <th>邮箱</th>
+                      {% if is_tt_users %}
+                      <th>主体公司</th>
+                      <th>负责人</th>
+                      {% endif %}
                       {% if not is_tt_users %}
                       <th>主体公司</th>
                       <th>负责人</th>
@@ -150,6 +154,13 @@
                   <input type="email" class="form-control" id="userEmailInput" autocomplete="off" />
                   <div class="invalid-feedback">邮箱格式不正确</div>
                 </div>
+                {% if is_tt_users %}
+                <div class="col-lg-6">
+                  <label class="form-label" for="userResponsiblePersonInput">负责人</label>
+                  <input type="text" class="form-control" id="userResponsiblePersonInput" maxlength="100" autocomplete="off" />
+                  <div class="invalid-feedback">负责人最多100个字符</div>
+                </div>
+                {% endif %}
                 {% if not is_tt_users %}
                 <div class="col-lg-4">
                   <label class="form-label" for="userSubjectCompanyInput">主体公司</label>
@@ -295,6 +306,7 @@
       window.userPageConfig = {
         apiBase: {{ ('/api/tt-users' if is_tt_users else '/api/users')|tojson }},
         showTikTokAccounts: {{ is_tt_users|tojson }},
+        showTTBusinessFields: {{ is_tt_users|tojson }},
         showBusinessFields: {{ (not is_tt_users)|tojson }},
         enablePagination: {{ (not is_tt_users)|tojson }},
         emptyText: {{ ('暂无TT用户' if is_tt_users else '暂无用户')|tojson }},
