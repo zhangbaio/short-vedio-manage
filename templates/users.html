@@ -48,12 +48,11 @@
                 </div>
               </div>
 
-              {% if not is_tt_users %}
               <div class="user-filter-panel border rounded-3 p-3 my-3 bg-light-subtle">
                 <div class="row g-3 align-items-end">
                   <div class="col-xl-4 col-lg-6">
                     <label class="form-label" for="userKeywordInput">搜索</label>
-                    <input type="text" class="form-control" id="userKeywordInput" placeholder="用户名 / 姓名 / 邮箱 / 业务信息" />
+                    <input type="text" class="form-control" id="userKeywordInput" placeholder="{{ '用户名 / 姓名 / 邮箱 / TIKTOK用户名' if is_tt_users else '用户名 / 姓名 / 邮箱 / 业务信息' }}" />
                   </div>
                   <div class="col-xl-2 col-lg-6">
                     <label class="form-label" for="userSubjectCompanyFilter">主体公司</label>
@@ -63,10 +62,12 @@
                     <label class="form-label" for="userResponsiblePersonFilter">负责人</label>
                     <input type="text" class="form-control" id="userResponsiblePersonFilter" placeholder="按负责人筛选" />
                   </div>
+                  {% if not is_tt_users %}
                   <div class="col-xl-2 col-lg-6">
                     <label class="form-label" for="userVideoChannelNameFilter">视频号名称</label>
                     <input type="text" class="form-control" id="userVideoChannelNameFilter" placeholder="按视频号筛选" />
                   </div>
+                  {% endif %}
                   <div class="col-xl-2 col-lg-6">
                     <label class="form-label" for="userPageSizeSelect">每页</label>
                     <select class="form-select" id="userPageSizeSelect">
@@ -91,7 +92,6 @@
                   <button class="btn btn-outline-secondary" id="userLastPageBtn">末页</button>
                 </div>
               </div>
-              {% endif %}
 
               <div class="table-responsive desktop-table mobile-switchable">
                 <table class="table table-hover align-middle mb-0">
@@ -308,7 +308,7 @@
         showTikTokAccounts: {{ is_tt_users|tojson }},
         showTTBusinessFields: {{ is_tt_users|tojson }},
         showBusinessFields: {{ (not is_tt_users)|tojson }},
-        enablePagination: {{ (not is_tt_users)|tojson }},
+        enablePagination: true,
         emptyText: {{ ('暂无TT用户' if is_tt_users else '暂无用户')|tojson }},
         entityLabel: {{ ('TT用户' if is_tt_users else '用户')|tojson }},
         roleText: {{ ('TT授权用户' if is_tt_users else '')|tojson }},

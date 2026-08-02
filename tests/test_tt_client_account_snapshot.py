@@ -201,6 +201,78 @@ def test_tt_account_snapshot_is_idempotent_and_reconciles_admin_list(tmp_path, m
     assert cleared.get_json()["data"]["deleted"] == 2
 
 
+def test_tt_user_list_supports_search_filter_and_pagination(tmp_path, monkeypatch) -> None:
+    client = _setup_test_app(tmp_path, monkeypatch)
+    with manage_app.app.app_context():
+        alpha_id, alpha_token = _create_tt_user_with_token(
+            username="alpha",
+            email="alpha@example.test",
+            machine_id="machine-alpha",
+        )
+        _create_tt_user_with_token(
+            username="beta",
+            email="beta@example.test",
+            machine_id="machine-beta",
+        )
+        db = manage_app.get_db()
+        db.execute(
+            "UPDATE tt_users SET full_name = ?, responsible_person = ? WHERE id = ?",
+            ("Alpha User", "Alice", alpha_id),
+        )
+        db.commit()
+
+    snapshot = client.put(
+        "/client-api/tt/accounts/snapshot",
+        headers=_headers(account="alpha", machine_id="machine-alpha", token=alpha_token),
+        json={
+            "accounts": [
+                {
+                    "client_account_id": "acct-alpha",
+                    "tiktok_username": "needle@example.test",
+                    "subject_company": "湖北云漫科技有限公司",
+                }
+            ]
+        },
+    )
+    assert snapshot.status_code == 200
+
+    with client.session_transaction() as session:
+        session["user_id"] = 1
+        session["username"] = "admin"
+        session["role"] = "admin"
+        session["user_type"] = "user"
+
+    paged_response = client.get("/api/tt-users?page=1&page_size=1")
+    assert paged_response.status_code == 200
+    paged_data = paged_response.get_json()
+    assert paged_data["total"] == 2
+    assert paged_data["pages"] == 2
+    assert len(paged_data["items"]) == 1
+
+    search_response = client.get("/api/tt-users?page=1&page_size=20&search=needle")
+    assert search_response.status_code == 200
+    search_data = search_response.get_json()
+    assert search_data["total"] == 1
+    assert search_data["items"][0]["username"] == "alpha"
+
+    company_response = client.get("/api/tt-users?page=1&page_size=20&subject_company=云漫")
+    assert company_response.status_code == 200
+    company_data = company_response.get_json()
+    assert company_data["total"] == 1
+    assert company_data["items"][0]["tiktok_accounts"] == [
+        {
+            "tiktok_username": "needle@example.test",
+            "subject_company": "湖北云漫科技有限公司",
+        }
+    ]
+
+    owner_response = client.get("/api/tt-users?page=1&page_size=20&responsible_person=Alice")
+    assert owner_response.status_code == 200
+    owner_data = owner_response.get_json()
+    assert owner_data["total"] == 1
+    assert owner_data["items"][0]["username"] == "alpha"
+
+
 def test_tt_account_snapshot_is_scoped_to_authenticated_machine(tmp_path, monkeypatch) -> None:
     client = _setup_test_app(tmp_path, monkeypatch)
     with manage_app.app.app_context():

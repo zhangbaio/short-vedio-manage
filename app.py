@@ -6336,8 +6336,75 @@ def change_password(user_id: int):
 @admin_required
 def list_tt_users():
     db = get_db()
+    paginated = any(
+        key in request.args
+        for key in (
+            "page",
+            "page_size",
+            "search",
+            "keyword",
+            "subject_company",
+            "responsible_person",
+        )
+    )
+    page = max(1, int(request.args.get("page", 1) or 1))
+    page_size = min(100, max(1, int(request.args.get("page_size", 20) or 20)))
+    clauses = []
+    params = []
+    search = str(request.args.get("search") or request.args.get("keyword") or "").strip()
+    if search:
+        like = f"%{search}%"
+        clauses.append(
+            """
+            (
+                u.username LIKE ?
+                OR COALESCE(u.full_name, '') LIKE ?
+                OR COALESCE(u.email, '') LIKE ?
+                OR COALESCE(u.subject_company, '') LIKE ?
+                OR COALESCE(u.responsible_person, '') LIKE ?
+                OR EXISTS (
+                    SELECT 1
+                    FROM tt_client_accounts a
+                    WHERE a.owner_tt_user_id = u.id
+                      AND (
+                          COALESCE(a.tiktok_username, '') LIKE ?
+                          OR COALESCE(a.subject_company, '') LIKE ?
+                      )
+                )
+            )
+            """
+        )
+        params.extend([like] * 7)
+    subject_company = str(request.args.get("subject_company") or "").strip()
+    if subject_company:
+        like = f"%{subject_company}%"
+        clauses.append(
+            """
+            (
+                COALESCE(u.subject_company, '') LIKE ?
+                OR EXISTS (
+                    SELECT 1
+                    FROM tt_client_accounts a
+                    WHERE a.owner_tt_user_id = u.id
+                      AND COALESCE(a.subject_company, '') LIKE ?
+                )
+            )
+            """
+        )
+        params.extend([like, like])
+    responsible_person = str(request.args.get("responsible_person") or "").strip()
+    if responsible_person:
+        clauses.append("COALESCE(u.responsible_person, '') LIKE ?")
+        params.append(f"%{responsible_person}%")
+    where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    limit_sql = ""
+    page_params = []
+    if paginated:
+        offset = (page - 1) * page_size
+        limit_sql = "LIMIT ? OFFSET ?"
+        page_params = [page_size, offset]
     rows = db.execute(
-        """
+        f"""
         SELECT
             u.id, u.username, u.full_name, u.email, u.subject_company, u.responsible_person,
             'tt_user' AS role, u.status, u.max_devices,
@@ -6346,16 +6413,31 @@ def list_tt_users():
             (SELECT COUNT(*) FROM tt_user_devices d WHERE d.tt_user_id = u.id) AS total_devices,
             (SELECT COALESCE(MAX(d.last_verified_at), '') FROM tt_user_devices d WHERE d.tt_user_id = u.id) AS last_verified_at
         FROM tt_users u
+        {where_sql}
         ORDER BY u.created_at DESC
-        """
+        {limit_sql}
+        """,
+        params + page_params,
     ).fetchall()
-    account_rows = db.execute(
-        """
-        SELECT owner_tt_user_id, tiktok_username, username_key, subject_company, updated_at
-        FROM tt_client_accounts
-        ORDER BY owner_tt_user_id, updated_at DESC, id DESC
-        """
-    ).fetchall()
+    total = None
+    if paginated:
+        total = db.execute(
+            f"SELECT COUNT(*) FROM tt_users u {where_sql}",
+            params,
+        ).fetchone()[0]
+    owner_ids = [int(row["id"]) for row in rows]
+    account_rows = []
+    if owner_ids:
+        placeholders = ",".join("?" for _ in owner_ids)
+        account_rows = db.execute(
+            f"""
+            SELECT owner_tt_user_id, tiktok_username, username_key, subject_company, updated_at
+            FROM tt_client_accounts
+            WHERE owner_tt_user_id IN ({placeholders})
+            ORDER BY owner_tt_user_id, updated_at DESC, id DESC
+            """,
+            owner_ids,
+        ).fetchall()
     account_profiles_by_owner: dict[int, list[dict[str, str]]] = {}
     username_keys_by_owner: dict[int, set[str]] = {}
     for account_row in account_rows:
@@ -6407,6 +6489,18 @@ def list_tt_users():
         changed = changed or row_changed
     if changed:
         db.commit()
+    if paginated:
+        pages = math.ceil(total / page_size) if total else 1
+        return jsonify(
+            {
+                "items": items,
+                "total": total,
+                "page": page,
+                "page_size": page_size,
+                "pages": pages,
+                "total_pages": pages,
+            }
+        )
     return jsonify(items)
 
 
