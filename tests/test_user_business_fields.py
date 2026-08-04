@@ -198,3 +198,74 @@ def test_client_syncs_video_channel_profile_names(tmp_path, monkeypatch) -> None
         None,
     ]
     assert [int(row["is_active"]) for row in rows] == [0, 1, 0]
+
+
+def test_user_devices_include_video_channel_profiles_for_each_machine(tmp_path, monkeypatch) -> None:
+    client = _setup_test_app(tmp_path, monkeypatch)
+    _login_admin(client)
+
+    create_response = client.post(
+        "/api/users",
+        json={
+            "username": "device_profile_user",
+            "password": "secret123",
+            "role": "user",
+            "status": "active",
+            "edition": "pro",
+            "max_devices": 2,
+        },
+    )
+    assert create_response.status_code == 201
+    list_response = client.get("/api/users?page=1&page_size=10&search=device_profile_user")
+    assert list_response.status_code == 200
+    user_id = list_response.get_json()["items"][0]["id"]
+
+    for machine_id, video_channel_name, review_org_name in (
+        ("machine-a", "账号A", "甲方公司"),
+        ("machine-b", "账号B", "乙方公司"),
+    ):
+        login_response = client.post(
+            "/account/login",
+            json={
+                "account": "device_profile_user",
+                "password": "secret123",
+                "machine_id": machine_id,
+                "device_name": "desktop",
+                "app_name": "shortdrama",
+                "app_version": "1.0",
+            },
+        )
+        assert login_response.status_code == 200
+        token = login_response.get_json()["data"]["token"]
+        sync_response = client.post(
+            "/client-api/account/video-channel-profiles/sync",
+            json={
+                "account": "device_profile_user",
+                "machine_id": machine_id,
+                "token": token,
+                "active_profile_id": "profile-a",
+                "profiles": [
+                    {
+                        "profile_id": "profile-a",
+                        "profile_name": "档案A",
+                        "video_channel_name": video_channel_name,
+                        "review_org_name": review_org_name,
+                    }
+                ],
+            },
+        )
+        assert sync_response.status_code == 200
+
+    devices_response = client.get(f"/api/users/{user_id}/devices")
+    assert devices_response.status_code == 200
+    devices = sorted(devices_response.get_json()["devices"], key=lambda item: item["machine_id"])
+    assert [(device["machine_id"], device["video_channel_profiles"]) for device in devices] == [
+        (
+            "machine-a",
+            [{"video_channel_name": "账号A", "subject_company": "甲方公司"}],
+        ),
+        (
+            "machine-b",
+            [{"video_channel_name": "账号B", "subject_company": "乙方公司"}],
+        ),
+    ]

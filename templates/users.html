@@ -279,11 +279,13 @@
               <table class="table table-sm align-middle mb-0">
                 <thead>
                   <tr>
-                    <th>设备名</th>
                     <th>本机码</th>
                     {% if is_tt_users %}
                     <th>TIKTOK用户名</th>
                     <th>主体公司</th>
+                    {% else %}
+                    <th>主体公司</th>
+                    <th>视频号名称</th>
                     {% endif %}
                     <th>IP</th>
                     <th>IP归属地</th>

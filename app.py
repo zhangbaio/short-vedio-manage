@@ -6268,10 +6268,45 @@ def list_user_devices(user_id: int):
         """,
         (user_id,),
     ).fetchall()
+    machine_ids = [str(row["machine_id"] or "").strip() for row in rows if str(row["machine_id"] or "").strip()]
+    profile_rows = []
+    if machine_ids:
+        placeholders = ",".join("?" for _ in machine_ids)
+        profile_rows = db.execute(
+            f"""
+            SELECT machine_id, video_channel_name, review_org_name
+            FROM user_video_channel_profiles
+            WHERE user_id = ?
+              AND machine_id IN ({placeholders})
+            ORDER BY machine_id, is_active DESC, last_synced_at DESC, id DESC
+            """,
+            [user_id, *machine_ids],
+        ).fetchall()
+    profiles_by_machine: dict[str, list[dict[str, str]]] = {}
+    seen_profiles_by_machine: dict[str, set[tuple[str, str]]] = {}
+    for profile_row in profile_rows:
+        machine_id = str(profile_row["machine_id"] or "").strip()
+        video_channel_name = str(profile_row["video_channel_name"] or "").strip()
+        subject_company = str(profile_row["review_org_name"] or "").strip()
+        if not machine_id or (not video_channel_name and not subject_company):
+            continue
+        seen_key = (video_channel_name.casefold(), subject_company.casefold())
+        seen_profiles = seen_profiles_by_machine.setdefault(machine_id, set())
+        if seen_key in seen_profiles:
+            continue
+        seen_profiles.add(seen_key)
+        profiles_by_machine.setdefault(machine_id, []).append(
+            {
+                "video_channel_name": video_channel_name,
+                "subject_company": subject_company,
+            }
+        )
     devices = []
     changed = False
     for row in rows:
         item, row_changed = enrich_device_ip_region(db, "user_devices", row)
+        machine_id = str(item.get("machine_id") or "").strip()
+        item["video_channel_profiles"] = profiles_by_machine.get(machine_id, [])
         devices.append(item)
         changed = changed or row_changed
     if changed:
