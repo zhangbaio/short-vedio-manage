@@ -6600,10 +6600,44 @@ def list_tt_user_devices(user_id: int):
         """,
         (user_id,),
     ).fetchall()
+    machine_ids = [str(row["machine_id"] or "").strip() for row in rows if str(row["machine_id"] or "").strip()]
+    account_rows = []
+    if machine_ids:
+        placeholders = ",".join("?" for _ in machine_ids)
+        account_rows = db.execute(
+            f"""
+            SELECT machine_id, tiktok_username, username_key, subject_company, updated_at
+            FROM tt_client_accounts
+            WHERE owner_tt_user_id = ?
+              AND machine_id IN ({placeholders})
+            ORDER BY machine_id, updated_at DESC, id DESC
+            """,
+            [user_id, *machine_ids],
+        ).fetchall()
+    accounts_by_machine: dict[str, list[dict[str, str]]] = {}
+    seen_keys_by_machine: dict[str, set[str]] = {}
+    for account_row in account_rows:
+        machine_id = str(account_row["machine_id"] or "").strip()
+        username = str(account_row["tiktok_username"] or "").strip()
+        username_key = str(account_row["username_key"] or "").strip()
+        if not machine_id or not username or not username_key:
+            continue
+        seen_keys = seen_keys_by_machine.setdefault(machine_id, set())
+        if username_key in seen_keys:
+            continue
+        seen_keys.add(username_key)
+        accounts_by_machine.setdefault(machine_id, []).append(
+            {
+                "tiktok_username": username,
+                "subject_company": str(account_row["subject_company"] or "").strip(),
+            }
+        )
     devices = []
     changed = False
     for row in rows:
         item, row_changed = enrich_device_ip_region(db, "tt_user_devices", row)
+        machine_id = str(item.get("machine_id") or "").strip()
+        item["tiktok_accounts"] = accounts_by_machine.get(machine_id, [])
         devices.append(item)
         changed = changed or row_changed
     if changed:

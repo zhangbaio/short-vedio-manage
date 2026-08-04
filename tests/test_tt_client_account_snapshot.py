@@ -331,6 +331,62 @@ def test_tt_account_snapshot_is_scoped_to_authenticated_machine(tmp_path, monkey
     assert invalid.status_code == 401
 
 
+def test_tt_user_devices_include_accounts_for_each_machine(tmp_path, monkeypatch) -> None:
+    client = _setup_test_app(tmp_path, monkeypatch)
+    with manage_app.app.app_context():
+        user_id, token_a = _create_tt_user_with_token(machine_id="machine-a")
+        token_b = _add_tt_device_token(user_id=user_id, machine_id="machine-b")
+
+    response_a = client.put(
+        "/client-api/tt/accounts/snapshot",
+        headers=_headers(account="zhangbiao", machine_id="machine-a", token=token_a),
+        json={
+            "accounts": [
+                {
+                    "client_account_id": "acct-a",
+                    "tiktok_username": "a@example.test",
+                    "subject_company": "甲方公司",
+                }
+            ]
+        },
+    )
+    response_b = client.put(
+        "/client-api/tt/accounts/snapshot",
+        headers=_headers(account="zhangbiao", machine_id="machine-b", token=token_b),
+        json={
+            "accounts": [
+                {
+                    "client_account_id": "acct-b",
+                    "tiktok_username": "b@example.test",
+                    "subject_company": "乙方公司",
+                }
+            ]
+        },
+    )
+    assert response_a.status_code == 200
+    assert response_b.status_code == 200
+
+    with client.session_transaction() as session:
+        session["user_id"] = 1
+        session["username"] = "admin"
+        session["role"] = "admin"
+        session["user_type"] = "user"
+
+    devices_response = client.get(f"/api/tt-users/{user_id}/devices")
+    assert devices_response.status_code == 200
+    devices = sorted(devices_response.get_json()["devices"], key=lambda item: item["machine_id"])
+    assert [(device["machine_id"], device["tiktok_accounts"]) for device in devices] == [
+        (
+            "machine-a",
+            [{"tiktok_username": "a@example.test", "subject_company": "甲方公司"}],
+        ),
+        (
+            "machine-b",
+            [{"tiktok_username": "b@example.test", "subject_company": "乙方公司"}],
+        ),
+    ]
+
+
 def test_tt_account_snapshot_rejects_non_object_and_non_string_fields(tmp_path, monkeypatch) -> None:
     client = _setup_test_app(tmp_path, monkeypatch)
     with manage_app.app.app_context():

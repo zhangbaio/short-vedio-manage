@@ -573,18 +573,21 @@ async function loadUserDevices(userId, username = "") {
     tbody.innerHTML = "";
     if (mobileList) mobileList.innerHTML = "";
     if (!devices.length) {
-      tbody.innerHTML = `<tr><td colspan="9" class="text-center text-muted py-4">${escapeHtml(userPageConfig.noDevicesText)}</td></tr>`;
+      const columnCount = userPageConfig.showTikTokAccounts ? 10 : 8;
+      tbody.innerHTML = `<tr><td colspan="${columnCount}" class="text-center text-muted py-4">${escapeHtml(userPageConfig.noDevicesText)}</td></tr>`;
       renderMobileEmptyState(mobileList, userPageConfig.noDevicesText);
     } else {
       devices.forEach((device) => {
         const revoked = Boolean(device.revoked_at);
         const deviceIp = getDeviceDisplayIp(device);
         const deviceRegion = getDeviceDisplayIpRegion(device);
+        const machineCode = buildMachineCode(device.machine_id);
         const tr = document.createElement("tr");
         tr.innerHTML = `
           <td>${escapeHtml(device.device_name || "-")}</td>
-          <td class="font-monospace small">${escapeHtml(device.machine_id || "-")}</td>
-          <td>${escapeHtml([device.app_name, device.app_version].filter(Boolean).join(" ") || "-")}</td>
+          <td class="font-monospace small" title="${escapeHtml(device.machine_id || "-")}">${machineCode}</td>
+          ${userPageConfig.showTikTokAccounts ? `<td>${buildDeviceTikTokUsernameList(device)}</td>` : ""}
+          ${userPageConfig.showTikTokAccounts ? `<td>${buildDeviceSubjectCompanyList(device)}</td>` : ""}
           <td class="font-monospace small">${escapeHtml(deviceIp)}</td>
           <td>${escapeHtml(deviceRegion)}</td>
           <td>${escapeHtml(device.logged_in_at || "-")}</td>
@@ -612,9 +615,42 @@ function getDeviceDisplayIpRegion(device) {
   return device?.last_ip_region || device?.login_ip_region || "-";
 }
 
+function buildMachineCode(machineId) {
+  const value = String(machineId || "").trim();
+  if (!value) return '<span class="text-muted">-</span>';
+  if (value.length <= 18) return escapeHtml(value);
+  return escapeHtml(`${value.slice(0, 8)}...${value.slice(-6)}`);
+}
+
+function getDeviceTikTokAccounts(device) {
+  return Array.isArray(device?.tiktok_accounts) ? device.tiktok_accounts : [];
+}
+
+function buildDeviceTikTokUsernameList(device) {
+  const values = getDeviceTikTokAccounts(device)
+    .map((account) => String(account?.tiktok_username || "").trim())
+    .filter(Boolean);
+  if (!values.length) return '<span class="text-muted">-</span>';
+  return values
+    .map((value) => `<span class="font-monospace small">${escapeHtml(value)}</span>`)
+    .join("<br>");
+}
+
+function buildDeviceSubjectCompanyList(device) {
+  const accounts = getDeviceTikTokAccounts(device);
+  if (!accounts.length) return '<span class="text-muted">-</span>';
+  return accounts
+    .map((account) => {
+      const value = String(account?.subject_company || "").trim();
+      return value ? escapeHtml(value) : '<span class="text-muted">-</span>';
+    })
+    .join("<br>");
+}
+
 function buildUserDeviceMobileCard(device, revoked) {
   const deviceIp = getDeviceDisplayIp(device);
   const deviceRegion = getDeviceDisplayIpRegion(device);
+  const machineCode = buildMachineCode(device.machine_id);
   const card = document.createElement("article");
   card.className = "mobile-record-card";
   card.innerHTML = `
@@ -622,9 +658,10 @@ function buildUserDeviceMobileCard(device, revoked) {
       <div class="mobile-record-title">${escapeHtml(device.device_name || "-")}</div>
       ${revoked ? '<span class="badge text-bg-secondary">已解绑</span>' : '<span class="badge text-bg-success">有效</span>'}
     </div>
-    <div class="mobile-record-subtitle font-monospace">${escapeHtml(device.machine_id || "-")}</div>
+    <div class="mobile-record-subtitle font-monospace" title="${escapeHtml(device.machine_id || "-")}">本机码 ${machineCode}</div>
     <div class="mobile-record-grid">
-      <div><span>应用</span><strong>${escapeHtml([device.app_name, device.app_version].filter(Boolean).join(" ") || "-")}</strong></div>
+      ${userPageConfig.showTikTokAccounts ? `<div><span>TIKTOK用户名</span><strong>${buildDeviceTikTokUsernameList(device)}</strong></div>` : ""}
+      ${userPageConfig.showTikTokAccounts ? `<div><span>主体公司</span><strong>${buildDeviceSubjectCompanyList(device)}</strong></div>` : ""}
       <div><span>IP</span><strong>${escapeHtml(deviceIp)}</strong></div>
       <div><span>IP归属地</span><strong>${escapeHtml(deviceRegion)}</strong></div>
       <div><span>登录时间</span><strong>${escapeHtml(device.logged_in_at || "-")}</strong></div>

@@ -281,7 +281,10 @@
                   <tr>
                     <th>设备名</th>
                     <th>本机码</th>
-                    <th>应用</th>
+                    {% if is_tt_users %}
+                    <th>TIKTOK用户名</th>
+                    <th>主体公司</th>
+                    {% endif %}
                     <th>IP</th>
                     <th>IP归属地</th>
                     <th>登录时间</th>
