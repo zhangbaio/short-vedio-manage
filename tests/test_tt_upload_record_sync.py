@@ -254,3 +254,37 @@ def test_tt_duplicate_check_supports_tiktok_username_scope(tmp_path, monkeypatch
     )
     assert tiktok_username_response.status_code == 200
     assert tiktok_username_response.get_json()["data"]["duplicates"] == ["山野孤女京城成长记"]
+
+    new_name_response = client.post(
+        "/client-api/upload-records/check-duplicates",
+        headers={
+            "X-TT-Account": "other",
+            "X-TT-Machine-Id": "machine-other",
+            "X-TT-Token": other_token,
+        },
+        json={
+            "platform": "tt",
+            "dedupe_scope": "tiktok_username",
+            "new_names": ["《山野孤女京城成长记》", "山野孤女京城另起炉灶"],
+            "tiktok_username": "2720937754@qq.com",
+        },
+    )
+    assert new_name_response.status_code == 200
+    assert new_name_response.get_json()["data"]["duplicates"] == ["《山野孤女京城成长记》"]
+
+    other_account_response = client.post(
+        "/client-api/upload-records/check-duplicates",
+        headers={
+            "X-TT-Account": "other",
+            "X-TT-Machine-Id": "machine-other",
+            "X-TT-Token": other_token,
+        },
+        json={
+            "platform": "tt",
+            "dedupe_scope": "tiktok_username",
+            "new_names": ["山野孤女京城成长记"],
+            "tiktok_username": "other@qq.com",
+        },
+    )
+    assert other_account_response.status_code == 200
+    assert other_account_response.get_json()["data"]["duplicates"] == []

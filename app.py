@@ -5492,9 +5492,46 @@ def client_sync_upload_records():
     )
 
 
+def _normalize_upload_title_key(value: object) -> str:
+    text = str(value or "").strip()
+    skip = set("《》“”\"'-_：:，,。.")
+    return "".join(ch for ch in text if not ch.isspace() and ch not in skip)
+
+
+def _dedupe_name_list(raw_names: object) -> list[str]:
+    if not isinstance(raw_names, list):
+        return []
+    seen: set[str] = set()
+    names: list[str] = []
+    for item in raw_names:
+        text = str(item or "").strip()
+        if text and text not in seen:
+            seen.add(text)
+            names.append(text)
+    return names
+
+
+def _matching_normalized_titles(requested: list[str], stored_rows: list[object], column: str) -> list[str]:
+    requested_by_key: dict[str, list[str]] = {}
+    for name in requested:
+        key = _normalize_upload_title_key(name)
+        if key:
+            requested_by_key.setdefault(key, []).append(name)
+    matched: list[str] = []
+    seen: set[str] = set()
+    for row in stored_rows:
+        stored = str(row[column] or "").strip()
+        key = _normalize_upload_title_key(stored)
+        if not key or key not in requested_by_key or key in seen:
+            continue
+        seen.add(key)
+        matched.extend(requested_by_key[key])
+    return matched
+
+
 @app.route("/client-api/upload-records/check-duplicates", methods=["POST"])
 def client_check_upload_duplicates():
-    """按原剧名查重：返回当前归属(TT 账号或远程客户端归属用户)已存在的原剧名列表。"""
+    """按原剧名或新剧名查重。新剧名只认去掉空格和书名号后完全相同的名字。"""
     db, client_row = require_remote_client()
     if client_row is not None:
         owner_field, owner_id = "owner_user_id", int(client_row["owner_user_id"])
@@ -5505,23 +5542,22 @@ def client_check_upload_duplicates():
         owner_field, owner_id = "owner_tt_user_id", int(tt_user_row["id"])
 
     data = request.get_json(silent=True) or {}
-    raw_names = data.get("original_names")
-    if not isinstance(raw_names, list):
+    has_original = "original_names" in data
+    has_new = "new_names" in data
+    if not has_original and not has_new:
         return jsonify({"ok": False, "message": "original_names 必须是数组"}), 400
-    platform = normalize_upload_record_platform(data.get("platform") or "tt")
-    dedupe_scope = normalize_upload_record_dedupe_scope(data.get("dedupe_scope") or data.get("scope"))
-
-    seen: set[str] = set()
-    names: list[str] = []
-    for n in raw_names:
-        s = str(n or "").strip()
-        if s and s not in seen:
-            seen.add(s)
-            names.append(s)
-    if not names:
+    if has_original and not isinstance(data.get("original_names"), list):
+        return jsonify({"ok": False, "message": "original_names 必须是数组"}), 400
+    if has_new and not isinstance(data.get("new_names"), list):
+        return jsonify({"ok": False, "message": "new_names 必须是数组"}), 400
+    original_names = _dedupe_name_list(data.get("original_names"))
+    new_names = _dedupe_name_list(data.get("new_names"))
+    if not original_names and not new_names:
         return jsonify({"ok": True, "data": {"duplicates": []}})
 
-    placeholders = ",".join(["?"] * len(names))
+    platform = normalize_upload_record_platform(data.get("platform") or "tt")
+    dedupe_scope = normalize_upload_record_dedupe_scope(data.get("dedupe_scope") or data.get("scope"))
+    tiktok_username = ""
     if dedupe_scope == "tiktok_username":
         tiktok_username = _upload_record_text(
             data,
@@ -5533,18 +5569,39 @@ def client_check_upload_duplicates():
         )
         if not tiktok_username:
             return jsonify({"ok": False, "message": "按 TIKTOK用户名 去重时缺少 tiktok_username"}), 400
-        rows = db.execute(
-            f"SELECT DISTINCT original_name FROM upload_records "
-            f"WHERE platform = ? AND tiktok_username = ? AND original_name IN ({placeholders})",
-            [platform, tiktok_username, *names],
-        ).fetchall()
-    else:
-        rows = db.execute(
-            f"SELECT DISTINCT original_name FROM upload_records "
-            f"WHERE {owner_field} = ? AND platform = ? AND original_name IN ({placeholders})",
-            [owner_id, platform, *names],
-        ).fetchall()
-    duplicates = [str(r["original_name"]) for r in rows if r["original_name"]]
+
+    duplicates: list[str] = []
+    if original_names:
+        placeholders = ",".join(["?"] * len(original_names))
+        if dedupe_scope == "tiktok_username":
+            rows = db.execute(
+                f"SELECT DISTINCT original_name FROM upload_records "
+                f"WHERE platform = ? AND tiktok_username = ? AND original_name IN ({placeholders})",
+                [platform, tiktok_username, *original_names],
+            ).fetchall()
+        else:
+            rows = db.execute(
+                f"SELECT DISTINCT original_name FROM upload_records "
+                f"WHERE {owner_field} = ? AND platform = ? AND original_name IN ({placeholders})",
+                [owner_id, platform, *original_names],
+            ).fetchall()
+        duplicates.extend(str(row["original_name"]) for row in rows if row["original_name"])
+
+    if new_names:
+        if dedupe_scope == "tiktok_username":
+            stored_rows = db.execute(
+                "SELECT DISTINCT new_name FROM upload_records "
+                "WHERE platform = ? AND tiktok_username = ? AND TRIM(new_name) != ''",
+                (platform, tiktok_username),
+            ).fetchall()
+        else:
+            stored_rows = db.execute(
+                f"SELECT DISTINCT new_name FROM upload_records "
+                f"WHERE {owner_field} = ? AND platform = ? AND TRIM(new_name) != ''",
+                (owner_id, platform),
+            ).fetchall()
+        duplicates.extend(_matching_normalized_titles(new_names, stored_rows, "new_name"))
+
     return jsonify({"ok": True, "data": {"duplicates": duplicates, "dedupe_scope": dedupe_scope}})
 
 
