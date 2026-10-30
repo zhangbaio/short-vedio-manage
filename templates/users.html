@@ -219,6 +219,40 @@
       </div>
     </div>
 
+    {% if is_tt_users %}
+    <div class="modal fade" id="accountConfigsModal" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <div class="modal-content">
+          <div class="modal-header">
+            <div>
+              <h2 class="modal-title h5 mb-1">同步账号</h2>
+              <div class="text-muted small" id="accountConfigsTitle">登录同一 TT 用户的电脑会自动同步这些账号</div>
+            </div>
+            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div>
+          <div class="modal-body">
+            <div class="table-responsive">
+              <table class="table table-sm align-middle mb-0">
+                <thead>
+                  <tr>
+                    <th>TikTok 账号</th>
+                    <th>版本</th>
+                    <th>最后修改电脑</th>
+                    <th>最后修改时间</th>
+                    <th>登录态</th>
+                    <th>印章</th>
+                    <th class="text-end">操作</th>
+                  </tr>
+                </thead>
+                <tbody id="accountConfigsTableBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
     <script>
       window.currentUser = {
         username: {{ session.username|tojson }},

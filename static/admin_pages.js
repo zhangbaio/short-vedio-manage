@@ -5,6 +5,8 @@ let passwordTargetUserId = null;
 let editingUserId = null;
 let usersCache = [];
 let currentDevicesUserId = null;
+let currentAccountConfigUserId = null;
+let accountConfigsModal = null;
 let userEditorModal = null;
 let userPasswordModal = null;
 let userDevicesModal = null;
@@ -36,6 +38,11 @@ function initUsersPage() {
   userEditorModal = new bootstrap.Modal(document.getElementById("userEditorModal"));
   userPasswordModal = new bootstrap.Modal(document.getElementById("userPasswordModal"));
   userDevicesModal = new bootstrap.Modal(document.getElementById("userDevicesModal"));
+  const accountConfigsModalElement = document.getElementById("accountConfigsModal");
+  if (accountConfigsModalElement) {
+    accountConfigsModal = new bootstrap.Modal(accountConfigsModalElement);
+    document.getElementById("accountConfigsTableBody")?.addEventListener("click", deleteAccountConfig);
+  }
   document.getElementById("addUserBtn")?.addEventListener("click", showUserEditor);
   document.getElementById("createUserBtn")?.addEventListener("click", saveUser);
   document.getElementById("cancelPasswordEditBtn")?.addEventListener("click", hidePasswordEditor);
@@ -151,6 +158,9 @@ function buildUserActionButtons(user, isSelf) {
   return [
     `<button class="btn btn-sm btn-outline-secondary" data-action="edit-user" data-id="${user.id}">编辑</button>`,
     `<button class="btn btn-sm btn-outline-info" data-action="view-devices" data-id="${user.id}" data-username="${escapeHtml(user.username)}">设备</button>`,
+    ...(window.adminPage === "tt_users"
+      ? [`<button class="btn btn-sm btn-outline-info" data-action="view-account-configs" data-id="${user.id}" data-username="${escapeHtml(user.username)}">同步账号</button>`]
+      : []),
     `<button class="btn btn-sm btn-outline-primary" data-action="reset-password" data-id="${user.id}" data-username="${escapeHtml(user.username)}">重置密码</button>`,
     `<button class="btn btn-sm btn-outline-danger" data-action="delete-user" data-id="${user.id}" data-username="${escapeHtml(user.username)}" ${isSelf ? "disabled" : ""}>删除</button>`,
   ];
@@ -325,6 +335,10 @@ async function handleUserTableClick(event) {
     await loadUserDevices(id, username);
     return;
   }
+  if (button.dataset.action === "view-account-configs") {
+    await loadAccountConfigs(id, username);
+    return;
+  }
   if (button.dataset.action === "reset-password") {
     showPasswordEditor(id, username);
     return;
@@ -336,6 +350,57 @@ async function handleUserTableClick(event) {
     showToast(userPageConfig.deleteSuccess, "success");
     await loadUsers();
     if (currentDevicesUserId === id) hideDevicesPanel();
+  } catch (error) {
+    showToast(error.message, "danger");
+  }
+}
+
+async function loadAccountConfigs(userId, username) {
+  currentAccountConfigUserId = userId;
+  document.getElementById("accountConfigsTitle").textContent = `${username} 的同步账号`;
+  const tbody = document.getElementById("accountConfigsTableBody");
+  tbody.innerHTML = `<tr><td colspan="7" class="text-center text-muted py-3">加载中...</td></tr>`;
+  accountConfigsModal?.show();
+  try {
+    const accounts = await requestJSON(`${userPageConfig.apiBase}/${userId}/account-configs`);
+    if (!accounts) return;
+    if (!accounts.length) {
+      tbody.innerHTML = `<tr><td colspan="7" class="text-center text-muted py-3">暂无同步账号</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = accounts.map((account) => `
+      <tr>
+        <td>${escapeHtml(account.tiktok_username || account.client_account_id)}</td>
+        <td>${Number(account.revision || 0)}</td>
+        <td>${escapeHtml(account.updated_by_machine || "-")}</td>
+        <td>${escapeHtml(account.updated_at || "-")}</td>
+        <td>${account.has_login_state ? "有" : "-"}</td>
+        <td>${account.has_seal ? "有" : "-"}</td>
+        <td class="text-end">
+          <button class="btn btn-sm btn-outline-danger" data-action="delete-account-config" data-id="${escapeHtml(account.client_account_id)}" ${account.deleted ? "disabled" : ""}>
+            ${account.deleted ? "已删除" : "删除"}
+          </button>
+        </td>
+      </tr>
+    `).join("");
+  } catch (error) {
+    tbody.innerHTML = "";
+    showToast(error.message, "danger");
+  }
+}
+
+async function deleteAccountConfig(event) {
+  const button = event.target.closest("button[data-action='delete-account-config']");
+  if (!button || !currentAccountConfigUserId) return;
+  const accountId = button.dataset.id;
+  if (!confirm("删除后，已登录该 TT 用户的电脑会同步删除这个 TikTok 账号。确定删除？")) return;
+  try {
+    await requestJSON(`${userPageConfig.apiBase}/${currentAccountConfigUserId}/account-configs/${encodeURIComponent(accountId)}`, {
+      method: "DELETE",
+    });
+    showToast("已删除云端账号", "success");
+    const title = document.getElementById("accountConfigsTitle").textContent.replace(" 的同步账号", "");
+    await loadAccountConfigs(currentAccountConfigUserId, title);
   } catch (error) {
     showToast(error.message, "danger");
   }

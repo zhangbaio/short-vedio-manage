@@ -297,6 +297,7 @@ app.config["LICENSE_SIGNING_KEY"] = os.environ.get(
     "LICENSE_SIGNING_KEY",
     app.config["SECRET_KEY"],
 )
+app.config["TT_CONFIG_ENCRYPTION_KEY"] = os.environ.get("TT_CONFIG_ENCRYPTION_KEY", "")
 
 
 @app.route("/favicon.ico")
@@ -1223,6 +1224,9 @@ def init_db() -> None:
         )
         migrate_legacy_minidrama_settings(db)
         seed_default_users(db)
+        from tt_account_config import ensure_schema as ensure_tt_account_config_schema
+
+        ensure_tt_account_config_schema(db)
         db.commit()
 
 
@@ -7523,6 +7527,11 @@ def to_int_or_none(value):
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+from tt_account_config import register_routes as register_tt_account_config_routes
+
+register_tt_account_config_routes(app)
 
 
 if __name__ == "__main__":
