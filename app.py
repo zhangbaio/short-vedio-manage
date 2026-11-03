@@ -537,7 +537,7 @@ def enrich_device_ip_region(
     table_name: str,
     row: sqlite3.Row,
 ) -> tuple[dict[str, Any], bool]:
-    if table_name not in {"user_devices", "tt_user_devices", "license_activations"}:
+    if table_name not in {"user_devices", "tt_user_devices", "ks_user_devices", "license_activations"}:
         return dict(row), False
 
     item = dict(row)
@@ -576,6 +576,7 @@ def latest_user_device_ip_context(
     allowed = {
         ("user_devices", "user_id"),
         ("tt_user_devices", "tt_user_id"),
+        ("ks_user_devices", "ks_user_id"),
     }
     if (table_name, owner_column) not in allowed:
         return "", "", False
@@ -1265,6 +1266,9 @@ def init_db() -> None:
         )
         migrate_legacy_minidrama_settings(db)
         seed_default_users(db)
+        from ks_account_auth import ensure_schema as ensure_ks_account_schema
+
+        ensure_ks_account_schema(db)
         db.commit()
 
 
@@ -4307,6 +4311,13 @@ def user_management():
 @admin_required
 def tt_user_management():
     return render_template("users.html", user_page_variant="tt_users")
+
+
+@app.route("/ks-users")
+@login_required
+@admin_required
+def ks_user_management():
+    return render_template("users.html", user_page_variant="ks_users")
 
 
 @app.route("/settings/minidrama")
@@ -8150,6 +8161,11 @@ def to_int_or_none(value):
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+from ks_account_auth import register_routes as register_ks_account_routes
+
+register_ks_account_routes(app)
 
 
 if __name__ == "__main__":

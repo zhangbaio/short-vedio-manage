@@ -39,7 +39,7 @@ let userPageConfig = {
 
 document.addEventListener("DOMContentLoaded", () => {
   cacheDefaultFeedbackMessages();
-  if (window.adminPage === "users" || window.adminPage === "tt_users") initUsersPage();
+  if (window.adminPage === "users" || window.adminPage === "tt_users" || window.adminPage === "ks_users") initUsersPage();
   if (window.adminPage === "minidrama") initMinidramaSettingsPage();
   if (window.adminPage === "kuaishou") initKuaishouSettingsPage();
   if (window.adminPage === "remote") initRemotePage();

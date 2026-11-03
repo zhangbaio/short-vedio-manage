@@ -1,12 +1,15 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
-  {% set is_tt_users = user_page_variant|default('users') == 'tt_users' %}
-  {% set active_page = 'tt_users' if is_tt_users else 'users' %}
-  {% set page_title = 'TT用户管理' if is_tt_users else '用户管理' %}
-  {% set page_subtitle = '单独维护 TikTok 短剧助手登录授权用户' if is_tt_users else '创建后台用户并维护角色权限' %}
-  {% set list_title = 'TT用户列表' if is_tt_users else '用户列表' %}
-  {% set list_subtitle = '管理 TikTok 短剧助手登录账号和设备授权' if is_tt_users else '管理后台登录账号和角色权限' %}
-  {% set add_button_text = '新增TT用户' if is_tt_users else '新增用户' %}
+  {% set page_variant = user_page_variant|default('users') %}
+  {% set is_tt_users = page_variant == 'tt_users' %}
+  {% set is_ks_users = page_variant == 'ks_users' %}
+  {% set is_desktop_users = is_tt_users or is_ks_users %}
+  {% set active_page = page_variant %}
+  {% set page_title = 'TT用户管理' if is_tt_users else ('快手账号管理' if is_ks_users else '用户管理') %}
+  {% set page_subtitle = '单独维护 TikTok 短剧助手登录授权用户' if is_tt_users else ('单独维护云帆登录授权账号，不能用来登录 TikTok 助手' if is_ks_users else '创建后台用户并维护角色权限') %}
+  {% set list_title = 'TT用户列表' if is_tt_users else ('快手账号列表' if is_ks_users else '用户列表') %}
+  {% set list_subtitle = '管理 TikTok 短剧助手登录账号和设备授权' if is_tt_users else ('管理云帆登录账号和设备授权' if is_ks_users else '管理后台登录账号和角色权限') %}
+  {% set add_button_text = '新增TT用户' if is_tt_users else ('新增快手账号' if is_ks_users else '新增用户') %}
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -48,6 +51,7 @@
                 </div>
               </div>
 
+              {% if not is_ks_users %}
               <div class="user-list-sticky-panel">
                 <div class="user-filter-panel border rounded-3 p-3 bg-light-subtle">
                   <div class="row g-2 align-items-end">
@@ -63,7 +67,7 @@
                       <label class="form-label" for="userResponsiblePersonFilter">负责人</label>
                       <input type="text" class="form-control" id="userResponsiblePersonFilter" placeholder="按负责人筛选" />
                     </div>
-                    {% if not is_tt_users %}
+                    {% if not is_desktop_users %}
                     <div class="col-xxl-2 col-xl-2 col-lg-6">
                       <label class="form-label" for="userVideoChannelNameFilter">视频号名称</label>
                       <input type="text" class="form-control" id="userVideoChannelNameFilter" placeholder="按视频号筛选" />
@@ -94,6 +98,7 @@
                   </div>
                 </div>
               </div>
+              {% endif %}
 
               <div class="table-responsive desktop-table mobile-switchable user-list-table-wrap">
                 <table class="table table-hover align-middle mb-0">
@@ -107,12 +112,12 @@
                       <th>主体公司</th>
                       <th>负责人</th>
                       {% endif %}
-                      {% if not is_tt_users %}
+                      {% if not is_desktop_users %}
                       <th>主体公司</th>
                       <th>负责人</th>
                       <th>视频号名称</th>
                       {% endif %}
-                      <th>{{ '类型' if is_tt_users else '角色' }}</th>
+                      <th>{{ '类型' if is_desktop_users else '角色' }}</th>
                       <th>授权</th>
                       <th>设备</th>
                       <th>到期时间</th>
@@ -163,7 +168,7 @@
                   <div class="invalid-feedback">负责人最多100个字符</div>
                 </div>
                 {% endif %}
-                {% if not is_tt_users %}
+                {% if not is_desktop_users %}
                 <div class="col-lg-4">
                   <label class="form-label" for="userSubjectCompanyInput">主体公司</label>
                   <input type="text" class="form-control" id="userSubjectCompanyInput" maxlength="100" autocomplete="off" />
@@ -185,7 +190,7 @@
                   <input type="password" class="form-control" id="userPasswordInput" autocomplete="new-password" />
                   <div class="invalid-feedback">新增用户密码至少6位</div>
                 </div>
-                <div class="col-lg-6{% if is_tt_users %} d-none{% endif %}">
+                <div class="col-lg-6{% if is_desktop_users %} d-none{% endif %}">
                   <label class="form-label" for="userRoleInput">角色</label>
                   <select class="form-select" id="userRoleInput">
                     <option value="user">普通用户</option>
@@ -283,7 +288,7 @@
                     {% if is_tt_users %}
                     <th>TIKTOK用户名</th>
                     <th>主体公司</th>
-                    {% else %}
+                    {% elif not is_desktop_users %}
                     <th>主体公司</th>
                     <th>视频号名称</th>
                     {% endif %}
@@ -309,23 +314,23 @@
         username: {{ session.username|tojson }},
         role: {{ session.role|tojson }}
       };
-      window.adminPage = {{ ('tt_users' if is_tt_users else 'users')|tojson }};
+      window.adminPage = {{ page_variant|tojson }};
       window.userPageConfig = {
-        apiBase: {{ ('/api/tt-users' if is_tt_users else '/api/users')|tojson }},
+        apiBase: {{ ('/api/tt-users' if is_tt_users else ('/api/ks-users' if is_ks_users else '/api/users'))|tojson }},
         showTikTokAccounts: {{ is_tt_users|tojson }},
         showTTBusinessFields: {{ is_tt_users|tojson }},
-        showBusinessFields: {{ (not is_tt_users)|tojson }},
-        enablePagination: true,
-        emptyText: {{ ('暂无TT用户' if is_tt_users else '暂无用户')|tojson }},
-        entityLabel: {{ ('TT用户' if is_tt_users else '用户')|tojson }},
-        roleText: {{ ('TT授权用户' if is_tt_users else '')|tojson }},
-        addTitle: {{ ('新增TT用户' if is_tt_users else '新增用户')|tojson }},
-        editTitle: {{ ('编辑TT授权用户' if is_tt_users else '编辑用户授权')|tojson }},
-        createSuccess: {{ ('新增TT用户成功' if is_tt_users else '新增用户成功')|tojson }},
-        updateSuccess: {{ ('TT用户已更新' if is_tt_users else '用户已更新')|tojson }},
-        deleteSuccess: {{ ('TT用户删除成功' if is_tt_users else '用户删除成功')|tojson }},
-        deleteConfirmSuffix: {{ ('删除后该 TT 授权账号的客户端登录设备也会失效。' if is_tt_users else '删除后该账号的桌面端登录设备也会失效。')|tojson }},
-        noDevicesText: {{ ('暂无TT登录设备' if is_tt_users else '暂无登录设备')|tojson }}
+        showBusinessFields: {{ (not is_desktop_users)|tojson }},
+        enablePagination: {{ (not is_ks_users)|tojson }},
+        emptyText: {{ ('暂无TT用户' if is_tt_users else ('暂无快手授权账号' if is_ks_users else '暂无用户'))|tojson }},
+        entityLabel: {{ ('TT用户' if is_tt_users else ('快手授权账号' if is_ks_users else '用户'))|tojson }},
+        roleText: {{ ('TT授权用户' if is_tt_users else ('云帆授权账号' if is_ks_users else ''))|tojson }},
+        addTitle: {{ ('新增TT用户' if is_tt_users else ('新增快手账号' if is_ks_users else '新增用户'))|tojson }},
+        editTitle: {{ ('编辑TT授权用户' if is_tt_users else ('编辑快手授权账号' if is_ks_users else '编辑用户授权'))|tojson }},
+        createSuccess: {{ ('新增TT用户成功' if is_tt_users else ('新增快手账号成功' if is_ks_users else '新增用户成功'))|tojson }},
+        updateSuccess: {{ ('TT用户已更新' if is_tt_users else ('快手授权账号已更新' if is_ks_users else '用户已更新'))|tojson }},
+        deleteSuccess: {{ ('TT用户删除成功' if is_tt_users else ('快手授权账号删除成功' if is_ks_users else '用户删除成功'))|tojson }},
+        deleteConfirmSuffix: {{ ('删除后该 TT 授权账号的客户端登录设备也会失效。' if is_tt_users else ('删除后该云帆授权账号的登录设备也会失效。' if is_ks_users else '删除后该账号的桌面端登录设备也会失效。'))|tojson }},
+        noDevicesText: {{ ('暂无TT登录设备' if is_tt_users else ('暂无云帆登录设备' if is_ks_users else '暂无登录设备'))|tojson }}
       };
     </script>
     <div class="toast-container position-fixed top-0 end-0 p-3" style="z-index:9999" id="toastContainer"></div>
