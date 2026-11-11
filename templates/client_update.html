@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>客户端版本 - 视频号短剧管理系统</title>
+    <link rel="icon" href="{{ url_for('static', filename='icons/app-icon.ico') }}?v=20260531" sizes="any" />
+    <link rel="stylesheet" href="https://cdn.bootcdn.net/ajax/libs/bootstrap/5.3.2/css/bootstrap.min.css" />
+    <link rel="stylesheet" href="https://cdn.bootcdn.net/ajax/libs/bootstrap-icons/1.11.3/font/bootstrap-icons.min.css" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+  </head>
+  <body class="app-body">
+    {% set active_page = 'client_update' %}
+    <div class="app-shell">
+      {% include "partials/sidebar.html" %}
+      <div class="app-main">
+        <header class="app-topbar">
+          <div>
+            <h1 class="app-page-title">客户端版本</h1>
+            <p class="app-page-subtitle">阿里云 OSS 只在这里配置一次。安装包由打包脚本直接上传，客户端从公网地址下载。</p>
+          </div>
+          <div class="app-userbar">
+            {% include "partials/theme_switch.html" %}
+            <span class="app-user-chip">{{ session.username }} · {{ session.role }}</span>
+            <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('logout') }}">退出</a>
+          </div>
+        </header>
+        <main class="app-content">
+          <div class="card mb-3">
+            <div class="card-body">
+              <h2 class="h5">阿里云 OSS</h2>
+              <p class="text-muted small">对象前缀用 client-releases/tiktok，不要占用图片目录。公网 URL 前缀需要能直接打开。</p>
+              <div class="row g-3">
+                <div class="col-md-6">
+                  <label class="form-label" for="endpoint">OSS Endpoint</label>
+                  <input class="form-control" id="endpoint" placeholder="oss-cn-beijing.aliyuncs.com" />
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label" for="bucket">Bucket</label>
+                  <input class="form-control" id="bucket" />
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label" for="accessKeyId">AccessKeyId</label>
+                  <input class="form-control" id="accessKeyId" />
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label" for="accessKeySecret">AccessKeySecret</label>
+                  <input class="form-control" id="accessKeySecret" type="password" placeholder="已保存时留空表示不修改" />
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label" for="publicBaseUrl">公网 URL 前缀</label>
+                  <input class="form-control" id="publicBaseUrl" placeholder="https://bucket.oss-cn-beijing.aliyuncs.com" />
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label" for="objectPrefix">对象前缀</label>
+                  <input class="form-control" id="objectPrefix" placeholder="client-releases/tiktok" />
+                </div>
+              </div>
+              <div class="d-flex align-items-center gap-3 mt-3">
+                <button class="btn btn-primary" id="saveSettings" type="button">保存 OSS 配置</button>
+                <span class="text-muted small" id="settingsStatus"></span>
+              </div>
+              <div class="small mt-2" id="feedUrl"></div>
+            </div>
+          </div>
+
+          <div class="card mb-3">
+            <div class="card-body">
+              <h2 class="h5">发布版本</h2>
+              <p class="text-muted small">先用打包脚本把 releases.win.json、完整包和差分包传到 OSS，再在这里写下版本说明。</p>
+              <div class="row g-3">
+                <div class="col-md-3">
+                  <label class="form-label" for="version">版本号</label>
+                  <input class="form-control" id="version" placeholder="3.24.0" />
+                </div>
+                <div class="col-md-5">
+                  <label class="form-label" for="setupFile">安装包文件名</label>
+                  <input class="form-control" id="setupFile" placeholder="TikTok.ShortDramaAssistant-Setup.exe" />
+                </div>
+                <div class="col-md-12">
+                  <label class="form-label" for="notes">更新说明</label>
+                  <textarea class="form-control" id="notes" rows="3"></textarea>
+                </div>
+              </div>
+              <div class="d-flex align-items-center gap-3 mt-3">
+                <button class="btn btn-primary" id="publish" type="button">发布为当前版本</button>
+                <span class="text-muted small" id="publishStatus"></span>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-body">
+              <h2 class="h5">已发布版本</h2>
+              <p class="text-muted small">设为当前只改客户端看到的版本说明和安装包地址。真正的升级文件以 OSS 上的 releases.win.json 为准，回退旧版时要重新上传那一版的清单。</p>
+              <div class="table-responsive">
+                <table class="table align-middle">
+                  <thead>
+                    <tr>
+                      <th>版本</th>
+                      <th>说明</th>
+                      <th>发布时间</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody id="releases"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </main>
+      </div>
+    </div>
+    <script>
+      async function requestJSON(url, options) {
+        const response = await fetch(url, { credentials: "same-origin", ...options });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.error || "请求失败");
+        return data;
+      }
+
+      function escapeHtml(value) {
+        return String(value || "").replace(/[&<>"']/g, (char) => ({
+          "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+        }[char]));
+      }
+
+      async function loadSettings() {
+        const data = await requestJSON("/api/client-update/settings");
+        document.getElementById("endpoint").value = data.endpoint || "";
+        document.getElementById("bucket").value = data.bucket || "";
+        document.getElementById("accessKeyId").value = data.accessKeyId || "";
+        document.getElementById("publicBaseUrl").value = data.publicBaseUrl || "";
+        document.getElementById("objectPrefix").value = data.objectPrefix || "client-releases/tiktok";
+        document.getElementById("settingsStatus").textContent = data.hasSecret ? "密钥已保存" : "尚未保存密钥";
+        document.getElementById("feedUrl").textContent = data.feedUrl ? `客户端下载目录：${data.feedUrl}` : "";
+      }
+
+      async function loadReleases() {
+        const data = await requestJSON("/api/client-update/releases");
+        const body = document.getElementById("releases");
+        body.innerHTML = (data.releases || []).map((item) => `
+          <tr>
+            <td>${escapeHtml(item.version)}${item.isCurrent ? " <span class='badge text-bg-primary'>当前</span>" : ""}</td>
+            <td>${escapeHtml(item.notes)}</td>
+            <td>${escapeHtml(item.createdAt)}</td>
+            <td>${item.isCurrent ? "" : `<button class="btn btn-sm btn-outline-primary" data-current="${item.id}" type="button">设为当前</button>`}</td>
+          </tr>
+        `).join("");
+        body.querySelectorAll("[data-current]").forEach((button) => {
+          button.addEventListener("click", async () => {
+            await requestJSON(`/api/client-update/releases/${button.dataset.current}/current`, { method: "POST" });
+            await loadReleases();
+          });
+        });
+      }
+
+      document.getElementById("saveSettings").addEventListener("click", async () => {
+        const status = document.getElementById("settingsStatus");
+        status.textContent = "正在保存…";
+        try {
+          const data = await requestJSON("/api/client-update/settings", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              endpoint: document.getElementById("endpoint").value,
+              bucket: document.getElementById("bucket").value,
+              accessKeyId: document.getElementById("accessKeyId").value,
+              accessKeySecret: document.getElementById("accessKeySecret").value,
+              publicBaseUrl: document.getElementById("publicBaseUrl").value,
+              objectPrefix: document.getElementById("objectPrefix").value
+            })
+          });
+          document.getElementById("accessKeySecret").value = "";
+          status.textContent = data.hasSecret ? "已保存" : "已保存，但没有密钥";
+          document.getElementById("feedUrl").textContent = data.feedUrl ? `客户端下载目录：${data.feedUrl}` : "";
+        } catch (error) {
+          status.textContent = error.message;
+        }
+      });
+
+      document.getElementById("publish").addEventListener("click", async () => {
+        const status = document.getElementById("publishStatus");
+        status.textContent = "正在发布…";
+        try {
+          await requestJSON("/api/client-update/releases", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              version: document.getElementById("version").value,
+              notes: document.getElementById("notes").value,
+              setupFile: document.getElementById("setupFile").value
+            })
+          });
+          status.textContent = "已发布为当前版本";
+          await loadReleases();
+        } catch (error) {
+          status.textContent = error.message;
+        }
+      });
+
+      loadSettings().then(loadReleases).catch((error) => {
+        document.getElementById("settingsStatus").textContent = error.message;
+      });
+    </script>
+  </body>
+</html>

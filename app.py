@@ -1230,6 +1230,9 @@ def init_db() -> None:
 
         ensure_tt_account_config_schema(db)
         ensure_ks_account_schema(db)
+        from client_update import ensure_schema as ensure_client_update_schema
+
+        ensure_client_update_schema(db)
         db.commit()
 
 
@@ -7541,9 +7544,11 @@ def to_int_or_none(value):
 
 from tt_account_config import register_routes as register_tt_account_config_routes
 from ks_account_auth import register_routes as register_ks_account_routes
+from client_update import register_routes as register_client_update_routes
 
 register_tt_account_config_routes(app)
 register_ks_account_routes(app)
+register_client_update_routes(app)
 
 
 if __name__ == "__main__":

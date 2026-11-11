@@ -76,6 +76,10 @@
       <span class="app-nav-icon"><i class="bi bi-gear" aria-hidden="true"></i></span>
       <span>快手配置</span>
     </a>
+    <a class="app-nav-link {% if active_page == 'client_update' %}active{% endif %}" href="{{ url_for('client_update_page') }}">
+      <span class="app-nav-icon"><i class="bi bi-cloud-arrow-up" aria-hidden="true"></i></span>
+      <span>客户端版本</span>
+    </a>
     <a class="app-nav-link {% if active_page == 'remote' %}active{% endif %}" href="{{ url_for('remote_management') }}">
       <span class="app-nav-icon"><i class="bi bi-terminal" aria-hidden="true"></i></span>
       <span>远程控制</span>
