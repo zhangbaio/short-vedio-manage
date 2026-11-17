@@ -174,7 +174,11 @@ def test_tt_account_snapshot_is_idempotent_and_reconciles_admin_list(tmp_path, m
         session["user_type"] = "user"
     page_response = client.get("/tt-users")
     assert page_response.status_code == 200
-    assert "TIKTOK用户名" in page_response.get_data(as_text=True)
+    page_html = page_response.get_data(as_text=True)
+    assert "TIKTOK用户名" in page_html
+    subject_header = page_html.find('text-nowrap">主体公司</th>')
+    recipient_header = page_html.find('text-nowrap">致贵方</th>')
+    assert 0 <= subject_header < recipient_header
 
     users_response = client.get("/api/tt-users")
     assert users_response.status_code == 200

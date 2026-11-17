@@ -178,7 +178,7 @@ async function loadUsers() {
     if (!users.length) {
       const columnCount = 10
         + (userPageConfig.showTikTokAccounts ? 1 : 0)
-        + (userPageConfig.showTTBusinessFields ? 2 : 0)
+        + (userPageConfig.showTTBusinessFields ? 3 : 0)
         + (userPageConfig.showBusinessFields ? 3 : 0);
       tbody.innerHTML = `<tr><td colspan="${columnCount}" class="text-center text-muted py-4">${escapeHtml(userPageConfig.emptyText)}</td></tr>`;
       renderMobileEmptyState(mobileList, userPageConfig.emptyText);
@@ -197,6 +197,7 @@ async function loadUsers() {
         <td>${escapeHtml(user.full_name || "-")}</td>
         <td>${escapeHtml(user.email || "-")}</td>
         ${userPageConfig.showTTBusinessFields ? `<td>${buildTTSubjectCompanyList(user)}</td>` : ""}
+        ${userPageConfig.showTTBusinessFields ? `<td>${buildTTRecipientCompanyList(user)}</td>` : ""}
         ${userPageConfig.showTTBusinessFields ? `<td>${escapeHtml(user.responsible_person || "-")}</td>` : ""}
         ${userPageConfig.showBusinessFields ? `<td>${buildPlainValueList(user.subject_companies, user.subject_company)}</td>` : ""}
         ${userPageConfig.showBusinessFields ? `<td>${escapeHtml(user.responsible_person || "-")}</td>` : ""}
@@ -301,9 +302,37 @@ function buildTTTikTokUsernameList(user) {
     .join("<br>");
 }
 
+function accountCompanyAt(entry, index) {
+  const listed = Array.isArray(entry?.subject_companies)
+    ? entry.subject_companies.map((value) => String(value || "").trim()).filter(Boolean)
+    : [];
+  if (listed.length) return listed[index] || "";
+  return index === 0 ? String(entry?.subject_company || "").trim() : "";
+}
+
+function collectAccountCompanies(entries, index) {
+  const values = [];
+  const seen = new Set();
+  entries.forEach((entry) => {
+    const text = accountCompanyAt(entry, index);
+    const key = text.toLocaleLowerCase();
+    if (!text || seen.has(key)) return;
+    seen.add(key);
+    values.push(text);
+  });
+  return values;
+}
+
 function buildTTSubjectCompanyList(user) {
   const accounts = Array.isArray(user?.tiktok_accounts) ? user.tiktok_accounts : [];
-  return renderSubjectCompanyLines(collectSubjectCompanies(accounts, user?.subject_company));
+  const values = collectAccountCompanies(accounts, 0);
+  if (values.length) return renderSubjectCompanyLines(values);
+  return renderSubjectCompanyLines(splitDisplayListValue(user?.subject_company));
+}
+
+function buildTTRecipientCompanyList(user) {
+  const accounts = Array.isArray(user?.tiktok_accounts) ? user.tiktok_accounts : [];
+  return renderSubjectCompanyLines(collectAccountCompanies(accounts, 1));
 }
 
 function getUserRoleText(user) {
@@ -339,6 +368,7 @@ function buildUserMobileCard(user, actionButtons, statusText, statusClass) {
     <div class="mobile-record-subtitle">${escapeHtml(userBusinessSubtitle(user) || [user.full_name, user.email].filter(Boolean).join(" · ") || "未填写姓名/邮箱")}</div>
     <div class="mobile-record-grid">
       ${userPageConfig.showTTBusinessFields ? `<div><span>主体公司</span><strong>${buildTTSubjectCompanyList(user)}</strong></div>` : ""}
+      ${userPageConfig.showTTBusinessFields ? `<div><span>致贵方</span><strong>${buildTTRecipientCompanyList(user)}</strong></div>` : ""}
       ${userPageConfig.showTTBusinessFields ? `<div><span>负责人</span><strong>${escapeHtml(user.responsible_person || "-")}</strong></div>` : ""}
       ${userPageConfig.showTikTokAccounts ? `<div><span>TIKTOK用户名</span><strong>${buildTTTikTokUsernameList(user)}</strong></div>` : ""}
       <div><span>姓名</span><strong>${escapeHtml(user.full_name || "-")}</strong></div>
@@ -595,7 +625,7 @@ async function loadUserDevices(userId, username = "") {
     tbody.innerHTML = "";
     if (mobileList) mobileList.innerHTML = "";
     if (!devices.length) {
-      const columnCount = 9;
+      const columnCount = 9 + (userPageConfig.showTikTokAccounts ? 1 : 0);
       tbody.innerHTML = `<tr><td colspan="${columnCount}" class="text-center text-muted py-4">${escapeHtml(userPageConfig.noDevicesText)}</td></tr>`;
       renderMobileEmptyState(mobileList, userPageConfig.noDevicesText);
     } else {
@@ -609,6 +639,7 @@ async function loadUserDevices(userId, username = "") {
           <td class="font-monospace small" title="${escapeHtml(device.machine_id || "-")}">${machineCode}</td>
           ${userPageConfig.showTikTokAccounts ? `<td>${buildDeviceTikTokUsernameList(device)}</td>` : ""}
           ${userPageConfig.showTikTokAccounts ? `<td>${buildDeviceSubjectCompanyList(device)}</td>` : ""}
+          ${userPageConfig.showTikTokAccounts ? `<td>${buildDeviceRecipientCompanyList(device)}</td>` : ""}
           ${userPageConfig.showBusinessFields ? `<td>${buildDeviceSubjectCompanyList(device)}</td>` : ""}
           ${userPageConfig.showBusinessFields ? `<td>${buildDeviceVideoChannelNameList(device)}</td>` : ""}
           <td class="font-monospace small">${escapeHtml(deviceIp)}</td>
@@ -664,10 +695,14 @@ function buildDeviceTikTokUsernameList(device) {
 }
 
 function buildDeviceSubjectCompanyList(device) {
-  const entries = userPageConfig.showTikTokAccounts
-    ? getDeviceTikTokAccounts(device)
-    : getDeviceVideoChannelProfiles(device);
-  return renderSubjectCompanyLines(collectSubjectCompanies(entries, ""));
+  if (userPageConfig.showTikTokAccounts) {
+    return renderSubjectCompanyLines(collectAccountCompanies(getDeviceTikTokAccounts(device), 0));
+  }
+  return renderSubjectCompanyLines(collectSubjectCompanies(getDeviceVideoChannelProfiles(device), ""));
+}
+
+function buildDeviceRecipientCompanyList(device) {
+  return renderSubjectCompanyLines(collectAccountCompanies(getDeviceTikTokAccounts(device), 1));
 }
 
 function buildDeviceVideoChannelNameList(device) {
@@ -696,6 +731,7 @@ function buildUserDeviceMobileCard(device, revoked) {
     <div class="mobile-record-grid">
       ${userPageConfig.showTikTokAccounts ? `<div><span>TIKTOK用户名</span><strong>${buildDeviceTikTokUsernameList(device)}</strong></div>` : ""}
       ${userPageConfig.showTikTokAccounts ? `<div><span>主体公司</span><strong>${buildDeviceSubjectCompanyList(device)}</strong></div>` : ""}
+      ${userPageConfig.showTikTokAccounts ? `<div><span>致贵方</span><strong>${buildDeviceRecipientCompanyList(device)}</strong></div>` : ""}
       ${userPageConfig.showBusinessFields ? `<div><span>主体公司</span><strong>${buildDeviceSubjectCompanyList(device)}</strong></div>` : ""}
       ${userPageConfig.showBusinessFields ? `<div><span>视频号名称</span><strong>${buildDeviceVideoChannelNameList(device)}</strong></div>` : ""}
       <div><span>IP</span><strong>${escapeHtml(deviceIp)}</strong></div>
