@@ -252,11 +252,39 @@ function splitDisplayListValue(value) {
 
 function buildPlainValueList(primaryValues, fallbackValue) {
   const sourceValues = Array.isArray(primaryValues) ? primaryValues : splitDisplayListValue(fallbackValue);
-  const values = sourceValues
+  return renderSubjectCompanyLines(sourceValues);
+}
+
+function collectSubjectCompanies(entries, fallbackValue) {
+  const values = [];
+  const seen = new Set();
+  const add = (value) => {
+    const text = String(value || "").trim();
+    const key = text.toLocaleLowerCase();
+    if (!text || seen.has(key)) return;
+    seen.add(key);
+    values.push(text);
+  };
+  entries.forEach((entry) => {
+    const listed = Array.isArray(entry?.subject_companies) ? entry.subject_companies : [];
+    if (listed.length) {
+      listed.forEach(add);
+      return;
+    }
+    add(entry?.subject_company);
+  });
+  if (!values.length) splitDisplayListValue(fallbackValue).forEach(add);
+  return values;
+}
+
+function renderSubjectCompanyLines(values) {
+  const lines = (Array.isArray(values) ? values : [])
     .map((value) => String(value || "").trim())
     .filter(Boolean);
-  if (!values.length) return '<span class="text-muted">-</span>';
-  return values.map((value) => escapeHtml(value)).join("<br>");
+  if (!lines.length) return '<span class="text-muted">-</span>';
+  return lines
+    .map((value) => `<span class="subject-company-line">${escapeHtml(value)}</span>`)
+    .join("");
 }
 
 function buildTTTikTokUsernameList(user) {
@@ -275,13 +303,7 @@ function buildTTTikTokUsernameList(user) {
 
 function buildTTSubjectCompanyList(user) {
   const accounts = Array.isArray(user?.tiktok_accounts) ? user.tiktok_accounts : [];
-  const values = accounts.map((account) => String(account?.subject_company || "").trim());
-  if (!values.some(Boolean)) {
-    return buildPlainValueList(null, user?.subject_company);
-  }
-  return values
-    .map((value) => value ? escapeHtml(value) : '<span class="text-muted">-</span>')
-    .join("<br>");
+  return renderSubjectCompanyLines(collectSubjectCompanies(accounts, user?.subject_company));
 }
 
 function getUserRoleText(user) {
@@ -645,13 +667,7 @@ function buildDeviceSubjectCompanyList(device) {
   const entries = userPageConfig.showTikTokAccounts
     ? getDeviceTikTokAccounts(device)
     : getDeviceVideoChannelProfiles(device);
-  if (!entries.length) return '<span class="text-muted">-</span>';
-  return entries
-    .map((entry) => {
-      const value = String(entry?.subject_company || "").trim();
-      return value ? escapeHtml(value) : '<span class="text-muted">-</span>';
-    })
-    .join("<br>");
+  return renderSubjectCompanyLines(collectSubjectCompanies(entries, ""));
 }
 
 function buildDeviceVideoChannelNameList(device) {

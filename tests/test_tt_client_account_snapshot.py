@@ -184,10 +184,12 @@ def test_tt_account_snapshot_is_idempotent_and_reconciles_admin_list(tmp_path, m
         {
             "tiktok_username": "15327086817@163.com",
             "subject_company": "湖北云漫科技有限公司",
+            "subject_companies": ["湖北云漫科技有限公司"],
         },
         {
             "tiktok_username": "renamed@example.test",
             "subject_company": "武汉速视科技有限公司2",
+            "subject_companies": ["武汉速视科技有限公司2"],
         },
     ]
     assert tt_user["subject_company"] == "湖北云漫科技有限公司、武汉速视科技有限公司2"
@@ -263,6 +265,7 @@ def test_tt_user_list_supports_search_filter_and_pagination(tmp_path, monkeypatc
         {
             "tiktok_username": "needle@example.test",
             "subject_company": "湖北云漫科技有限公司",
+            "subject_companies": ["湖北云漫科技有限公司"],
         }
     ]
 
@@ -378,12 +381,87 @@ def test_tt_user_devices_include_accounts_for_each_machine(tmp_path, monkeypatch
     assert [(device["machine_id"], device["tiktok_accounts"]) for device in devices] == [
         (
             "machine-a",
-            [{"tiktok_username": "a@example.test", "subject_company": "甲方公司"}],
+            [{
+                "tiktok_username": "a@example.test",
+                "subject_company": "甲方公司",
+                "subject_companies": ["甲方公司"],
+            }],
         ),
         (
             "machine-b",
-            [{"tiktok_username": "b@example.test", "subject_company": "乙方公司"}],
+            [{
+                "tiktok_username": "b@example.test",
+                "subject_company": "乙方公司",
+                "subject_companies": ["乙方公司"],
+            }],
         ),
+    ]
+
+
+def test_tt_account_snapshot_keeps_two_subject_companies(tmp_path, monkeypatch) -> None:
+    client = _setup_test_app(tmp_path, monkeypatch)
+    with manage_app.app.app_context():
+        _, token = _create_tt_user_with_token()
+
+    response = client.put(
+        "/client-api/tt/accounts/snapshot",
+        headers=_headers(account="zhangbiao", machine_id="machine-a", token=token),
+        json={
+            "accounts": [
+                {
+                    "client_account_id": "acct-a",
+                    "tiktok_username": "1544722162@qq.com",
+                    "subject_company": "湖北箭派科技有限公司",
+                    "subject_companies": [
+                        "湖北箭派科技有限公司",
+                        "武汉思语行科技有限公司",
+                        "多余公司",
+                    ],
+                }
+            ]
+        },
+    )
+    assert response.status_code == 400
+
+    response = client.put(
+        "/client-api/tt/accounts/snapshot",
+        headers=_headers(account="zhangbiao", machine_id="machine-a", token=token),
+        json={
+            "accounts": [
+                {
+                    "client_account_id": "acct-a",
+                    "tiktok_username": "1544722162@qq.com",
+                    "subject_company": "湖北箭派科技有限公司",
+                    "subject_companies": [
+                        " 湖北箭派科技有限公司 ",
+                        "武汉思语行科技有限公司",
+                    ],
+                }
+            ]
+        },
+    )
+    assert response.status_code == 200
+
+    with manage_app.app.app_context():
+        row = manage_app.get_db().execute(
+            "SELECT subject_company, subject_companies FROM tt_client_accounts"
+        ).fetchone()
+        assert row["subject_company"] == "湖北箭派科技有限公司"
+        assert row["subject_companies"] == '["湖北箭派科技有限公司","武汉思语行科技有限公司"]'
+
+    with client.session_transaction() as session:
+        session["user_id"] = 1
+        session["username"] = "admin"
+        session["role"] = "admin"
+        session["user_type"] = "user"
+
+    users_response = client.get("/api/tt-users?page=1&page_size=20&subject_company=思语行")
+    assert users_response.status_code == 200
+    item = users_response.get_json()["items"][0]
+    assert item["subject_company"] == "湖北箭派科技有限公司、武汉思语行科技有限公司"
+    assert item["tiktok_accounts"][0]["subject_companies"] == [
+        "湖北箭派科技有限公司",
+        "武汉思语行科技有限公司",
     ]
 
 

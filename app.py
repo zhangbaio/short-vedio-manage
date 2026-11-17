@@ -881,6 +881,7 @@ def init_db() -> None:
                 tiktok_username TEXT NOT NULL,
                 username_key TEXT NOT NULL,
                 subject_company TEXT,
+                subject_companies TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 FOREIGN KEY (owner_tt_user_id) REFERENCES tt_users(id) ON DELETE CASCADE,
@@ -1115,6 +1116,7 @@ def init_db() -> None:
             "ALTER TABLE tt_users ADD COLUMN subject_company TEXT DEFAULT NULL",
             "ALTER TABLE tt_users ADD COLUMN responsible_person TEXT DEFAULT NULL",
             "ALTER TABLE tt_client_accounts ADD COLUMN subject_company TEXT DEFAULT NULL",
+            "ALTER TABLE tt_client_accounts ADD COLUMN subject_companies TEXT DEFAULT NULL",
             "ALTER TABLE license_activations ADD COLUMN login_ip TEXT DEFAULT NULL",
             "ALTER TABLE license_activations ADD COLUMN login_ip_region TEXT DEFAULT NULL",
             "ALTER TABLE license_activations ADD COLUMN last_ip TEXT DEFAULT NULL",
@@ -3014,6 +3016,73 @@ def normalize_tt_client_username(value: object) -> tuple[str, str]:
     return username, username.casefold()
 
 
+def dump_subject_companies(names: list[str]) -> str:
+    if not names:
+        return ""
+    return json.dumps(names, ensure_ascii=False, separators=(",", ":"))
+
+
+def load_subject_companies(raw_json: object, fallback: object = "") -> list[str]:
+    names: list[str] = []
+    seen: set[str] = set()
+    text = str(raw_json or "").strip()
+    parsed = None
+    if text:
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            parsed = None
+    raw_names = parsed if isinstance(parsed, list) else []
+    if not raw_names:
+        single = str(fallback or "").strip()
+        raw_names = [single] if single else []
+    for raw_name in raw_names:
+        name = str(raw_name or "").strip()
+        key = name.casefold()
+        if not name or key in seen:
+            continue
+        seen.add(key)
+        names.append(name)
+    return names
+
+
+def sanitize_subject_company_list(
+    raw_account: dict[str, Any],
+    index: int,
+) -> tuple[list[str], str | None]:
+    if "subject_companies" in raw_account:
+        raw_values = raw_account.get("subject_companies")
+        if not isinstance(raw_values, list):
+            return [], f"第 {index} 个账号的 subject_companies 必须是数组"
+        if len(raw_values) > 2:
+            return [], f"第 {index} 个账号的 subject_companies 最多 2 个"
+    else:
+        raw_single = raw_account.get("subject_company")
+        if raw_single is None:
+            raw_values = []
+        elif not isinstance(raw_single, str):
+            return [], f"第 {index} 个账号的 subject_company 必须是字符串"
+        else:
+            raw_values = [raw_single]
+
+    names: list[str] = []
+    seen: set[str] = set()
+    for raw_name in raw_values:
+        if not isinstance(raw_name, str):
+            return [], f"第 {index} 个账号的主体公司必须是字符串"
+        name = raw_name.strip()
+        if not name:
+            continue
+        if len(name) > 100 or "\n" in name or "\r" in name:
+            return [], f"第 {index} 个账号的 subject_company 无效"
+        key = name.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        names.append(name)
+    return names, None
+
+
 def sanitize_tt_client_account_snapshot(
     data: dict[str, Any],
 ) -> tuple[list[dict[str, str]], str | None]:
@@ -3051,9 +3120,9 @@ def sanitize_tt_client_account_snapshot(
         if len(username) > 200 or "\n" in username or "\r" in username:
             return [], f"第 {index} 个账号的 tiktok_username 无效"
 
-        subject_company = str(raw_account.get("subject_company") or "").strip()
-        if len(subject_company) > 100 or "\n" in subject_company or "\r" in subject_company:
-            return [], f"第 {index} 个账号的 subject_company 无效"
+        subject_companies, company_error = sanitize_subject_company_list(raw_account, index)
+        if company_error:
+            return [], company_error
 
         seen_account_ids.add(account_id)
         accounts.append(
@@ -3061,7 +3130,8 @@ def sanitize_tt_client_account_snapshot(
                 "client_account_id": account_id,
                 "tiktok_username": username,
                 "username_key": username_key,
-                "subject_company": subject_company,
+                "subject_company": subject_companies[0] if subject_companies else "",
+                "subject_companies": dump_subject_companies(subject_companies),
             }
         )
     return accounts, None
@@ -5352,7 +5422,7 @@ def client_sync_tt_account_snapshot():
         owner_tt_user_id = int(tt_user_row["id"])
         existing_rows = db.execute(
             """
-            SELECT client_account_id, tiktok_username, username_key, subject_company
+            SELECT client_account_id, tiktok_username, username_key, subject_company, subject_companies
             FROM tt_client_accounts
             WHERE owner_tt_user_id = ? AND machine_id = ?
             """,
@@ -5370,19 +5440,22 @@ def client_sync_tt_account_snapshot():
                 str(existing["tiktok_username"] or "") != item["tiktok_username"]
                 or str(existing["username_key"] or "") != item["username_key"]
                 or str(existing["subject_company"] or "") != item["subject_company"]
+                or str(existing["subject_companies"] or "") != item["subject_companies"]
             ):
                 updated_count += 1
             db.execute(
                 """
                 INSERT INTO tt_client_accounts (
                     owner_tt_user_id, machine_id, client_account_id,
-                    tiktok_username, username_key, subject_company, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    tiktok_username, username_key, subject_company, subject_companies,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(owner_tt_user_id, machine_id, client_account_id)
                 DO UPDATE SET
                     tiktok_username = excluded.tiktok_username,
                     username_key = excluded.username_key,
                     subject_company = excluded.subject_company,
+                    subject_companies = excluded.subject_companies,
                     updated_at = excluded.updated_at
                 """,
                 (
@@ -5392,6 +5465,7 @@ def client_sync_tt_account_snapshot():
                     item["tiktok_username"],
                     item["username_key"],
                     item["subject_company"] or None,
+                    item["subject_companies"] or None,
                     now_value,
                     now_value,
                 ),
@@ -6472,12 +6546,13 @@ def list_tt_users():
                       AND (
                           COALESCE(a.tiktok_username, '') LIKE ?
                           OR COALESCE(a.subject_company, '') LIKE ?
+                          OR COALESCE(a.subject_companies, '') LIKE ?
                       )
                 )
             )
             """
         )
-        params.extend([like] * 7)
+        params.extend([like] * 8)
     subject_company = str(request.args.get("subject_company") or "").strip()
     if subject_company:
         like = f"%{subject_company}%"
@@ -6489,12 +6564,15 @@ def list_tt_users():
                     SELECT 1
                     FROM tt_client_accounts a
                     WHERE a.owner_tt_user_id = u.id
-                      AND COALESCE(a.subject_company, '') LIKE ?
+                      AND (
+                          COALESCE(a.subject_company, '') LIKE ?
+                          OR COALESCE(a.subject_companies, '') LIKE ?
+                      )
                 )
             )
             """
         )
-        params.extend([like, like])
+        params.extend([like, like, like])
     responsible_person = str(request.args.get("responsible_person") or "").strip()
     if responsible_person:
         clauses.append("COALESCE(u.responsible_person, '') LIKE ?")
@@ -6534,14 +6612,14 @@ def list_tt_users():
         placeholders = ",".join("?" for _ in owner_ids)
         account_rows = db.execute(
             f"""
-            SELECT owner_tt_user_id, tiktok_username, username_key, subject_company, updated_at
+            SELECT owner_tt_user_id, tiktok_username, username_key, subject_company, subject_companies, updated_at
             FROM tt_client_accounts
             WHERE owner_tt_user_id IN ({placeholders})
             ORDER BY owner_tt_user_id, updated_at DESC, id DESC
             """,
             owner_ids,
         ).fetchall()
-    account_profiles_by_owner: dict[int, list[dict[str, str]]] = {}
+        account_profiles_by_owner: dict[int, list[dict[str, Any]]] = {}
     username_keys_by_owner: dict[int, set[str]] = {}
     for account_row in account_rows:
         owner_id = int(account_row["owner_tt_user_id"])
@@ -6553,10 +6631,15 @@ def list_tt_users():
         if username_key in seen_keys:
             continue
         seen_keys.add(username_key)
+        companies = load_subject_companies(
+            account_row["subject_companies"],
+            account_row["subject_company"],
+        )
         account_profiles_by_owner.setdefault(owner_id, []).append(
             {
                 "tiktok_username": username,
-                "subject_company": str(account_row["subject_company"] or "").strip(),
+                "subject_company": companies[0] if companies else "",
+                "subject_companies": companies,
             }
         )
 
@@ -6575,9 +6658,10 @@ def list_tt_users():
         if not item.get("subject_company"):
             item["subject_company"] = "、".join(
                 dict.fromkeys(
-                    account_profile["subject_company"]
+                    company
                     for account_profile in account_profiles
-                    if account_profile["subject_company"]
+                    for company in account_profile["subject_companies"]
+                    if company
                 )
             ) or None
         ip, region, row_changed = latest_user_device_ip_context(
@@ -6709,7 +6793,7 @@ def list_tt_user_devices(user_id: int):
         placeholders = ",".join("?" for _ in machine_ids)
         account_rows = db.execute(
             f"""
-            SELECT machine_id, tiktok_username, username_key, subject_company, updated_at
+            SELECT machine_id, tiktok_username, username_key, subject_company, subject_companies, updated_at
             FROM tt_client_accounts
             WHERE owner_tt_user_id = ?
               AND machine_id IN ({placeholders})
@@ -6717,7 +6801,7 @@ def list_tt_user_devices(user_id: int):
             """,
             [user_id, *machine_ids],
         ).fetchall()
-    accounts_by_machine: dict[str, list[dict[str, str]]] = {}
+    accounts_by_machine: dict[str, list[dict[str, Any]]] = {}
     seen_keys_by_machine: dict[str, set[str]] = {}
     for account_row in account_rows:
         machine_id = str(account_row["machine_id"] or "").strip()
@@ -6729,10 +6813,15 @@ def list_tt_user_devices(user_id: int):
         if username_key in seen_keys:
             continue
         seen_keys.add(username_key)
+        companies = load_subject_companies(
+            account_row["subject_companies"],
+            account_row["subject_company"],
+        )
         accounts_by_machine.setdefault(machine_id, []).append(
             {
                 "tiktok_username": username,
-                "subject_company": str(account_row["subject_company"] or "").strip(),
+                "subject_company": companies[0] if companies else "",
+                "subject_companies": companies,
             }
         )
     devices = []
