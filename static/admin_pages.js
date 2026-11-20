@@ -1,4 +1,3 @@
-let minidramaSettingsState = { apps: [], editingAppId: "" };
 let kuaishouSettingsState = { apps: [], editingAppId: "" };
 let currentRemoteConversationId = null;
 let passwordTargetUserId = null;
@@ -28,7 +27,6 @@ let userPageConfig = {
 document.addEventListener("DOMContentLoaded", () => {
   cacheDefaultFeedbackMessages();
   if (window.adminPage === "users" || window.adminPage === "tt_users" || window.adminPage === "ks_users") initUsersPage();
-  if (window.adminPage === "minidrama") initMinidramaSettingsPage();
   if (window.adminPage === "kuaishou") initKuaishouSettingsPage();
   if (window.adminPage === "remote") initRemotePage();
 });
@@ -58,15 +56,6 @@ function initUsersPage() {
   document.getElementById("userPasswordModal")?.addEventListener("hidden.bs.modal", resetPasswordModal);
   document.getElementById("userDevicesModal")?.addEventListener("hidden.bs.modal", resetDevicesModal);
   loadUsers();
-}
-
-function initMinidramaSettingsPage() {
-  document.getElementById("refreshMinidramaSettingsBtn")?.addEventListener("click", loadMinidramaSettings);
-  document.getElementById("newMinidramaSettingsBtn")?.addEventListener("click", () => showMinidramaEditor(null));
-  document.getElementById("cancelMinidramaSettingsBtn")?.addEventListener("click", hideMinidramaEditor);
-  document.getElementById("saveMinidramaSettingsBtn")?.addEventListener("click", saveMinidramaSettings);
-  document.getElementById("minidramaSettingsTableBody")?.addEventListener("click", handleMinidramaSettingsTableClick);
-  loadMinidramaSettings();
 }
 
 function initKuaishouSettingsPage() {
@@ -546,20 +535,6 @@ async function handleUserDevicesTableClick(event) {
   }
 }
 
-async function loadMinidramaSettings() {
-  try {
-    resetMinidramaSettingsForm();
-    const data = await requestJSON("/api/settings/minidrama");
-    if (!data) return;
-    const apps = Array.isArray(data.apps) ? data.apps : [];
-    minidramaSettingsState.apps = apps;
-    renderMinidramaSettingsTable(apps);
-    hideMinidramaEditor();
-  } catch (error) {
-    showToast(error.message, "danger");
-  }
-}
-
 async function loadKuaishouSettings() {
   try {
     resetKuaishouSettingsForm();
@@ -574,19 +549,6 @@ async function loadKuaishouSettings() {
   }
 }
 
-function showMinidramaEditor(item) {
-  fillMinidramaSettingsForm(item);
-  document.getElementById("minidramaEditorTitle").textContent = item?.app_id ? "编辑配置" : "新增配置";
-  document.getElementById("minidramaEditorPanel").hidden = false;
-  document.getElementById("minidramaNameInput")?.focus();
-}
-
-function hideMinidramaEditor() {
-  resetMinidramaSettingsForm();
-  const panel = document.getElementById("minidramaEditorPanel");
-  if (panel) panel.hidden = true;
-}
-
 function showKuaishouEditor(item) {
   fillKuaishouSettingsForm(item);
   document.getElementById("kuaishouEditorTitle").textContent = item?.app_id ? "编辑配置" : "新增配置";
@@ -598,33 +560,6 @@ function hideKuaishouEditor() {
   resetKuaishouSettingsForm();
   const panel = document.getElementById("kuaishouEditorPanel");
   if (panel) panel.hidden = true;
-}
-
-function renderMinidramaSettingsTable(apps) {
-  const tbody = document.getElementById("minidramaSettingsTableBody");
-  const items = Array.isArray(apps) ? apps : [];
-  if (!items.length) {
-    tbody.innerHTML = '<tr><td colspan="6" class="text-muted small">暂无小程序配置</td></tr>';
-    return;
-  }
-  tbody.innerHTML = items
-    .map((item) => {
-      const appId = item.app_id || "";
-      return `
-        <tr>
-          <td>${escapeHtml(item.name || "未命名")}</td>
-          <td class="font-monospace">${escapeHtml(appId)}</td>
-          <td>${item.app_secret_configured ? escapeHtml(item.app_secret_masked || "已配置") : '<span class="text-danger">未配置</span>'}</td>
-          <td>${item.is_default ? '<span class="badge text-bg-primary">默认</span>' : ""}</td>
-          <td class="small text-muted">${escapeHtml(item.updated_at || "-")}</td>
-          <td class="text-end">
-            <button type="button" class="btn btn-sm btn-outline-primary" data-action="edit-minidrama" data-app-id="${escapeHtml(appId)}">编辑</button>
-            <button type="button" class="btn btn-sm btn-outline-danger" data-action="delete-minidrama" data-app-id="${escapeHtml(appId)}">删除</button>
-          </td>
-        </tr>
-      `;
-    })
-    .join("");
 }
 
 function renderKuaishouSettingsTable(apps) {
@@ -658,19 +593,6 @@ function renderKuaishouSettingsTable(apps) {
     .join("");
 }
 
-function fillMinidramaSettingsForm(item) {
-  const form = document.getElementById("minidramaSettingsForm");
-  const app = item || {};
-  minidramaSettingsState.editingAppId = app.app_id || "";
-  document.getElementById("minidramaNameInput").value = app.name || "";
-  document.getElementById("minidramaAppIdInput").value = app.app_id || "";
-  document.getElementById("minidramaAppSecretInput").value = "";
-  document.getElementById("minidramaDefaultInput").checked = Boolean(app.is_default);
-  form.dataset.appSecretConfigured = app.app_secret_configured ? "1" : "0";
-  clearFormValidation(form);
-  renderMinidramaSettingsMeta(app);
-}
-
 function fillKuaishouSettingsForm(item) {
   const form = document.getElementById("kuaishouSettingsForm");
   const app = item || {};
@@ -685,17 +607,6 @@ function fillKuaishouSettingsForm(item) {
   renderKuaishouSettingsMeta(app);
 }
 
-function resetMinidramaSettingsForm() {
-  document.getElementById("minidramaNameInput").value = "";
-  document.getElementById("minidramaAppIdInput").value = "";
-  document.getElementById("minidramaAppSecretInput").value = "";
-  document.getElementById("minidramaDefaultInput").checked = false;
-  document.getElementById("minidramaSettingsMeta").textContent = "";
-  document.getElementById("minidramaSettingsForm").dataset.appSecretConfigured = "0";
-  minidramaSettingsState.editingAppId = "";
-  clearFormValidation(document.getElementById("minidramaSettingsForm"));
-}
-
 function resetKuaishouSettingsForm() {
   document.getElementById("kuaishouNameInput").value = "";
   document.getElementById("kuaishouAppIdInput").value = "";
@@ -706,21 +617,6 @@ function resetKuaishouSettingsForm() {
   document.getElementById("kuaishouSettingsForm").dataset.appSecretConfigured = "0";
   kuaishouSettingsState.editingAppId = "";
   clearFormValidation(document.getElementById("kuaishouSettingsForm"));
-}
-
-function renderMinidramaSettingsMeta(data) {
-  const meta = document.getElementById("minidramaSettingsMeta");
-  if (!data || !data.app_id) {
-    meta.textContent = "请选择或新增一个小程序配置";
-    return;
-  }
-  meta.textContent = [
-    `AppID：${data.app_id || "-"}`,
-    `名称：${data.name || "未命名"}`,
-    `来源：${data.source || "后台配置"}`,
-    `AppSecret：${data.app_secret_configured ? data.app_secret_masked || "已配置" : "未配置"}`,
-    data.updated_at ? `更新时间：${data.updated_at}` : "",
-  ].filter(Boolean).join(" · ");
 }
 
 function renderKuaishouSettingsMeta(data) {
@@ -740,15 +636,6 @@ function renderKuaishouSettingsMeta(data) {
   ].filter(Boolean).join(" · ");
 }
 
-function handleMinidramaSettingsTableClick(event) {
-  const button = event.target.closest("button[data-action]");
-  if (!button) return;
-  const appId = button.dataset.appId || "";
-  const item = minidramaSettingsState.apps.find((entry) => entry.app_id === appId);
-  if (button.dataset.action === "edit-minidrama") showMinidramaEditor(item || null);
-  if (button.dataset.action === "delete-minidrama") deleteMinidramaSettings(appId);
-}
-
 function handleKuaishouSettingsTableClick(event) {
   const button = event.target.closest("button[data-action]");
   if (!button) return;
@@ -756,20 +643,6 @@ function handleKuaishouSettingsTableClick(event) {
   const item = kuaishouSettingsState.apps.find((entry) => entry.app_id === appId);
   if (button.dataset.action === "edit-kuaishou") showKuaishouEditor(item || null);
   if (button.dataset.action === "delete-kuaishou") deleteKuaishouSettings(appId);
-}
-
-async function deleteMinidramaSettings(appId) {
-  if (!appId || !confirm(`确认删除小程序配置 ${appId} 吗？`)) return;
-  try {
-    const data = await requestJSON(`/api/settings/minidrama/${encodeURIComponent(appId)}`, { method: "DELETE" });
-    const apps = Array.isArray(data.apps) ? data.apps : [];
-    minidramaSettingsState.apps = apps;
-    renderMinidramaSettingsTable(apps);
-    hideMinidramaEditor();
-    showToast("小程序配置已删除", "success");
-  } catch (error) {
-    showToast(error.message, "danger");
-  }
 }
 
 async function deleteKuaishouSettings(appId) {
@@ -786,26 +659,6 @@ async function deleteKuaishouSettings(appId) {
   }
 }
 
-async function saveMinidramaSettings() {
-  const form = document.getElementById("minidramaSettingsForm");
-  const nameInput = document.getElementById("minidramaNameInput");
-  const appIdInput = document.getElementById("minidramaAppIdInput");
-  const appSecretInput = document.getElementById("minidramaAppSecretInput");
-  const defaultInput = document.getElementById("minidramaDefaultInput");
-  const name = nameInput.value.trim();
-  const appId = appIdInput.value.trim();
-  const appSecret = appSecretInput.value.trim();
-  const hasCurrentSecret = form.dataset.appSecretConfigured === "1";
-  if (!validateSettingsInputs(appIdInput, appSecretInput, appId, appSecret, hasCurrentSecret)) return;
-  await saveSettingsPayload("minidrama", "/api/settings/minidrama", {
-    name,
-    app_id: appId,
-    app_secret: appSecret,
-    is_default: defaultInput.checked,
-    enabled: true,
-  });
-}
-
 async function saveKuaishouSettings() {
   const form = document.getElementById("kuaishouSettingsForm");
   const nameInput = document.getElementById("kuaishouNameInput");
@@ -819,14 +672,31 @@ async function saveKuaishouSettings() {
   const appSecret = appSecretInput.value.trim();
   const hasCurrentSecret = form.dataset.appSecretConfigured === "1";
   if (!validateSettingsInputs(appIdInput, appSecretInput, appId, appSecret, hasCurrentSecret)) return;
-  await saveSettingsPayload("kuaishou", "/api/settings/kuaishou", {
-    name,
-    app_id: appId,
-    advertiser_id: advertiserId,
-    app_secret: appSecret,
-    is_default: defaultInput.checked,
-    enabled: true,
-  });
+  const saveBtn = document.getElementById("saveKuaishouSettingsBtn");
+  saveBtn.disabled = true;
+  try {
+    const data = await requestJSON("/api/settings/kuaishou", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name,
+        app_id: appId,
+        advertiser_id: advertiserId,
+        app_secret: appSecret,
+        is_default: defaultInput.checked,
+        enabled: true,
+      }),
+    });
+    const apps = Array.isArray(data.apps) ? data.apps : [];
+    kuaishouSettingsState.apps = apps;
+    renderKuaishouSettingsTable(apps);
+    hideKuaishouEditor();
+    showToast("快手配置已保存", "success");
+  } catch (error) {
+    showToast(error.message, "danger");
+  } finally {
+    saveBtn.disabled = false;
+  }
 }
 
 function validateSettingsInputs(appIdInput, appSecretInput, appId, appSecret, hasCurrentSecret) {
@@ -842,34 +712,6 @@ function validateSettingsInputs(appIdInput, appSecretInput, appId, appSecret, ha
   }
   if (!isValid) firstInvalid?.focus();
   return isValid;
-}
-
-async function saveSettingsPayload(type, url, payload) {
-  const saveBtn = document.getElementById(type === "minidrama" ? "saveMinidramaSettingsBtn" : "saveKuaishouSettingsBtn");
-  saveBtn.disabled = true;
-  try {
-    const data = await requestJSON(url, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    const apps = Array.isArray(data.apps) ? data.apps : [];
-    if (type === "minidrama") {
-      minidramaSettingsState.apps = apps;
-      renderMinidramaSettingsTable(apps);
-      hideMinidramaEditor();
-      showToast("小程序配置已保存", "success");
-    } else {
-      kuaishouSettingsState.apps = apps;
-      renderKuaishouSettingsTable(apps);
-      hideKuaishouEditor();
-      showToast("快手配置已保存", "success");
-    }
-  } catch (error) {
-    showToast(error.message, "danger");
-  } finally {
-    saveBtn.disabled = false;
-  }
 }
 
 function clearRemoteUnreadNotifications() {
