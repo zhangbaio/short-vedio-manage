@@ -207,11 +207,6 @@ REMOTE_IMPORT_DRAMA_ALLOWED_STEPS = {
     "publish_materials",
 }
 REMOTE_IMPORT_DRAMA_ALLOWED_ERROR_STRATEGIES = {"skip", "stop"}
-WEIXIN_API_BASE = "https://api.weixin.qq.com"
-MINIDRAMA_TOKEN_REFRESH_MARGIN_SECONDS = 300
-MINIDRAMA_TOKEN_REFRESH_LOCK_SECONDS = 60
-MINIDRAMA_APP_ID_SETTING_KEY = "minidrama_app_id"
-MINIDRAMA_APP_SECRET_SETTING_KEY = "minidrama_app_secret"
 KUAISHOU_API_BASE = "https://ad.e.kuaishou.com"
 KUAISHOU_TOKEN_REFRESH_MARGIN_SECONDS = 2 * 60 * 60
 KUAISHOU_ACCESS_TOKEN_RENEW_MARGIN_SECONDS = 6 * 60 * 60
@@ -219,13 +214,13 @@ KUAISHOU_REFRESH_TOKEN_RENEW_MARGIN_SECONDS = 7 * 24 * 60 * 60
 KUAISHOU_TOKEN_REFRESH_LOCK_SECONDS = 60
 KUAISHOU_TOKEN_REFRESH_SCHEDULER_INTERVAL_SECONDS = _int_env('KUAISHOU_TOKEN_REFRESH_SCHEDULER_INTERVAL_SECONDS', 60 * 60)
 KUAISHOU_TOKEN_REFRESH_STARTUP_DELAY_SECONDS = _int_env('KUAISHOU_TOKEN_REFRESH_STARTUP_DELAY_SECONDS', 10)
-UPLOAD_RECORD_PLATFORMS = {"video_channel", "miniprogram", "kuaishou", "tt"}
 UPLOAD_RECORD_PLATFORM_LABELS = {
     "video_channel": "微信视频号",
-    "miniprogram": "微信小程序",
     "kuaishou": "快手",
     "tt": "TikTok",
 }
+UPLOAD_RECORD_PLATFORM_FILTER = "ur.platform IN (" + ", ".join("?" for _ in UPLOAD_RECORD_PLATFORM_LABELS) + ")"
+UPLOAD_RECORD_PLATFORM_ERROR = "platform 仅支持 " + " / ".join(UPLOAD_RECORD_PLATFORM_LABELS)
 PLATFORM_DRAMA_SORTABLE_FIELDS = {
     "date": "COALESCE(ur.date, substr(ur.record_time, 1, 10), d.date, '')",
     "record_time": "COALESCE(ur.record_time, ur.created_at, '')",
@@ -315,18 +310,6 @@ def apple_touch_icon():
 #     app.register_blueprint(hongguo_bp)
 # except Exception as _hg_exc:  # noqa: BLE001
 #     print(f"[warn] 红果 Blueprint 未加载: {_hg_exc}")
-
-# 爆剧预测流水线(迁移自 xinge): 上新同步→指标补齐→画像评分→今日预测/爆剧预警。
-# 依赖 hongguo_core 签名/拉取层(环境变量 SIGN_SERVER 指向真实签名后端)。
-try:
-    from hongguo_predict import boom_prediction_bp, init_predict, start_scheduler
-
-    app.register_blueprint(boom_prediction_bp)
-    init_predict()
-    start_scheduler()
-except Exception as _bp_exc:  # noqa: BLE001
-    print(f"[warn] 爆剧预测 Blueprint 未加载: {_bp_exc}")
-
 
 def ensure_data_dir() -> None:
     os.makedirs(DATA_DIR, exist_ok=True)
@@ -952,30 +935,6 @@ def init_db() -> None:
                 FOREIGN KEY (message_id) REFERENCES remote_messages(id) ON DELETE CASCADE
             );
 
-            CREATE TABLE IF NOT EXISTS minidrama_token_cache (
-                app_id TEXT PRIMARY KEY,
-                access_token TEXT,
-                expires_at INTEGER NOT NULL DEFAULT 0,
-                refreshing_by TEXT,
-                refreshing_until INTEGER NOT NULL DEFAULT 0,
-                last_error TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-
-            CREATE TABLE IF NOT EXISTS minidrama_apps (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                app_id TEXT UNIQUE NOT NULL,
-                app_secret TEXT NOT NULL,
-                name TEXT,
-                is_default INTEGER NOT NULL DEFAULT 0,
-                enabled INTEGER NOT NULL DEFAULT 1,
-                created_at TEXT,
-                updated_at TEXT,
-                updated_by INTEGER,
-                FOREIGN KEY (updated_by) REFERENCES users(id) ON DELETE SET NULL
-            );
-
             CREATE TABLE IF NOT EXISTS kuaishou_token_cache (
                 app_id TEXT PRIMARY KEY,
                 access_token TEXT,
@@ -1003,14 +962,6 @@ def init_db() -> None:
                 updated_at TEXT,
                 updated_by INTEGER,
                 FOREIGN KEY (updated_by) REFERENCES users(id) ON DELETE SET NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS app_settings (
-                setting_key TEXT PRIMARY KEY,
-                setting_value TEXT,
-                is_secret INTEGER NOT NULL DEFAULT 0,
-                updated_at TEXT,
-                updated_by INTEGER
             );
 
             CREATE TABLE IF NOT EXISTS upload_records (
@@ -1211,12 +1162,6 @@ def init_db() -> None:
             "CREATE INDEX IF NOT EXISTS idx_remote_messages_status ON remote_messages(status)"
         )
         db.execute(
-            "CREATE INDEX IF NOT EXISTS idx_minidrama_token_expires_at ON minidrama_token_cache(expires_at)"
-        )
-        db.execute(
-            "CREATE INDEX IF NOT EXISTS idx_minidrama_apps_default ON minidrama_apps(is_default, enabled)"
-        )
-        db.execute(
             "CREATE INDEX IF NOT EXISTS idx_kuaishou_token_expires_at ON kuaishou_token_cache(expires_at)"
         )
         db.execute(
@@ -1266,7 +1211,6 @@ def init_db() -> None:
             """,
             (ACCOUNT_DEFAULT_MAX_DEVICES, ACCOUNT_DEFAULT_MAX_DEVICES),
         )
-        migrate_legacy_minidrama_settings(db)
         seed_default_users(db)
         from ks_account_auth import ensure_schema as ensure_ks_account_schema
 
@@ -2189,21 +2133,6 @@ def now_timestamp() -> int:
     return int(datetime.datetime.now().timestamp())
 
 
-def get_app_setting(setting_key: str) -> sqlite3.Row | None:
-    key = str(setting_key or "").strip()
-    if not key:
-        return None
-    return get_db().execute(
-        "SELECT * FROM app_settings WHERE setting_key = ?",
-        (key,),
-    ).fetchone()
-
-
-def get_app_setting_value(setting_key: str) -> str:
-    row = get_app_setting(setting_key)
-    return str(row["setting_value"] or "").strip() if row else ""
-
-
 def mask_secret_value(secret: str) -> str:
     text = str(secret or "").strip()
     if len(text) >= 8:
@@ -2213,168 +2142,7 @@ def mask_secret_value(secret: str) -> str:
     return ""
 
 
-def set_app_setting(setting_key: str, setting_value: str, *, is_secret: bool, updated_by: int | None = None) -> None:
-    get_db().execute(
-        """
-        INSERT INTO app_settings (setting_key, setting_value, is_secret, updated_at, updated_by)
-        VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT(setting_key) DO UPDATE SET
-            setting_value = excluded.setting_value,
-            is_secret = excluded.is_secret,
-            updated_at = excluded.updated_at,
-            updated_by = excluded.updated_by
-        """,
-        (
-            str(setting_key or "").strip(),
-            str(setting_value or "").strip(),
-            1 if is_secret else 0,
-            now_iso(),
-            updated_by,
-        ),
-    )
-
-
-def migrate_legacy_minidrama_settings(db: sqlite3.Connection) -> None:
-    existing_count = db.execute("SELECT COUNT(*) FROM minidrama_apps").fetchone()[0]
-    if existing_count:
-        return
-    app_id_row = db.execute(
-        "SELECT * FROM app_settings WHERE setting_key = ?",
-        (MINIDRAMA_APP_ID_SETTING_KEY,),
-    ).fetchone()
-    app_secret_row = db.execute(
-        "SELECT * FROM app_settings WHERE setting_key = ?",
-        (MINIDRAMA_APP_SECRET_SETTING_KEY,),
-    ).fetchone()
-    app_id = str(app_id_row["setting_value"] or "").strip() if app_id_row else ""
-    app_secret = str(app_secret_row["setting_value"] or "").strip() if app_secret_row else ""
-    if not app_id or not app_secret:
-        return
-    now = now_iso()
-    updated_by = app_secret_row["updated_by"] if app_secret_row else app_id_row["updated_by"] if app_id_row else None
-    db.execute(
-        """
-        INSERT OR IGNORE INTO minidrama_apps (
-            app_id, app_secret, name, is_default, enabled, created_at, updated_at, updated_by
-        ) VALUES (?, ?, ?, 1, 1, ?, ?, ?)
-        """,
-        (app_id, app_secret, "默认小程序", now, now, updated_by),
-    )
-
-
 init_db()
-
-
-def serialize_minidrama_app(row: sqlite3.Row | dict[str, Any], *, include_secret: bool = False) -> dict[str, Any]:
-    app_secret = str((row["app_secret"] if isinstance(row, sqlite3.Row) else row.get("app_secret")) or "").strip()
-    payload = {
-        "id": int(row["id"] if isinstance(row, sqlite3.Row) else row.get("id") or 0),
-        "app_id": str((row["app_id"] if isinstance(row, sqlite3.Row) else row.get("app_id")) or "").strip(),
-        "name": str((row["name"] if isinstance(row, sqlite3.Row) else row.get("name")) or "").strip(),
-        "enabled": bool((row["enabled"] if isinstance(row, sqlite3.Row) else row.get("enabled", True))),
-        "is_default": bool((row["is_default"] if isinstance(row, sqlite3.Row) else row.get("is_default", False))),
-        "app_secret_configured": bool(app_secret),
-        "app_secret_masked": mask_secret_value(app_secret),
-        "source": "database",
-        "updated_at": str((row["updated_at"] if isinstance(row, sqlite3.Row) else row.get("updated_at")) or ""),
-        "updated_by": row["updated_by"] if isinstance(row, sqlite3.Row) else row.get("updated_by"),
-    }
-    if include_secret:
-        payload["app_secret"] = app_secret
-    return payload
-
-
-def list_minidrama_app_rows(*, include_disabled: bool = True) -> list[sqlite3.Row]:
-    query = "SELECT * FROM minidrama_apps"
-    params: tuple[Any, ...] = ()
-    if not include_disabled:
-        query += " WHERE enabled = 1"
-    query += " ORDER BY is_default DESC, updated_at DESC, id DESC"
-    return list(get_db().execute(query, params).fetchall())
-
-
-def get_minidrama_app_row(app_id: str) -> sqlite3.Row | None:
-    normalized = str(app_id or "").strip()
-    if not normalized:
-        return None
-    return get_db().execute("SELECT * FROM minidrama_apps WHERE app_id = ?", (normalized,)).fetchone()
-
-
-def get_default_minidrama_app_row() -> sqlite3.Row | None:
-    row = get_db().execute(
-        "SELECT * FROM minidrama_apps WHERE enabled = 1 AND is_default = 1 ORDER BY id DESC LIMIT 1"
-    ).fetchone()
-    if row:
-        return row
-    return get_db().execute(
-        "SELECT * FROM minidrama_apps WHERE enabled = 1 ORDER BY updated_at DESC, id DESC LIMIT 1"
-    ).fetchone()
-
-
-def save_minidrama_app(
-    *,
-    app_id: str,
-    app_secret: str,
-    name: str = "",
-    enabled: bool = True,
-    is_default: bool = False,
-    updated_by: int | None = None,
-) -> sqlite3.Row:
-    db = get_db()
-    normalized_app_id = str(app_id or "").strip()
-    existing = get_minidrama_app_row(normalized_app_id)
-    now = now_iso()
-    if is_default:
-        db.execute("UPDATE minidrama_apps SET is_default = 0 WHERE app_id <> ?", (normalized_app_id,))
-    if existing:
-        db.execute(
-            """
-            UPDATE minidrama_apps
-            SET app_secret = ?, name = ?, enabled = ?, is_default = ?, updated_at = ?, updated_by = ?
-            WHERE app_id = ?
-            """,
-            (
-                str(app_secret or "").strip(),
-                str(name or "").strip(),
-                1 if enabled else 0,
-                1 if is_default else int(existing["is_default"] or 0),
-                now,
-                updated_by,
-                normalized_app_id,
-            ),
-        )
-    else:
-        if not is_default and not get_default_minidrama_app_row():
-            is_default = True
-        db.execute(
-            """
-            INSERT INTO minidrama_apps (
-                app_id, app_secret, name, enabled, is_default, created_at, updated_at, updated_by
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                normalized_app_id,
-                str(app_secret or "").strip(),
-                str(name or "").strip(),
-                1 if enabled else 0,
-                1 if is_default else 0,
-                now,
-                now,
-                updated_by,
-            ),
-        )
-    db.execute("DELETE FROM minidrama_token_cache WHERE app_id = ?", (normalized_app_id,))
-    if not get_default_minidrama_app_row():
-        db.execute(
-            """
-            UPDATE minidrama_apps
-            SET is_default = 1
-            WHERE id = (
-                SELECT id FROM minidrama_apps WHERE enabled = 1 ORDER BY updated_at DESC, id DESC LIMIT 1
-            )
-            """
-        )
-    return get_minidrama_app_row(normalized_app_id)
 
 
 def serialize_kuaishou_app(row: sqlite3.Row | dict[str, Any], *, include_secret: bool = False) -> dict[str, Any]:
@@ -2738,113 +2506,6 @@ def start_kuaishou_token_refresh_scheduler() -> None:
         thread = threading.Thread(target=_kuaishou_token_scheduler_loop, name="kuaishou-token-refresh", daemon=True)
         thread.start()
 
-def get_minidrama_server_settings(requested_app_id: str = "") -> dict[str, Any]:
-    requested = str(requested_app_id or "").strip()
-    if requested:
-        row = get_minidrama_app_row(requested)
-        if row:
-            return serialize_minidrama_app(row, include_secret=True)
-        return {
-            "app_id": requested,
-            "app_secret": "",
-            "app_secret_configured": False,
-            "source": "empty",
-            "updated_at": "",
-            "updated_by": None,
-        }
-    row = get_default_minidrama_app_row()
-    if row:
-        payload = serialize_minidrama_app(row, include_secret=True)
-        payload["apps"] = [serialize_minidrama_app(item) for item in list_minidrama_app_rows()]
-        return payload
-    db_app_id = get_app_setting_value(MINIDRAMA_APP_ID_SETTING_KEY)
-    db_app_secret = get_app_setting_value(MINIDRAMA_APP_SECRET_SETTING_KEY)
-    env_app_id = (
-        str(os.environ.get("WX_MINIDRAMA_APPID") or "").strip()
-        or str(os.environ.get("MINIDRAMA_APP_ID") or "").strip()
-    )
-    env_app_secret = (
-        str(os.environ.get("WX_MINIDRAMA_APPSECRET") or "").strip()
-        or str(os.environ.get("MINIDRAMA_APP_SECRET") or "").strip()
-    )
-    app_id = db_app_id or env_app_id
-    app_secret = db_app_secret or env_app_secret
-    if db_app_id or db_app_secret:
-        source = "database"
-    elif env_app_id or env_app_secret:
-        source = "environment"
-    else:
-        source = "empty"
-    app_id_row = get_app_setting(MINIDRAMA_APP_ID_SETTING_KEY)
-    app_secret_row = get_app_setting(MINIDRAMA_APP_SECRET_SETTING_KEY)
-    updated_row = app_secret_row or app_id_row
-    return {
-        "app_id": app_id,
-        "app_secret": app_secret,
-        "app_secret_configured": bool(app_secret),
-        "source": source,
-        "updated_at": updated_row["updated_at"] if updated_row else "",
-        "updated_by": updated_row["updated_by"] if updated_row else None,
-        "apps": [],
-    }
-
-
-def serialize_minidrama_settings(settings: dict[str, Any]) -> dict[str, Any]:
-    app_secret = str(settings.get("app_secret") or "").strip()
-    return {
-        "app_id": str(settings.get("app_id") or "").strip(),
-        "name": str(settings.get("name") or "").strip(),
-        "enabled": bool(settings.get("enabled", True)),
-        "is_default": bool(settings.get("is_default", False)),
-        "app_secret_configured": bool(app_secret),
-        "app_secret_masked": mask_secret_value(app_secret),
-        "source": str(settings.get("source") or "empty"),
-        "updated_at": str(settings.get("updated_at") or ""),
-        "updated_by": settings.get("updated_by"),
-        "apps": settings.get("apps") if isinstance(settings.get("apps"), list) else [],
-    }
-
-
-def resolve_minidrama_server_credentials(requested_app_id: str = "") -> tuple[str, str, str | None]:
-    settings = get_minidrama_server_settings(requested_app_id)
-    app_id = str(settings.get("app_id") or "").strip()
-    app_secret = str(settings.get("app_secret") or "").strip()
-    requested = str(requested_app_id or "").strip()
-    if requested and app_id and requested != app_id:
-        return "", "", "请求的小程序 AppID 与服务端配置不一致"
-    if not app_id:
-        return "", "", "服务端未配置小程序 AppID"
-    if not app_secret:
-        return "", "", f"服务端未配置小程序 AppSecret：{app_id}"
-    if settings.get("enabled") is False:
-        return "", "", f"服务端小程序配置已停用：{app_id}"
-    return app_id, app_secret, None
-
-
-def fetch_minidrama_access_token_from_weixin(app_id: str, app_secret: str) -> tuple[str, int]:
-    query = urlparse.urlencode(
-        {
-            "grant_type": "client_credential",
-            "appid": str(app_id or "").strip(),
-            "secret": str(app_secret or "").strip(),
-        }
-    )
-    req = urlrequest.Request(f"{WEIXIN_API_BASE}/cgi-bin/token?{query}", method="GET")
-    with urlrequest.urlopen(req, timeout=20) as response:
-        raw = response.read().decode("utf-8", errors="replace")
-    payload = json.loads(raw or "{}")
-    if not isinstance(payload, dict):
-        raise ValueError("微信 token 接口返回格式异常")
-    errcode = payload.get("errcode")
-    if errcode not in (None, 0):
-        raise ValueError(f"微信 token 接口失败：errcode={errcode}, errmsg={payload.get('errmsg') or ''}")
-    access_token = str(payload.get("access_token") or "").strip()
-    expires_in = int(payload.get("expires_in") or 0)
-    if not access_token:
-        raise ValueError("微信 token 接口未返回 access_token")
-    return access_token, expires_in
-
-
 def serialize_remote_client(row: sqlite3.Row) -> dict:
     return {
         "id": row["id"],
@@ -3160,10 +2821,6 @@ def normalize_upload_record_platform(value: object) -> str:
         "wechat_video_channel": "video_channel",
         "weixin_channel": "video_channel",
         "video": "video_channel",
-        "wechat_miniprogram": "miniprogram",
-        "weixin_miniprogram": "miniprogram",
-        "mini_program": "miniprogram",
-        "mini": "miniprogram",
         "ks": "kuaishou",
         "kwai": "kuaishou",
         "tiktok": "tt",
@@ -3273,8 +2930,8 @@ def sanitize_upload_record_payload(data: dict[str, Any]) -> tuple[dict[str, Any]
     raw = data.get("raw") if isinstance(data.get("raw"), dict) else {}
     merged = {**raw, **data}
     platform = normalize_upload_record_platform(merged.get("platform"))
-    if platform not in UPLOAD_RECORD_PLATFORMS:
-        return {}, "platform 仅支持 video_channel / miniprogram / kuaishou / tt"
+    if platform not in UPLOAD_RECORD_PLATFORM_LABELS:
+        return {}, UPLOAD_RECORD_PLATFORM_ERROR
 
     payload: dict[str, Any] = {
         "platform": platform,
@@ -4330,12 +3987,6 @@ def video_channel_dramas_page():
     return render_template("video_channel_dramas.html")
 
 
-@app.route("/dramas/miniprogram")
-@login_required
-def miniprogram_dramas_page():
-    return render_template("miniprogram_dramas.html")
-
-
 @app.route("/dramas/kuaishou")
 @login_required
 def kuaishou_dramas_page():
@@ -4346,13 +3997,6 @@ def kuaishou_dramas_page():
 @login_required
 def tt_dramas_page():
     return render_template("tt_dramas.html")
-
-
-@app.route("/monitor")
-@login_required
-@admin_required
-def monitor_dashboard():
-    return render_template("monitor.html")
 
 
 @app.route("/upload-records")
@@ -4388,13 +4032,6 @@ def tt_user_management():
 @admin_required
 def ks_user_management():
     return render_template("users.html", user_page_variant="ks_users")
-
-
-@app.route("/settings/minidrama")
-@login_required
-@admin_required
-def minidrama_settings_page():
-    return render_template("minidrama_settings.html")
 
 
 @app.route("/settings/kuaishou")
@@ -4485,80 +4122,6 @@ def delete_kuaishou_settings_api(app_id: str):
         db.execute("UPDATE kuaishou_apps SET is_default = 1 WHERE id = (SELECT id FROM kuaishou_apps WHERE enabled = 1 ORDER BY updated_at DESC, id DESC LIMIT 1)")
     db.commit()
     return jsonify(serialize_kuaishou_settings(get_kuaishou_server_settings()))
-
-
-@app.route("/api/settings/minidrama", methods=["GET"])
-@login_required
-@admin_required
-def get_minidrama_settings_api():
-    return jsonify(serialize_minidrama_settings(get_minidrama_server_settings()))
-
-
-@app.route("/api/settings/minidrama", methods=["PUT"])
-@login_required
-@admin_required
-def update_minidrama_settings_api():
-    data = request.get_json(silent=True) or {}
-    app_id = str(data.get("app_id") or "").strip()
-    app_secret_input = str(data.get("app_secret") or "").strip()
-    name = str(data.get("name") or "").strip()
-    enabled = bool(data.get("enabled", True))
-    is_default = bool(data.get("is_default"))
-    clear_app_secret = bool(data.get("clear_app_secret"))
-
-    if not app_id:
-        return jsonify({"error": "小程序 AppID 不能为空"}), 400
-    if len(app_id) > 64:
-        return jsonify({"error": "小程序 AppID 过长"}), 400
-
-    existing_settings = get_minidrama_server_settings(app_id)
-    existing_secret = str(existing_settings.get("app_secret") or "").strip()
-    app_secret = "" if clear_app_secret else (app_secret_input or existing_secret)
-    if not app_secret:
-        return jsonify({"error": "小程序 AppSecret 不能为空"}), 400
-    if len(app_secret) > 256:
-        return jsonify({"error": "小程序 AppSecret 过长"}), 400
-
-    db = get_db()
-    user_id = session.get("user_id")
-    saved_row = save_minidrama_app(
-        app_id=app_id,
-        app_secret=app_secret,
-        name=name,
-        enabled=enabled,
-        is_default=is_default,
-        updated_by=user_id,
-    )
-    db.commit()
-
-    payload = serialize_minidrama_settings(get_minidrama_server_settings())
-    payload["saved"] = serialize_minidrama_app(saved_row)
-    return jsonify(payload)
-
-
-@app.route("/api/settings/minidrama/<path:app_id>", methods=["DELETE"])
-@login_required
-@admin_required
-def delete_minidrama_settings_api(app_id: str):
-    normalized = str(app_id or "").strip()
-    row = get_minidrama_app_row(normalized)
-    if not row:
-        return jsonify({"error": "小程序配置不存在"}), 404
-    db = get_db()
-    db.execute("DELETE FROM minidrama_apps WHERE app_id = ?", (normalized,))
-    db.execute("DELETE FROM minidrama_token_cache WHERE app_id = ?", (normalized,))
-    if not get_default_minidrama_app_row():
-        db.execute(
-            """
-            UPDATE minidrama_apps
-            SET is_default = 1
-            WHERE id = (
-                SELECT id FROM minidrama_apps WHERE enabled = 1 ORDER BY updated_at DESC, id DESC LIMIT 1
-            )
-            """
-        )
-    db.commit()
-    return jsonify(serialize_minidrama_settings(get_minidrama_server_settings()))
 
 
 @app.route("/client-api/account/register", methods=["POST"])
@@ -5188,98 +4751,6 @@ def list_dramas():
     )
 
 
-@app.route("/api/monitor/daily", methods=["GET"])
-@login_required
-@admin_required
-def monitor_daily():
-    clauses, params, mode, date_from, date_to = build_monitor_filters(request.args)
-    date_field = "date(created_at, 'localtime')" if mode == "created" else "date"
-    where_sql = " AND ".join(
-        [f"{date_field} IS NOT NULL", f"{date_field} >= ?", f"{date_field} <= ?", *clauses]
-    )
-    query_params = [date_from.isoformat(), date_to.isoformat(), *params]
-
-    db = get_db()
-    rows = db.execute(
-        f"""
-        SELECT
-            {date_field} AS stat_day,
-            COUNT(*) AS new_count,
-            SUM(CASE WHEN review_passed = '是' THEN 1 ELSE 0 END) AS review_passed_count,
-            SUM(CASE WHEN uploaded = '是' THEN 1 ELSE 0 END) AS uploaded_count
-        FROM dramas
-        WHERE {where_sql}
-        GROUP BY stat_day
-        ORDER BY stat_day ASC
-        """,
-        query_params,
-    ).fetchall()
-
-    row_map: dict[str, dict[str, Any]] = {}
-    for row in rows:
-        day = row["stat_day"]
-        new_count = int(row["new_count"] or 0)
-        review_passed_count = int(row["review_passed_count"] or 0)
-        uploaded_count = int(row["uploaded_count"] or 0)
-        row_map[day] = {
-            "day": day,
-            "new_count": new_count,
-            "review_passed_count": review_passed_count,
-            "uploaded_count": uploaded_count,
-            "review_rate": (review_passed_count / new_count) if new_count else 0,
-            "upload_rate": (uploaded_count / new_count) if new_count else 0,
-        }
-
-    items: list[dict[str, Any]] = []
-    cursor = date_from
-    while cursor <= date_to:
-        day = cursor.isoformat()
-        items.append(
-            row_map.get(
-                day,
-                {
-                    "day": day,
-                    "new_count": 0,
-                    "review_passed_count": 0,
-                    "uploaded_count": 0,
-                    "review_rate": 0,
-                    "upload_rate": 0,
-                },
-            )
-        )
-        cursor += datetime.timedelta(days=1)
-
-    today_key = datetime.date.today().isoformat()
-    today_item = row_map.get(
-        today_key,
-        {
-            "new_count": 0,
-            "review_passed_count": 0,
-            "uploaded_count": 0,
-        },
-    )
-    range_new_count = sum(item["new_count"] for item in items)
-    range_review_passed_count = sum(item["review_passed_count"] for item in items)
-    range_uploaded_count = sum(item["uploaded_count"] for item in items)
-
-    return jsonify(
-        {
-            "summary": {
-                "today_new_count": today_item["new_count"],
-                "today_review_passed_count": today_item["review_passed_count"],
-                "today_uploaded_count": today_item["uploaded_count"],
-                "range_new_count": range_new_count,
-                "range_review_passed_count": range_review_passed_count,
-                "range_uploaded_count": range_uploaded_count,
-                "range_review_rate": (range_review_passed_count / range_new_count) if range_new_count else 0,
-                "range_uploaded_rate": (range_uploaded_count / range_new_count) if range_new_count else 0,
-                "label_suffix": "录入日期" if mode == "created" else "上线日期",
-            },
-            "rows": items,
-        }
-    )
-
-
 @app.route("/api/dramas", methods=["POST"])
 @login_required
 @admin_required
@@ -5627,6 +5098,9 @@ def client_check_upload_duplicates():
         owner_field, owner_id = "owner_tt_user_id", int(tt_user_row["id"])
 
     data = request.get_json(silent=True) or {}
+    platform = normalize_upload_record_platform(data.get("platform") or "tt")
+    if platform not in UPLOAD_RECORD_PLATFORM_LABELS:
+        return jsonify({"ok": False, "message": UPLOAD_RECORD_PLATFORM_ERROR}), 400
     has_original = "original_names" in data
     has_new = "new_names" in data
     if not has_original and not has_new:
@@ -5640,7 +5114,6 @@ def client_check_upload_duplicates():
     if not original_names and not new_names:
         return jsonify({"ok": True, "data": {"duplicates": []}})
 
-    platform = normalize_upload_record_platform(data.get("platform") or "tt")
     dedupe_scope = normalize_upload_record_dedupe_scope(data.get("dedupe_scope") or data.get("scope"))
     tiktok_username = ""
     if dedupe_scope == "tiktok_username":
@@ -5699,9 +5172,15 @@ def list_upload_records():
     page = max(1, int(request.args.get("page", 1) or 1))
     page_size = min(100, max(1, int(request.args.get("page_size", 20) or 20)))
     platform = normalize_upload_record_platform(request.args.get("platform"))
+    if platform and platform not in UPLOAD_RECORD_PLATFORM_LABELS:
+        return jsonify({"error": UPLOAD_RECORD_PLATFORM_ERROR}), 400
 
-    clauses = ["1=1"]
-    params: list[object] = []
+    if platform:
+        clauses = ["ur.platform = ?"]
+        params: list[object] = [platform]
+    else:
+        clauses = [UPLOAD_RECORD_PLATFORM_FILTER]
+        params = list(UPLOAD_RECORD_PLATFORM_LABELS)
     owner_clause, owner_params = _owner_visibility_filter("ur")
     if owner_clause:
         clauses.append(owner_clause)
@@ -5714,9 +5193,6 @@ def list_upload_records():
             requested_user_id=str(request.args.get("user_id") or "").strip(),
         )
 
-    if platform in UPLOAD_RECORD_PLATFORMS:
-        clauses.append("ur.platform = ?")
-        params.append(platform)
     status = str(request.args.get("status") or "").strip()
     if status:
         clauses.append("ur.upload_status LIKE ?")
@@ -5774,8 +5250,8 @@ def list_platform_dramas():
     user_id = int(session["user_id"])
     role = str(session.get("role") or "user").strip().lower()
     platform = normalize_upload_record_platform(request.args.get("platform") or "video_channel")
-    if platform not in UPLOAD_RECORD_PLATFORMS:
-        return jsonify({"error": "platform 仅支持 video_channel / miniprogram / kuaishou / tt"}), 400
+    if platform not in UPLOAD_RECORD_PLATFORM_LABELS:
+        return jsonify({"error": UPLOAD_RECORD_PLATFORM_ERROR}), 400
 
     page = max(1, int(request.args.get("page", 1) or 1))
     page_size = min(100, max(1, int(request.args.get("page_size", 20) or 20)))
@@ -5935,8 +5411,8 @@ def list_platform_dramas():
 def list_drama_upload_records(drama_id: int):
     user_id = int(session["user_id"])
     role = str(session.get("role") or "user").strip().lower()
-    clauses = ["ur.drama_id = ?"]
-    params: list[object] = [drama_id]
+    clauses = ["ur.drama_id = ?", UPLOAD_RECORD_PLATFORM_FILTER]
+    params: list[object] = [drama_id, *UPLOAD_RECORD_PLATFORM_LABELS]
     owner_clause, owner_params = _owner_visibility_filter("ur")
     if owner_clause:
         clauses.append(owner_clause)
@@ -5971,12 +5447,13 @@ def list_companies():
             SELECT DISTINCT d.company
             FROM upload_records ur
             JOIN dramas d ON d.id = ur.drama_id
-            WHERE {owner_clause}
+            WHERE {UPLOAD_RECORD_PLATFORM_FILTER}
+              AND {owner_clause}
               AND d.company IS NOT NULL
               AND d.company <> ''
             ORDER BY d.company ASC
             """,
-            owner_params,
+            [*UPLOAD_RECORD_PLATFORM_LABELS, *owner_params],
         ).fetchall()
     return jsonify([row["company"] for row in rows])
 
@@ -7711,174 +7188,6 @@ def client_get_kuaishou_token():
     return jsonify({"ok": True, "data": payload})
 
 
-@app.route("/client-api/minidrama/settings/status", methods=["GET"])
-def client_get_minidrama_settings_status():
-    db, client_row = require_remote_client()
-    if client_row is None:
-        return jsonify({"ok": False, "message": "client_id 或 client_token 无效"}), 401
-    requested_app_id = str(request.args.get("app_id") or "").strip()
-    return jsonify({"ok": True, "data": serialize_minidrama_settings(get_minidrama_server_settings(requested_app_id))})
-
-
-@app.route("/client-api/minidrama/settings/ensure", methods=["PUT", "POST"])
-def client_ensure_minidrama_settings():
-    db, client_row = require_remote_client()
-    if client_row is None:
-        return jsonify({"ok": False, "message": "client_id 或 client_token 无效"}), 401
-
-    data = request.get_json(silent=True) or {}
-    app_id = str(data.get("app_id") or "").strip()
-    app_secret = str(data.get("app_secret") or "").strip()
-    if not app_id:
-        return jsonify({"ok": False, "message": "小程序 AppID 不能为空"}), 400
-    if len(app_id) > 64:
-        return jsonify({"ok": False, "message": "小程序 AppID 过长"}), 400
-    if not app_secret:
-        return jsonify({"ok": False, "message": "小程序 AppSecret 不能为空"}), 400
-    if len(app_secret) > 256:
-        return jsonify({"ok": False, "message": "小程序 AppSecret 过长"}), 400
-
-    existing_settings = get_minidrama_server_settings(app_id)
-    existing_app_id = str(existing_settings.get("app_id") or "").strip()
-    existing_app_secret = str(existing_settings.get("app_secret") or "").strip()
-    if existing_app_id and existing_app_secret:
-        return jsonify(
-            {
-                "ok": True,
-                "data": {
-                    **serialize_minidrama_settings(existing_settings),
-                    "action": "unchanged",
-                    "updated": False,
-                },
-            }
-        )
-
-    owner_user_id = int(client_row["owner_user_id"] or 0) or None
-    saved_row = save_minidrama_app(
-        app_id=app_id,
-        app_secret=app_secret,
-        name=str(data.get("name") or "").strip(),
-        enabled=True,
-        is_default=not bool(get_default_minidrama_app_row()),
-        updated_by=owner_user_id,
-    )
-    db.commit()
-
-    return jsonify(
-        {
-            "ok": True,
-            "data": {
-                **serialize_minidrama_app(saved_row),
-                "action": "updated",
-                "updated": True,
-            },
-        }
-    )
-
-
-@app.route("/client-api/minidrama/token", methods=["POST"])
-def client_get_minidrama_token():
-    db, client_row = require_remote_client()
-    if client_row is None:
-        return jsonify({"ok": False, "message": "client_id 或 client_token 无效"}), 401
-    data = request.get_json(silent=True) or {}
-    requested_app_id = str(data.get("app_id") or request.args.get("app_id") or "").strip()
-    app_id, app_secret, error_message = resolve_minidrama_server_credentials(requested_app_id)
-    if error_message:
-        return jsonify({"ok": False, "message": error_message}), 400
-
-    now_ts = now_timestamp()
-    now_text = now_iso()
-    row = db.execute("SELECT * FROM minidrama_token_cache WHERE app_id = ?", (app_id,)).fetchone()
-    if row and str(row["access_token"] or "").strip() and int(row["expires_at"] or 0) - now_ts > MINIDRAMA_TOKEN_REFRESH_MARGIN_SECONDS:
-        return jsonify(
-            {
-                "ok": True,
-                "data": {
-                    "app_id": app_id,
-                    "access_token": row["access_token"],
-                    "expires_at": int(row["expires_at"] or 0),
-                    "expires_in": max(0, int(row["expires_at"] or 0) - now_ts),
-                    "cached": True,
-                },
-            }
-        )
-
-    db.execute(
-        """
-        INSERT OR IGNORE INTO minidrama_token_cache (
-            app_id, access_token, expires_at, refreshing_by, refreshing_until, created_at, updated_at
-        ) VALUES (?, NULL, 0, NULL, 0, ?, ?)
-        """,
-        (app_id, now_text, now_text),
-    )
-    db.commit()
-    lock_until = now_ts + MINIDRAMA_TOKEN_REFRESH_LOCK_SECONDS
-    cursor = db.execute(
-        """
-        UPDATE minidrama_token_cache
-        SET refreshing_by = ?, refreshing_until = ?, updated_at = ?
-        WHERE app_id = ? AND (refreshing_until IS NULL OR refreshing_until <= ? OR refreshing_by = ?)
-        """,
-        (client_row["client_id"], lock_until, now_text, app_id, now_ts, client_row["client_id"]),
-    )
-    db.commit()
-    if cursor.rowcount <= 0:
-        row = db.execute("SELECT * FROM minidrama_token_cache WHERE app_id = ?", (app_id,)).fetchone()
-        if row and str(row["access_token"] or "").strip() and int(row["expires_at"] or 0) > now_ts + 60:
-            return jsonify(
-                {
-                    "ok": True,
-                    "data": {
-                        "app_id": app_id,
-                        "access_token": row["access_token"],
-                        "expires_at": int(row["expires_at"] or 0),
-                        "expires_in": max(0, int(row["expires_at"] or 0) - now_ts),
-                        "cached": True,
-                        "refreshing": True,
-                    },
-                }
-            )
-        return jsonify({"ok": False, "message": "小程序 token 正在刷新，请稍后重试"}), 409
-
-    try:
-        access_token, expires_in = fetch_minidrama_access_token_from_weixin(app_id, app_secret)
-    except Exception as exc:
-        db.execute(
-            """
-            UPDATE minidrama_token_cache
-            SET refreshing_by = NULL, refreshing_until = 0, last_error = ?, updated_at = ?
-            WHERE app_id = ?
-            """,
-            (str(exc), now_iso(), app_id),
-        )
-        db.commit()
-        return jsonify({"ok": False, "message": str(exc)}), 502
-
-    expires_at = now_timestamp() + max(0, int(expires_in) - 120)
-    db.execute(
-        """
-        UPDATE minidrama_token_cache
-        SET access_token = ?, expires_at = ?, refreshing_by = NULL, refreshing_until = 0, last_error = NULL, updated_at = ?
-        WHERE app_id = ?
-        """,
-        (access_token, expires_at, now_iso(), app_id),
-    )
-    db.commit()
-    return jsonify(
-        {
-            "ok": True,
-            "data": {
-                "app_id": app_id,
-                "access_token": access_token,
-                "expires_at": expires_at,
-                "expires_in": max(0, expires_at - now_timestamp()),
-                "cached": False,
-            },
-        }
-    )
-
-
 @app.route("/client-api/remote/poll", methods=["GET"])
 def client_poll_remote():
     db, client_row = require_remote_client()
@@ -8098,70 +7407,6 @@ def build_filter_clause(args):
         clauses.append("date <= ?")
         params.append(date_to)
     return clauses, params
-
-
-def parse_iso_date(value: str | None) -> datetime.date | None:
-    if not value:
-        return None
-    try:
-        return datetime.date.fromisoformat(value)
-    except ValueError:
-        return None
-
-
-def build_monitor_filters(args) -> tuple[list[str], list[object], str, datetime.date, datetime.date]:
-    clauses: list[str] = []
-    params: list[object] = []
-
-    company = (args.get("company") or "").strip()
-    if company:
-        clauses.append("company = ?")
-        params.append(company)
-
-    mode = (args.get("mode") or "created").strip().lower()
-    if mode not in {"created", "online"}:
-        mode = "created"
-
-    today = datetime.date.today()
-    default_from = today - datetime.timedelta(days=29)
-    date_from = parse_iso_date((args.get("date_from") or "").strip()) or default_from
-    date_to = parse_iso_date((args.get("date_to") or "").strip()) or today
-    if date_from > date_to:
-        date_from, date_to = date_to, date_from
-
-    return clauses, params, mode, date_from, date_to
-
-
-def parse_iso_date(value: str | None) -> datetime.date | None:
-    if not value:
-        return None
-    try:
-        return datetime.date.fromisoformat(value)
-    except ValueError:
-        return None
-
-
-def build_monitor_filters(args) -> tuple[list[str], list[object], str, datetime.date, datetime.date]:
-    clauses: list[str] = []
-    params: list[object] = []
-
-    company = (args.get("company") or "").strip()
-    if company:
-        clauses.append("company = ?")
-        params.append(company)
-
-    mode = (args.get("mode") or "created").strip().lower()
-    if mode not in {"created", "online"}:
-        mode = "created"
-
-    today = datetime.date.today()
-    default_from = today - datetime.timedelta(days=29)
-    date_from = parse_iso_date((args.get("date_from") or "").strip()) or default_from
-    date_to = parse_iso_date((args.get("date_to") or "").strip()) or today
-    if date_from > date_to:
-        date_from, date_to = date_to, date_from
-
-    return clauses, params, mode, date_from, date_to
 
 
 def row_to_dict(row: sqlite3.Row) -> dict:
