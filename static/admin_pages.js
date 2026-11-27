@@ -340,6 +340,10 @@ function buildUserRoleBadge(user) {
 function buildUserActionButtons(user, isSelf) {
   return [
     `<button class="btn btn-sm btn-outline-secondary" data-action="edit-user" data-id="${user.id}">编辑</button>`,
+    `<button class="btn btn-sm btn-outline-secondary" data-action="user-features" data-id="${user.id}" data-username="${escapeHtml(user.username)}">功能权限</button>`,
+    ...(userPageConfig.apiBase.includes("ks-users") ? [] : [
+      `<button class="btn btn-sm btn-outline-secondary" data-action="user-cloud-config" data-id="${user.id}" data-username="${escapeHtml(user.username)}">云端配置</button>`,
+    ]),
     `<button class="btn btn-sm btn-outline-info" data-action="view-devices" data-id="${user.id}" data-username="${escapeHtml(user.username)}">设备</button>`,
     `<button class="btn btn-sm btn-outline-primary" data-action="reset-password" data-id="${user.id}" data-username="${escapeHtml(user.username)}">重置密码</button>`,
     `<button class="btn btn-sm btn-outline-danger" data-action="delete-user" data-id="${user.id}" data-username="${escapeHtml(user.username)}" ${isSelf ? "disabled" : ""}>删除</button>`,
@@ -532,6 +536,10 @@ async function handleUserTableClick(event) {
   if (!button) return;
   const id = Number(button.dataset.id);
   const username = button.dataset.username;
+  if (["user-features", "user-cloud-config"].includes(button.dataset.action)) {
+    await openCompatibleAccountDialog(id, username, button.dataset.action === "user-features");
+    return;
+  }
   if (button.dataset.action === "edit-user") {
     const user = usersCache.find((item) => Number(item.id) === id);
     if (user) showUserEditor(user);
@@ -1240,4 +1248,72 @@ function escapeHtml(value) {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
+}
+
+async function openCompatibleAccountDialog(id, name, editFeatures) {
+  const scope = userPageConfig.apiBase.includes("tt-users") ? "tt"
+    : userPageConfig.apiBase.includes("ks-users") ? "ks" : "general";
+  const url = `/api/managed-accounts/${scope}/${id}/${editFeatures ? "features" : "cloud-config"}`;
+  const modal = document.getElementById("compatibleAccountModal");
+  const body = document.getElementById("compatibleAccountBody");
+  const footer = document.getElementById("compatibleAccountFooter");
+  const save = document.getElementById("compatibleAccountSave");
+  const reset = document.getElementById("compatibleAccountReset");
+  try {
+    const data = await requestJSON(url);
+    document.getElementById("compatibleAccountTitle").textContent = `${editFeatures ? "功能权限" : "云端配置"} · ${name || id}`;
+    footer.hidden = !editFeatures;
+    body.replaceChildren();
+    if (editFeatures) {
+      for (const [group, title, options] of [["modules", "客户端", data.module_options], ["web", "网页", data.web_options]]) {
+        if (!Object.keys(options).length) continue;
+        const heading = document.createElement("h3");
+        heading.className = "h6";
+        heading.textContent = title;
+        body.append(heading);
+        for (const [key, label] of Object.entries(options)) {
+          const row = document.createElement("label");
+          row.className = "d-block mb-2";
+          const input = document.createElement("input");
+          input.type = "checkbox";
+          input.checked = !data[group].includes(key);
+          input.dataset.permissionGroup = group;
+          input.value = key;
+          row.append(input, " ", label);
+          body.append(row);
+        }
+      }
+      reset.onclick = () => body.querySelectorAll("input").forEach(input => { input.checked = true; });
+      save.onclick = async () => {
+        save.disabled = true;
+        try {
+          const payload = {modules: [], web: []};
+          body.querySelectorAll("input:not(:checked)").forEach(input => payload[input.dataset.permissionGroup].push(input.value));
+          await requestJSON(url, {method: "PUT", headers: {"Content-Type": "application/json"}, body: JSON.stringify(payload)});
+          bootstrap.Modal.getOrCreateInstance(modal).hide();
+          showToast("权限已保存", "success");
+        } catch (error) {
+          showToast(error.message, "danger");
+        } finally {
+          save.disabled = false;
+        }
+      };
+    } else {
+      const rows = [["备份状态", data.exists ? "已有备份" : "暂无备份"]];
+      if (data.exists) rows.push(["上传时间", new Date(data.updated_at).toLocaleString()],
+        ["来源设备", data.source_device_name || "未上报"], ["备份版本", data.revision]);
+      const list = document.createElement("dl");
+      for (const [label, value] of rows) {
+        const term = document.createElement("dt");
+        term.textContent = label;
+        const desc = document.createElement("dd");
+        desc.textContent = value;
+        list.append(term, desc);
+      }
+      body.append(list);
+    }
+    bootstrap.Modal.getOrCreateInstance(modal).show();
+  } catch (error) {
+    showToast(error.message, "danger");
+  }
 }

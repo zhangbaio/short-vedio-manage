@@ -54,7 +54,7 @@
               {% if not is_ks_users %}
               <div class="user-list-sticky-panel">
                 <div class="user-filter-panel border rounded-3 p-3 bg-light-subtle">
-                  <div class="row g-2 align-items-end">
+                  <div class="d-flex flex-nowrap align-items-end gap-2 overflow-auto">
                     <div class="col-xxl-4 col-xl-3 col-lg-6">
                       <label class="form-label" for="userKeywordInput">搜索</label>
                       <input type="text" class="form-control" id="userKeywordInput" placeholder="{{ '用户名 / 姓名 / 邮箱 / TIKTOK用户名' if is_tt_users else '用户名 / 姓名 / 邮箱 / 业务信息' }}" />
@@ -100,7 +100,7 @@
               </div>
               {% endif %}
 
-              <div class="table-responsive desktop-table mobile-switchable user-list-table-wrap">
+              <div class="table-responsive user-list-table-wrap">
                 <table class="table table-hover align-middle mb-0">
                   <thead>
                     <tr>
@@ -130,13 +130,28 @@
                   <tbody id="userTableBody"></tbody>
                 </table>
               </div>
-              <div class="mobile-card-list" id="userMobileList" aria-live="polite"></div>
+
             </div>
           </div>
         </main>
       </div>
     </div>
 
+    <div class="modal fade" id="compatibleAccountModal" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-dialog-scrollable">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h2 class="modal-title h5" id="compatibleAccountTitle"></h2>
+            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button>
+          </div>
+          <div class="modal-body" id="compatibleAccountBody"></div>
+          <div class="modal-footer" id="compatibleAccountFooter" hidden>
+            <button type="button" class="btn btn-outline-secondary" id="compatibleAccountReset">恢复默认</button>
+            <button type="button" class="btn btn-primary" id="compatibleAccountSave">保存</button>
+          </div>
+        </div>
+      </div>
+    </div>
     <div class="modal fade" id="userEditorModal" tabindex="-1" aria-hidden="true">
       <div class="modal-dialog modal-lg">
         <div class="modal-content">
@@ -214,7 +229,7 @@
                   </select>
                 </div>
                 <div class="col-lg-4">
-                  <label class="form-label" for="userMaxDevicesInput">设备数</label>
+                  <label class="form-label" for="userMaxDevicesInput">最大登录设备数</label>
                   <input type="number" class="form-control" id="userMaxDevicesInput" min="1" max="100" value="1" />
                   <div class="invalid-feedback">设备数必须大于0</div>
                 </div>
