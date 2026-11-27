@@ -8,23 +8,31 @@
   </a>
 
   <nav class="app-nav" aria-label="主导航">
+    {% if web_feature_allowed('video_channel_dramas') %}
     <a class="app-nav-link {% if active_page == 'video_channel_dramas' %}active{% endif %}" href="{{ url_for('video_channel_dramas_page') }}">
       <span class="app-nav-icon"><i class="bi bi-play-btn" aria-hidden="true"></i></span>
       <span>视频号短剧管理</span>
     </a>
+    {% endif %}
+    {% if web_feature_allowed('kuaishou_dramas') %}
     <a class="app-nav-link {% if active_page == 'kuaishou_dramas' %}active{% endif %}" href="{{ url_for('kuaishou_dramas_page') }}">
       <span class="app-nav-icon"><i class="bi bi-lightning-charge" aria-hidden="true"></i></span>
       <span>快手短剧管理</span>
     </a>
+    {% endif %}
+    {% if web_feature_allowed('tt_dramas') %}
     <a class="app-nav-link {% if active_page == 'tt_dramas' %}active{% endif %}" href="{{ url_for('tt_dramas_page') }}">
       <span class="app-nav-icon"><i class="bi bi-play-circle" aria-hidden="true"></i></span>
       <span>TT短剧管理</span>
     </a>
+    {% endif %}
     {% if session.role == 'admin' %}
+    {% if web_feature_allowed('upload_records') %}
     <a class="app-nav-link {% if active_page == 'upload_records' %}active{% endif %}" href="{{ url_for('upload_records_page') }}">
       <span class="app-nav-icon"><i class="bi bi-cloud-arrow-up" aria-hidden="true"></i></span>
       <span>上传记录</span>
     </a>
+    {% endif %}
     {% endif %}
     {# 红果短剧入口已隐藏；如需恢复，同时恢复 app.py 中 hongguo_bp 注册。 #}
     {#

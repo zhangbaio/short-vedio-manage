@@ -716,9 +716,12 @@ def append_requested_owner_filter(
 
 
 def init_db() -> None:
+    from client_compat import init_schema as init_client_compat_schema
+
     ensure_data_dir()
     with app.app_context():
         db = get_db()
+        init_client_compat_schema(db)
         db.executescript(
             """
             CREATE TABLE IF NOT EXISTS users (
@@ -2405,7 +2408,7 @@ def require_remote_client() -> tuple[sqlite3.Connection, sqlite3.Row] | tuple[sq
     return db, row
 
 
-def _authenticate_tt_account_from_request(db: sqlite3.Connection) -> sqlite3.Row | None:
+def _authenticate_tt_account_from_request(db: sqlite3.Connection, credentials=None) -> sqlite3.Row | None:
     """用 TT 登录态（X-TT-Account / X-TT-Machine-Id / X-TT-Token 或同名 body 字段）鉴权。
 
     校验 token 签名、machine_id 一致、tt_users 存在、tt_user_devices 设备有效且 token 哈希匹配。
@@ -2416,6 +2419,8 @@ def _authenticate_tt_account_from_request(db: sqlite3.Connection) -> sqlite3.Row
     token = str(request.headers.get("X-TT-Token") or data.get("tt_token") or "").strip()
     machine_id = str(request.headers.get("X-TT-Machine-Id") or data.get("tt_machine_id") or "").strip()
     account = str(request.headers.get("X-TT-Account") or data.get("tt_account") or "").strip()
+    if credentials is not None:
+        account, machine_id, token = credentials
     if not token or not machine_id:
         return None
     try:
@@ -6823,6 +6828,11 @@ from client_update import register_routes as register_client_update_routes
 register_tt_account_config_routes(app)
 register_ks_account_routes(app)
 register_client_update_routes(app)
+
+from client_compat import register as register_client_compat
+import sys
+
+register_client_compat(app, sys.modules[__name__])
 
 
 if __name__ == "__main__":
